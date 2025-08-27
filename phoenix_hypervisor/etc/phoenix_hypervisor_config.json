@@ -1,0 +1,35 @@
+{
+    "$schema": "./phoenix_hypervisor_config.schema.json",
+    "version": "0.01.01",
+    "author": "Heads, Qwen3-coder",
+    "core_paths": {
+        "lxc_config_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json",
+        "lxc_config_schema_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json",
+        "hf_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_hf_token.conf",
+        "docker_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_docker_token.conf",
+        "docker_images_path": "/usr/local/phoenix_hypervisor/etc/proxmox_docker_images",
+        "hypervisor_marker_dir": "/usr/local/phoenix_hypervisor/lib",
+        "hypervisor_marker": "/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized"
+    },
+    "network": {
+        "external_registry_url": "docker.io/SirHeads",
+        "portainer_server_ip": "10.0.0.99",
+        "portainer_server_port": 9443,
+        "portainer_agent_port": 9001
+    },
+    "proxmox_defaults": {
+        "zfs_lxc_pool": "quickOS/lxc-disks",
+        "lxc": {
+            "cores": 2,
+            "memory_mb": 2048,
+            "network_config": "10.0.0.110/24,10.0.0.1,8.8.8.8",
+            "features": "nesting=1",
+            "security": "default",
+            "nesting": 1
+        }
+    },
+    "behavior": {
+        "rollback_on_failure": false,
+        "debug_mode": false
+    }
+}

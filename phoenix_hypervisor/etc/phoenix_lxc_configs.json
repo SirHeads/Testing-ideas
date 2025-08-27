@@ -3,8 +3,28 @@
     "nvidia_driver_version": "580.76.05",
     "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
     "lxc_configs": {
-        "900": {
-            "name": "vllmQwen25C-7B-GPU0",
+        "901": {
+            "name": "Portainer",
+            "memory_mb": 32768,
+            "cores": 6,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.99/24",
+                "gw": "10.0.0.1"
+            },
+            "features": "nesting=1",
+            "static_ip": "10.0.0.99/24",
+            "mac_address": "52:54:00:67:89:99",
+            "gpu_assignment": "none",
+            "portainer_role": "server",
+            "unprivileged": true
+        },
+        "902": {
+            "name": "GPUtemplate",
             "memory_mb": 32768,
             "cores": 8,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
@@ -21,12 +41,10 @@
             "mac_address": "52:54:00:67:89:A0",
             "gpu_assignment": "0",
             "portainer_role": "agent",
-            "unprivileged": false,
-            "vllm_model": "/models/Qwen/Qwen2.5-Coder-7B-Instruct",
-            "vllm_tensor_parallel_size": 1
+            "unprivileged": false
         },
-        "901": {
-            "name": "vllmQwen25C-7B-GPU1",
+        "903": {
+            "name": "vllmTemplate",
             "memory_mb": 32768,
             "cores": 8,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
@@ -47,8 +65,8 @@
             "vllm_model": "/models/Qwen/Qwen2.5-Coder-7B-Instruct",
             "vllm_tensor_parallel_size": 1
         },
-        "902": {
-            "name": "vllmQwen25C-7B-GPU0-1",
+        "904": {
+            "name": "llamacppTemplate",
             "memory_mb": 32768,
             "cores": 8,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
@@ -68,28 +86,6 @@
             "unprivileged": false,
             "vllm_model": "/models/Qwen/Qwen2.5-Coder-7B-Instruct",
             "vllm_tensor_parallel_size": 2
-        },
-        "999": {
-            "name": "Portainer",
-            "memory_mb": 32768,
-            "cores": 6,
-            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
-            "storage_pool": "lxc-disks",
-            "storage_size_gb": 216,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.99/24",
-                "gw": "10.0.0.1"
-            },
-            "features": "nesting=1",
-            "static_ip": "10.0.0.99/24",
-            "mac_address": "52:54:00:67:89:99",
-            "gpu_assignment": "none",
-            "portainer_role": "server",
-            "unprivileged": true,
-            "vllm_model": null,
-            "vllm_tensor_parallel_size": 1
         }
     }
 }
