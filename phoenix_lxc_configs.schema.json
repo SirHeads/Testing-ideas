@@ -1,0 +1,164 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Phoenix Hypervisor LXC Configuration",
+    "description": "Schema for validating Phoenix Hypervisor LXC container configurations.",
+    "type": "object",
+    "properties": {
+        "$schema": {
+            "type": "string",
+            "description": "URI of the JSON Schema used to validate this document."
+        },
+        "nvidia_driver_version": {
+            "type": "string",
+            "description": "Expected NVIDIA driver version on the host."
+        },
+        "nvidia_repo_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL for the NVIDIA CUDA repository."
+        },
+        "lxc_configs": {
+            "type": "object",
+            "description": "A map of LXC container configurations, keyed by container ID.",
+            "patternProperties": {
+                "^(900|901|902|999)$": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The human-readable name for the LXC container"
+                        },
+                        "memory_mb": {
+                            "type": "integer",
+                            "minimum": 512,
+                            "maximum": 131072,
+                            "description": "The amount of RAM allocated to the container in megabytes. For AI workloads, values typically range from 2048-32768 MB depending on model size"
+                        },
+                        "cores": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 32,
+                            "description": "The number of CPU cores allocated to the container. For AI workloads, typically 2-8 cores are recommended"
+                        },
+                        "template": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The path to the LXC template tarball used to create the container"
+                        },
+                        "storage_pool": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The name of the Proxmox storage pool to use for the container's root filesystem"
+                        },
+                        "storage_size_gb": {
+                            "type": "integer",
+                            "minimum": 10,
+                            "maximum": 1024,
+                            "description": "The size of the container's root filesystem in gigabytes. For AI workloads, typically 64-256 GB recommended"
+                        },
+                        "network_config": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 15,
+                                    "description": "Name of the network interface inside the container"
+                                },
+                                "bridge": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "Proxmox bridge the container connects to"
+                                },
+                                "ip": {
+                                    "type": "string",
+                                    "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/([0-9]|[1-2][0-9]|3[0-2])$",
+                                    "description": "Static IP address with CIDR notation for container"
+                                },
+                                "gw": {
+                                    "type": "string",
+                                    "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
+                                    "description": "Gateway IP address for the container's network"
+                                }
+                            },
+                            "required": [
+                                "name",
+                                "bridge",
+                                "ip",
+                                "gw"
+                            ],
+                            "additionalProperties": false
+                        },
+                        "features": {
+                            "type": "string",
+                            "pattern": "^[a-z]+=([0-1])(,[a-z]+=([0-1]))*$",
+                            "description": "LXC features enabled for the container (e.g., 'nesting=1,keyctl=1')"
+                        },
+                        "static_ip": {
+                            "type": "string",
+                            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/([0-9]|[1-2][0-9]|3[0-2])$",
+                            "description": "Static IP address with CIDR notation for container (redundant with network_config.ip?)"
+                        },
+                        "mac_address": {
+                            "type": "string",
+                            "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
+                            "description": "MAC address for the container interface"
+                        },
+                        "gpu_assignment": {
+                            "type": "string",
+                            "pattern": "^(none|[0-9]+(,[0-9]+)*)$",
+                            "description": "GPU assignment for container. Use 'none' for no GPU access, or comma-separated indices (e.g., '0,1') for multiple GPUs"
+                        },
+                        "portainer_role": {
+                            "type": "string",
+                            "enum": [
+                                "server",
+                                "agent",
+                                "none"
+                            ],
+                            "description": "Role of the container within the Portainer management system"
+                        },
+                        "unprivileged": {
+                            "type": "boolean",
+                            "description": "Whether the container runs in unprivileged mode"
+                        },
+                        "vllm_model": {
+                            "type": [
+                                "string",
+                                "null"
+                            ],
+                            "description": "Path to the specific AI model this container is configured to serve using vLLM"
+                        },
+                        "vllm_tensor_parallel_size": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 8,
+                            "description": "Degree of tensor parallelism used by vLLM for the assigned model"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "memory_mb",
+                        "cores",
+                        "template",
+                        "storage_pool",
+                        "storage_size_gb",
+                        "network_config",
+                        "portainer_role",
+                        "unprivileged"
+                    ],
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "required": [
+        "$schema",
+        "nvidia_driver_version",
+        "nvidia_repo_url",
+        "lxc_configs"
+    ],
+    "additionalProperties": false
+}
