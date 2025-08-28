@@ -17,11 +17,16 @@
             "format": "uri",
             "description": "URL for the NVIDIA CUDA repository."
         },
+        "nvidia_runfile_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL for the NVIDIA Driver runfile installer."
+        },
         "lxc_configs": {
             "type": "object",
             "description": "A map of LXC container configurations, keyed by container ID.",
             "patternProperties": {
-                "^(900|901|902|999)$": {
+                "^(90[1-4]|999)$": {
                     "type": "object",
                     "properties": {
                         "name": {
@@ -158,6 +163,7 @@
         "$schema",
         "nvidia_driver_version",
         "nvidia_repo_url",
+        "nvidia_runfile_url",
         "lxc_configs"
     ],
     "additionalProperties": false
