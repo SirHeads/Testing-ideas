@@ -2,16 +2,18 @@
 
 ## Overview
 
-This document outlines the detailed requirements for scripts following the `phoenix_hypervisor_setup_<CTID>.sh` naming pattern. These scripts provide a mechanism for performing container-specific, final-stage customization after the generic LXC creation, NVIDIA setup, and Docker setup steps have been completed by the main orchestrator and its dedicated scripts.
+This document outlines the detailed requirements for scripts following the `phoenix_hypervisor_setup_<CTID>.sh` naming pattern. These scripts provide a mechanism for performing container-specific, final-stage customization. Their role and requirements differ based on whether the target container is a template or a standard application container within the Phoenix Hypervisor's snapshot-based workflow.
 
 ## 1. Key Aspects & Responsibilities
 
-*   **Role:** Perform optional, highly specific final configuration steps for a single LXC container identified by its Container ID (`CTID`).
-*   **Trigger:** Execution is initiated by the main orchestrator script, `phoenix_establish_hypervisor.sh`, if the script file exists and is executable.
-*   **Scope:** Actions are tailored exclusively to the needs of the single container the script is named for. This can include tasks inside the container (via `pct exec`) or host-level configurations specific to that container.
-*   **Execution Context:** Runs non-interactively on the Proxmox host. Assumes the target LXC container is created and running.
-*   **Idempotency:** Scripts should be designed to be idempotent where possible, allowing them to be re-run safely without causing errors or unintended side effects if the desired state is already achieved.
-*   **Error Handling:** Should provide detailed logs for actions taken and failures encountered. Should handle errors gracefully and report status back to the orchestrator.
+*   **Role:** Perform optional, highly specific final configuration steps for a single LXC container or template identified by its Container ID (`CTID`).
+    *   **For Templates (`is_template: true`):** Finalize the environment (e.g., install vLLM) and create the ZFS snapshot (`template_snapshot_name`) for cloning.
+    *   **For Standard Containers (`is_template: false`):** Perform unique final setup (e.g., start a specific model server).
+*   **Trigger:** Execution is initiated by the main orchestrator script, `phoenix_establish_hypervisor.sh`, after the container/template is created/cloned and is ready.
+*   **Scope:** Actions are tailored exclusively to the needs of the single container/template the script is named for. This can include tasks inside the container (via `pct exec`), host-level `pct` commands (e.g., shutdown/snapshot/start), or host-level configurations specific to that container.
+*   **Execution Context:** Runs non-interactively on the Proxmox host.
+*   **Idempotency:** Scripts MUST be designed to be idempotent, allowing them to be re-run safely. They should detect if their specific task (e.g., snapshot creation, service start) is already complete and skip actions to prevent errors.
+*   **Error Handling:** Should provide detailed logs for actions taken and failures encountered. Should handle errors gracefully and report status back to the orchestrator via exit codes.
 *   **Independence:** Each script is independent and should not rely on the internal workings or state of another specific setup script.
 
 ## 2. Function Sequence, Content, and Purpose (Pattern)
@@ -22,9 +24,9 @@ This document outlines the detailed requirements for scripts following the `phoe
     *   Calls `parse_arguments` to get the CTID.
     *   Calls `validate_inputs` (CTID).
     *   Calls `check_container_exists` (basic sanity check).
-    *   Calls `perform_container_specific_setup`. This is the core function where the unique logic for this container's setup resides.
+    *   Calls `perform_container_specific_setup`. This is the core function where the unique logic for this container's/template's final setup resides.
     *   Calls `exit_script`.
-*   **Purpose:** Controls the overall flow of the specific container setup process.
+*   **Purpose:** Controls the overall flow of the specific container/template setup process.
 
 ### `parse_arguments()`
 *   **Content:**
@@ -37,7 +39,7 @@ This document outlines the detailed requirements for scripts following the `phoe
 ### `validate_inputs()`
 *   **Content:**
     *   Validate that `CTID` is a positive integer. If not, log a fatal error and call `exit_script 1`.
-    *   (Optional) Validate that `CTID` matches the script's own filename pattern (e.g., if the script is `phoenix_hypervisor_setup_901.sh`, `CTID` should be `901`). This adds robustness.
+    *   (Optional/Recommended) Validate that `CTID` matches the script's own filename pattern (e.g., if the script is `phoenix_hypervisor_setup_920.sh`, `CTID` should be `920`). This adds robustness.
 *   **Purpose:** Ensures the script received a valid CTID.
 
 ### `check_container_exists()`
@@ -47,51 +49,59 @@ This document outlines the detailed requirements for scripts following the `phoe
     *   Capture the exit code.
     *   If the exit code is non-zero (container does not exist or error), log a fatal error and call `exit_script 1`.
     *   If the exit code is 0 (container exists), log confirmation.
-*   **Purpose:** Performs a basic sanity check that the target container exists.
+*   **Purpose:** Performs a basic sanity check that the target container/template exists.
 
 ### `perform_container_specific_setup()`
 *   **Content:**
-    *   **This is the variable core of the script.**
-    *   The specific actions implemented here define the script's purpose.
-    *   Common patterns for actions within this function include:
-        *   **Executing commands inside the container:** Using `pct exec <CTID> -- <command>` to run shell commands, install software, start services, or configure applications *inside* the LXC.
-        *   **Copying files:** Transferring configuration files or data into the container (e.g., `cat localfile | pct exec <CTID> -- tee /path/in/container > /dev/null`).
-        *   **Pulling/Loading Docker Images (if Docker is available in the container):** Using `pct exec <CTID> -- docker pull <image>` or `pct exec <CTID> -- docker load -i <file>`.
-        *   **Running specific applications or scripts inside the container:** `pct exec <CTID> -- /path/to/container/script.sh`.
-        *   **Making host-level configurations specific to this container:** (Less common, but possible) Modifying files on the Proxmox host that relate specifically to this container instance.
-        *   **Waiting for services:** Implementing loops or checks to ensure a service started inside the container is fully ready before proceeding.
+    *   **This is the variable core of the script, and its primary function depends on the container type:**
+    *   **If Target is a Template (`is_template: true` in config):**
+        *   Execute commands inside the container to finalize the template environment (e.g., `pct exec <CTID> -- apt install vllm`, configure services).
+        *   Verify the environment is correctly set up (e.g., `pct exec <CTID> -- vllm --version`, check service status).
+        *   **Crucially:** Shut down the container: `pct shutdown "$CTID"`.
+        *   Wait for shutdown.
+        *   Create the ZFS snapshot: `pct snapshot create "$CTID" "<template_snapshot_name_from_config>"`.
+        *   Log snapshot creation success.
+        *   Start the container: `pct start "$CTID"`.
+        *   Wait for start.
+    *   **If Target is a Standard Container (`is_template: false` in config):**
+        *   Execute commands inside the container for final application setup (e.g., `pct exec <CTID> -- docker run ...`, start services, configure applications).
+        *   Copy files into the container if needed.
+        *   Pull/Load Docker Images if needed.
+        *   Run specific applications or scripts inside the container.
+        *   Make host-level configurations specific to this container if needed.
+        *   Wait for services/applications to be ready if needed.
     *   This function should log its actions and check the success of critical commands.
-    *   It should implement its own idempotency checks where applicable (e.g., check if a file already exists, check if a service is already running).
-*   **Purpose:** Executes the unique sequence of steps required to finalize the setup of the specific LXC container this script is associated with.
+    *   It MUST implement idempotency checks for its core actions (e.g., check if a service is running, check if a snapshot exists before creating it).
+*   **Purpose:** Executes the unique sequence of steps required to finalize the setup of the specific LXC container or template this script is associated with, including the critical snapshot creation step for templates.
 
 ### `exit_script(exit_code)`
 *   **Content:**
     *   Accept an integer `exit_code`.
     *   If `exit_code` is 0:
-        *   Log a success message (e.g., "Specific setup for container CTID completed successfully").
+        *   Log a success message (e.g., "Setup for container/template CTID completed successfully. Snapshot 'name' created." for templates, "Setup for container CTID completed." for standard containers).
     *   If `exit_code` is non-zero:
-        *   Log a failure message indicating the script encountered an error during the specific setup.
+        *   Log a failure message indicating the script encountered an error during the specific setup (e.g., "Setup for container/template CTID failed during <step>.").
     *   Ensure logs are flushed.
     *   Exit the script with the provided `exit_code`.
 *   **Purpose:** Provides a single point for script termination, ensuring final logging and correct exit status based on the outcome of the specific setup.
 
 ## 3. Naming Convention & Discovery
 
-*   **Naming:** Scripts MUST follow the exact naming pattern: `phoenix_hypervisor_setup_<CTID>.sh`, where `<CTID>` is the numerical Container ID of the container they are meant to configure (e.g., `phoenix_hypervisor_setup_901.sh`).
-*   **Location:** Scripts are expected to be located in a designated directory, likely `/usr/local/phoenix_hypervisor/bin/`, where the orchestrator can find them.
-*   **Discovery:** The orchestrator (`phoenix_establish_hypervisor.sh`) dynamically constructs the potential script name based on the `CTID` it's currently processing and checks for the file's existence and executability at the expected path.
+*   **Naming:** Scripts MUST follow the exact naming pattern: `phoenix_hypervisor_setup_<CTID>.sh`, where `<CTID>` is the numerical Container ID of the container/template they are meant to configure (e.g., `phoenix_hypervisor_setup_920.sh` for template 920, `phoenix_hypervisor_setup_950.sh` for container 950).
+*   **Location:** Scripts are expected to be located in the designated directory: `/usr/local/phoenix_hypervisor/bin/`.
+*   **Discovery:** The orchestrator (`phoenix_establish_hypervisor.sh`) dynamically constructs the potential script name based on the `CTID` it's currently processing and checks for the file's existence and executability at the standard path `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_setup_<CTID>.sh`.
 
 ## 4. Input & Environment
 
 *   **Primary Input:** `CTID` (integer) passed as the first and only command-line argument by the orchestrator.
-*   **Environment Variables:** The orchestrator may set specific environment variables for the script to use (e.g., paths defined in `phoenix_hypervisor_config.json`). Scripts should be designed to consume these if needed.
-*   **Configuration Access:** Scripts may parse `phoenix_lxc_configs.json` to retrieve the specific configuration block for the container they are setting up, if required for their logic.
+*   **Environment Variables:** The orchestrator may set specific environment variables for the script to use (e.g., paths, specific configuration values like model names or ports). Scripts should be designed to consume these if needed.
+*   **Configuration Access:** Scripts may parse `phoenix_lxc_configs.json` to retrieve the specific configuration block for the container/template they are setting up, especially to access fields like `template_snapshot_name`, `vllm_model`, or `vllm_tensor_parallel_size`.
 
 ## 5. Output & Error Handling
 
-*   **Output:** Detailed logs indicating the specific customization steps taken, checks performed, and their outcomes. Logs should be sent to stdout/stderr and potentially a central log file managed by the orchestrator.
+*   **Output:** Detailed logs indicating the specific customization steps taken, checks performed, and their outcomes (e.g., "Creating snapshot 'vllm-base-snapshot' for template 920...", "Model server started in container 950."). Logs should be sent to stdout/stderr and potentially a central log file managed by the orchestrator.
 *   **Error Handling:**
     *   Standard exit codes:
-        *   `0`: Success (specific setup completed or determined it was already complete/idempotent).
-        *   Non-zero: Failure (e.g., invalid input, `pct exec` failure, critical command failure during setup).
-    *   Detailed logging is crucial for diagnosing issues with custom setups. Log messages should be clear and indicate the step where a failure occurred.
+        *   `0`: Success (specific setup completed or determined it was already complete/idempotent, snapshot created for templates).
+        *   Non-zero: Failure (e.g., invalid input, `pct` command failure, critical command failure during setup, snapshot creation failure for templates).
+    *   Detailed logging is crucial for diagnosing issues. Log messages should be clear and indicate the step where a failure occurred.

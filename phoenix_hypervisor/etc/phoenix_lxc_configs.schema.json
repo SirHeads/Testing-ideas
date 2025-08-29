@@ -26,7 +26,7 @@
             "type": "object",
             "description": "A map of LXC container configurations, keyed by container ID.",
             "patternProperties": {
-                "^(90[1-4]|999)$": {
+                "^(90[0-3]|910|920|950|999)$": {
                     "type": "object",
                     "properties": {
                         "name": {
@@ -140,6 +140,20 @@
                             "minimum": 1,
                             "maximum": 8,
                             "description": "Degree of tensor parallelism used by vLLM for the assigned model"
+                        },
+                        "is_template": {
+                            "type": "boolean",
+                            "description": "Indicates if this container configuration is for creating a reusable template snapshot."
+                        },
+                        "template_snapshot_name": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "The name of the snapshot this template container should create."
+                        },
+                        "clone_from_template_ctid": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$",
+                            "description": "The Container ID of the template to clone from when creating this container."
                         }
                     },
                     "required": [

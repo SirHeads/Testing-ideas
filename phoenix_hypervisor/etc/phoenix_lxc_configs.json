@@ -4,7 +4,98 @@
     "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
     "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
     "lxc_configs": {
+        "900": {
+            "name": "BaseTemplate",
+            "memory_mb": 2048,
+            "cores": 2,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.200/24",
+                "gw": "10.0.0.1"
+            },
+            "features": "",
+            "static_ip": "10.0.0.200/24",
+            "mac_address": "52:54:00:AA:BB:CC",
+            "gpu_assignment": "none",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "is_template": true,
+            "template_snapshot_name": "base-snapshot"
+        },
         "901": {
+            "name": "BaseTemplateGPU",
+            "memory_mb": 2048,
+            "cores": 2,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.201/24",
+                "gw": "10.0.0.1"
+            },
+            "features": "",
+            "static_ip": "10.0.0.201/24",
+            "mac_address": "52:54:00:AA:BB:CD",
+            "gpu_assignment": "0,1",
+            "portainer_role": "none",
+            "unprivileged": false,
+            "is_template": true,
+            "template_snapshot_name": "gpu-snapshot",
+            "clone_from_template_ctid": "900"
+        },
+        "902": {
+            "name": "BaseTemplateDocker",
+            "memory_mb": 2048,
+            "cores": 2,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.202/24",
+                "gw": "10.0.0.1"
+            },
+            "features": "nesting=1",
+            "static_ip": "10.0.0.202/24",
+            "mac_address": "52:54:00:AA:BB:CE",
+            "gpu_assignment": "none",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "is_template": true,
+            "template_snapshot_name": "docker-snapshot",
+            "clone_from_template_ctid": "900"
+        },
+        "903": {
+            "name": "BaseTemplateDockerGPU",
+            "memory_mb": 2048,
+            "cores": 2,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.203/24",
+                "gw": "10.0.0.1"
+            },
+            "features": "nesting=1",
+            "static_ip": "10.0.0.203/24",
+            "mac_address": "52:54:00:AA:BB:CF",
+            "gpu_assignment": "0,1",
+            "portainer_role": "none",
+            "unprivileged": false,
+            "is_template": true,
+            "template_snapshot_name": "docker-gpu-snapshot",
+            "clone_from_template_ctid": "902"
+        },
+        "910": {
             "name": "Portainer",
             "memory_mb": 32768,
             "cores": 6,
@@ -22,70 +113,55 @@
             "mac_address": "52:54:00:67:89:99",
             "gpu_assignment": "none",
             "portainer_role": "server",
-            "unprivileged": true
+            "unprivileged": true,
+            "clone_from_template_ctid": "902"
         },
-        "902": {
-            "name": "GPUtemplate",
-            "memory_mb": 32768,
-            "cores": 8,
+        "920": {
+            "name": "BaseTemplateVLLM",
+            "memory_mb": 4096,
+            "cores": 4,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
             "storage_pool": "lxc-disks",
             "storage_size_gb": 64,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.110/24",
+                "ip": "10.0.0.220/24",
                 "gw": "10.0.0.1"
             },
-            "features": "nesting=1,keyctl=1",
-            "static_ip": "10.0.0.110/24",
-            "mac_address": "52:54:00:67:89:A0",
-            "gpu_assignment": "0",
-            "portainer_role": "agent",
-            "unprivileged": false
-        },
-        "903": {
-            "name": "vllmTemplate",
-            "memory_mb": 32768,
-            "cores": 8,
-            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
-            "storage_pool": "lxc-disks",
-            "storage_size_gb": 64,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.111/24",
-                "gw": "10.0.0.1"
-            },
-            "features": "nesting=1,keyctl=1",
-            "static_ip": "10.0.0.111/24",
-            "mac_address": "52:54:00:67:89:A1",
-            "gpu_assignment": "1",
-            "portainer_role": "agent",
+            "features": "nesting=1",
+            "static_ip": "10.0.0.220/24",
+            "mac_address": "52:54:00:AA:BB:D1",
+            "gpu_assignment": "0,1",
+            "portainer_role": "none",
             "unprivileged": false,
-            "vllm_model": "/models/Qwen/Qwen2.5-Coder-7B-Instruct",
-            "vllm_tensor_parallel_size": 1
+            "is_template": true,
+            "template_snapshot_name": "vllm-base-snapshot",
+            "clone_from_template_ctid": "903",
+            "vllm_model": "/models/test-model",
+            "vllm_tensor_parallel_size": 2
         },
-        "904": {
-            "name": "llamacppTemplate",
-            "memory_mb": 32768,
+        "950": {
+            "name": "vllmQwen3Coder",
+            "memory_mb": 40960,
             "cores": 8,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
             "storage_pool": "lxc-disks",
-            "storage_size_gb": 64,
+            "storage_size_gb": 100,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.112/24",
+                "ip": "10.0.0.150/24",
                 "gw": "10.0.0.1"
             },
             "features": "nesting=1,keyctl=1",
-            "static_ip": "10.0.0.112/24",
-            "mac_address": "52:54:00:67:89:A2",
+            "static_ip": "10.0.0.150/24",
+            "mac_address": "52:54:00:67:89:B0",
             "gpu_assignment": "0,1",
             "portainer_role": "agent",
             "unprivileged": false,
-            "vllm_model": "/models/Qwen/Qwen2.5-Coder-7B-Instruct",
+            "clone_from_template_ctid": "920",
+            "vllm_model": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-5bit",
             "vllm_tensor_parallel_size": 2
         }
     }
