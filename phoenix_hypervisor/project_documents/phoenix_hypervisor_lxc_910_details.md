@@ -1,14 +1,12 @@
-# LXC Container 910 - Portainer - Requirements & Details
+# LXC Container 910 - `Portainer` - Details
 
 ## Overview
 
 This document details the purpose, configuration, and setup process for LXC container `910`, named `Portainer`. This container serves as the central management hub for the Docker environments within the Phoenix Hypervisor system. It runs the Portainer Server, providing a web-based UI to manage Docker containers running on the Proxmox host and other Portainer Agents. Unlike the base templates, this is a final, functional application container.
 
-## Core Purpose & Function
+## Purpose
 
-*   **Role:** Portainer Server.
-*   **Primary Function:** Host the Portainer web application, allowing centralized management of Docker environments across the system. This includes managing containers, images, networks, and volumes on the Proxmox host and in other LXC containers running the Portainer Agent.
-*   **Usage:** This is a permanent, running service container. It is created by cloning from an existing Docker-enabled template snapshot.
+LXC container `910`'s primary purpose is to host the Portainer web application, allowing centralized management of Docker environments across the system. This includes managing containers, images, networks, and volumes on the Proxmox host and in other LXC containers running the Portainer Agent. This is a permanent, running service container, created by cloning from an existing Docker-enabled template snapshot.
 
 ## Configuration (`phoenix_lxc_configs.json`)
 
@@ -34,36 +32,46 @@ This document details the purpose, configuration, and setup process for LXC cont
 *   **Cloning Metadata:**
     *   **`clone_from_template_ctid`:** `902` (Indicates this container is created by cloning from container `902`'s `docker-snapshot`)
 
-## Specific Setup Script (`phoenix_hypervisor_setup_910.sh`) Requirements
+## Specific Setup Script (`phoenix_hypervisor/bin/phoenix_hypervisor_lxc_910.sh`) Requirements
 
 The `phoenix_hypervisor_setup_910.sh` script is responsible for the final configuration of the `Portainer` container *after* it has been cloned from `902`'s `docker-snapshot` and booted. Its core responsibilities are:
 
-1.  **Portainer Server Deployment:**
-    *   Ensure the container is fully booted and Docker is running (inherited from the `902` template).
-    *   Pull the official Portainer Server Docker image (e.g., `portainer/portainer-ce:<version>`).
-    *   Run the Portainer Server Docker container with the correct configuration:
-        *   Map the necessary ports (e.g., `-p 9443:9443` for the web UI).
-        *   Mount the Docker socket (`-v /var/run/docker.sock:/var/run/docker.sock`) to allow Portainer to manage the host's Docker instance.
-        *   Mount a volume for persistent Portainer data (`-v portainer_data:/data`).
-        *   Set the container name (e.g., `--name portainer`).
-        *   Configure restart policies (e.g., `--restart=always`).
-
-2.  **Initial Configuration & Verification:**
-    *   Wait briefly to allow the Portainer service to initialize.
-    *   Perform checks to ensure the Portainer container is running (`docker ps`).
-    *   (Optional/Advanced) If possible, automate initial setup steps like setting the admin password via the Portainer API (though this often requires the service to be initially accessed via UI).
-    *   Log a message indicating the Portainer Server should now be accessible at `https://10.0.0.99:9443`.
-
-3.  **Final State:**
+*   **Portainer Server Deployment:**
+    *   Ensures the container is fully booted and Docker is running (inherited from the `902` template).
+    *   Pulls the official Portainer Server Docker image (`portainer/portainer-ce:2.33.1-lts`).
+    *   Runs the Portainer Server Docker container with the correct configuration:
+        *   Maps the necessary ports (e.g., `-p 9443:9443` for the web UI).
+        *   Mounts the Docker socket (`-v /var/run/docker.sock:/var/run/docker.sock`) to allow Portainer to manage the host's Docker instance.
+        *   Mounts a volume for persistent Portainer data (`-v portainer_data:/data`).
+        *   Sets the container name (e.g., `--name portainer`).
+        *   Configures restart policies (e.g., `--restart=always`).
+*   **Initial Configuration & Verification:**
+    *   Waits briefly to allow the Portainer service to initialize.
+    *   Performs checks to ensure the Portainer container is running (`docker ps`).
+    *   (Optional/Advanced) If possible, automates initial setup steps like setting the admin password via the Portainer API (though this often requires the service to be initially accessed via UI).
+    *   Logs a message indicating the Portainer Server should now be accessible at `https://10.0.0.99:9443`. The initial admin password is set via the Portainer UI upon first access.
+*   **Final State:**
     *   The script ensures the Portainer service is up and running.
     *   It does *not* create a ZFS snapshot for templating, as this is a final application container.
 
 ## Interaction with Phoenix Hypervisor System
 
 *   **Creation:** `phoenix_establish_hypervisor.sh` will identify `910` as a standard container (not `is_template: true`) and see that `clone_from_template_ctid: "902"`. It will therefore call the cloning process (`phoenix_hypervisor_clone_lxc.sh`) to create `910` by cloning `902`'s `docker-snapshot`.
-*   **Setup:** After cloning and initial boot, `phoenix_establish_hypervisor.sh` will execute `phoenix_hypervisor_setup_910.sh`.
-*   **Consumption:** Other containers configured as Portainer Agents (`portainer_role: "agent"`) will connect to this server using its IP (`10.0.0.99`) and the configured agent port (`9001` as defined in `phoenix_hypervisor_config.json`).
-*   **Idempotency:** The setup script (`phoenix_hypervisor_setup_910.sh`) should be idempotent. If the Portainer container is already running, it should skip the deployment steps and just log that the service is already configured.
+*   **Setup:** After cloning and initial boot, `phoenix_establish_hypervisor.sh` will execute `phoenix_hypervisor_lxc_910.sh`. This script takes the CTID as an argument.
+*   **Consumption:** Other containers configured as Portainer Agents (`portainer_role: "agent"`) will connect to this server using its IP (`10.0.0.99`) and the configured agent port (`9001` as defined in `phoenix_hypervisor_config.json`). The script dynamically retrieves the container IP from `phoenix_lxc_configs.json` and the Portainer server port from `phoenix_hypervisor_config.json`.
+*   **Idempotency:** The setup script (`phoenix_hypervisor_lxc_910.sh`) should be idempotent. If the Portainer container is already running, it should skip the deployment steps and just log that the service is already configured.
+
+## Exit Codes
+
+The script `phoenix_hypervisor_lxc_910.sh` uses the following exit codes:
+
+*   `0`: Success (Portainer Server deployed/running, accessible).
+*   `1`: General error.
+*   `2`: Invalid input arguments.
+*   `3`: Container 910 does not exist or is not accessible.
+*   `4`: Docker is not functional inside container 910.
+*   `5`: Portainer Server container deployment failed.
+*   `6`: Portainer Server verification (accessibility) failed.
 
 ## Key Characteristics Summary
 

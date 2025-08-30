@@ -8,19 +8,17 @@ This document summarizes the purpose, responsibilities, and key interactions of 
 
 The `phoenix_hypervisor_create_lxc.sh` script is responsible for creating a single LXC container on the Proxmox host. It takes a Container ID (CTID) as input, retrieves the corresponding configuration from `phoenix_lxc_configs.json`, and executes the necessary `pct create` command to instantiate the container with the specified resources and settings.
 
-## Key Responsibilities
+## Key Aspects & Responsibilities
 
-1.  **Idempotent Container Creation:**
-    *   Receive a CTID as a command-line argument.
-    *   Check if an LXC container with that CTID already exists on the host (e.g., using `pct status`).
-    *   If the container exists, log that creation is being skipped and exit successfully.
-    *   If the container does not exist, proceed with creation.
-
-2.  **Configuration Parsing:**
-    *   Re-parse the `phoenix_lxc_configs.json` file to retrieve the specific configuration block (`config_block`) associated with the provided CTID.
-
-3.  **`pct create` Command Construction & Execution:**
-    *   Dynamically construct the `pct create` command by mapping fields from the `config_block` to `pct` arguments:
+*   **Idempotent Container Creation:**
+    *   Receives a CTID as a command-line argument.
+    *   Checks if an LXC container with that CTID already exists on the host (e.g., using `pct status`).
+    *   If the container exists, logs that creation is being skipped and exits successfully.
+    *   If the container does not exist, proceeds with creation.
+*   **Configuration Parsing:**
+    *   Re-parses the `phoenix_lxc_configs.json` file to retrieve the specific configuration block (`config_block`) associated with the provided CTID.
+*   **`pct create` Command Construction & Execution:**
+    *   Dynamically constructs the `pct create` command by mapping fields from the `config_block` to `pct` arguments:
         *   `CTID`: From the script argument.
         *   `--hostname`: From `config_block.name`.
         *   `--memory`: From `config_block.memory_mb`.
@@ -32,18 +30,15 @@ The `phoenix_hypervisor_create_lxc.sh` script is responsible for creating a sing
         *   `--features`: Directly from `config_block.features`.
         *   `--unprivileged`: Mapped from the boolean `config_block.unprivileged` (true -> 1, false -> 0).
         *   `--hwaddress`: From `config_block.mac_address`.
-    *   Execute the constructed `pct create` command.
-
-4.  **Post-Creation Startup:**
-    *   If `pct create` is successful, automatically start the newly created container using `pct start <CTID>`.
-
-5.  **Execution Context:**
+    *   Executes the constructed `pct create` command.
+*   **Post-Creation Startup:**
+    *   If `pct create` is successful, automatically starts the newly created container using `pct start <CTID>`.
+*   **Execution Context:**
     *   Runs non-interactively on the Proxmox host.
     *   Utilizes the `pct` command-line tool extensively.
-
-6.  **Logging & Error Handling:**
-    *   Provide detailed logs of the process, including checks performed, commands run, and outcomes.
-    *   Report success or failure back to the calling orchestrator (`phoenix_establish_hypervisor.sh`) via a standard exit code (0 for success, non-zero for failure).
+*   **Logging & Error Handling:**
+    *   Provides detailed logs of the process, including checks performed, commands run, and outcomes.
+    *   Reports success or failure back to the calling orchestrator (`phoenix_establish_hypervisor.sh`) via specific exit codes (0 for success, 2 for invalid input/config, 3 for container creation failure, 4 for container start failure).
 
 ## Interaction with Other Components
 
@@ -56,4 +51,4 @@ The `phoenix_hypervisor_create_lxc.sh` script is responsible for creating a sing
 ## Output & Error Handling
 
 *   **Output:** Detailed logs indicating the steps taken (check existence, parse config, run `pct create`, run `pct start`) and the results.
-*   **Error Handling:** Standard exit codes (0 for success, non-zero for failure) to communicate status to the orchestrator. Detailed logging provides context for any failures.
+*   **Error Handling:** Specific exit codes (0 for success, 2 for invalid input/config, 3 for container creation failure, 4 for container start failure) to communicate status to the orchestrator. Detailed logging provides context for any failures.

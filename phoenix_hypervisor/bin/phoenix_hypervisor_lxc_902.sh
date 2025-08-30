@@ -1,26 +1,32 @@
 #!/bin/bash
 #
-# File: phoenix_hypervisor_setup_902.sh
-# Description: Finalizes the setup for LXC container 902 (BaseTemplateDocker) and creates the Docker ZFS snapshot.
+# File: phoenix_hypervisor_lxc_902.sh
+# Description: Finalizes the setup for LXC container 902 (BaseTemplateDocker) and creates
+#              the 'docker-snapshot' ZFS snapshot. This script installs and configures
+#              Docker Engine and the NVIDIA Container Toolkit, verifies their functionality,
+#              and prepares the container as a template for Docker-based workloads. Comments
+#              are optimized for Retrieval Augmented Generation (RAG), facilitating effective
+#              chunking and vector database indexing.
 # Version: 0.1.0
 # Author: Heads, Qwen3-coder (AI Assistant)
 #
-# This script performs final configuration steps for the BaseTemplateDocker LXC container (CTID 902).
-# It installs/configures Docker Engine and the NVIDIA Container Toolkit inside the container,
-# verifies the setup, and then shuts down the container to create the 'docker-snapshot' ZFS snapshot.
-# This snapshot serves as the foundation for other Docker-dependent templates and containers.
+# This script is a critical part of the Phoenix Hypervisor's template hierarchy,
+# specifically for environments requiring Docker containerization. The 'docker-snapshot'
+# ensures a consistent and pre-configured base for all subsequent Docker-dependent LXC containers.
 #
-# Usage: ./phoenix_hypervisor_setup_902.sh <CTID>
-#   Example: ./phoenix_hypervisor_setup_902.sh 902
+# Usage:
+#   ./phoenix_hypervisor_lxc_902.sh <CTID>
 #
 # Arguments:
-#   $1 (CTID): The Container ID, expected to be 902 for BaseTemplateDocker.
+#   - CTID (integer): The Container ID, which must be `902` for the BaseTemplateDocker.
 #
 # Requirements:
-#   - Proxmox host environment with 'pct' command available.
-#   - Container 902 must be created/cloned and accessible.
-#   - jq (for potential JSON parsing if needed).
-#   - phoenix_hypervisor_lxc_docker.sh must be available and functional.
+#   - Proxmox VE host environment with `pct` command available.
+#   - LXC container `902` must be pre-created/cloned from BaseTemplate (CTID 900) and running.
+#   - `jq` for JSON parsing (used to retrieve global configuration if needed).
+#   - `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_docker.sh` must be present and executable.
+#   - Internet access within the container for Docker and NVIDIA Container Toolkit installations.
+#   - Appropriate permissions to manage LXC containers and ZFS snapshots.
 #
 # Exit Codes:
 #   0: Success (Setup completed, snapshot created or already existed).
@@ -31,145 +37,385 @@
 #   5: Snapshot creation failed.
 #   6: Container shutdown/start failed.
 
-# =====================================================================================
-# main()
-#   Content:
-#     - Entry point.
-#     - Calls parse_arguments to get the CTID.
-#     - Calls validate_inputs (CTID).
-#     - Calls check_container_exists.
-#     - Calls check_if_snapshot_exists. If snapshot exists, log and exit 0 (idempotency).
-#     - Calls install_and_configure_docker_in_container by calling the common script.
-#     - Calls verify_docker_setup_inside_container (e.g., run docker info).
-#     - Calls shutdown_container.
-#     - Calls create_docker_snapshot.
-#     - Calls start_container.
-#     - Calls exit_script.
-#   Purpose: Controls the overall flow of the BaseTemplateDocker setup and snapshot creation.
-# =====================================================================================
+# --- Global Variables and Constants ---
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json" # Needed for global NVIDIA settings
+HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json" # Needed for global NVIDIA settings
 
-# --- Main Script Execution Starts Here ---
+# --- Logging Functions ---
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_lxc_902.sh: $*" | tee -a "$MAIN_LOG_FILE"
+}
 
-# =====================================================================================
-# parse_arguments()
-#   Content:
-#     - Check the number of command-line arguments. Expect exactly one (CTID=902).
-#     - If incorrect number of arguments, log a usage error message and call exit_script 2.
-#     - Assign the first argument to a variable CTID.
-#     - Log the received CTID.
-#   Purpose: Retrieves the CTID from the command-line arguments.
-# =====================================================================================
+log_error() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_lxc_902.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
+}
 
-# =====================================================================================
-# validate_inputs()
-#   Content:
-#     - Validate that CTID is '902'. While flexible, this script is specifically for 902.
-#         - If CTID is not '902', log a warning but continue (or error if strict).
-#     - Validate that CTID is a positive integer. If not, log error and call exit_script 2.
-#   Purpose: Ensures the script received the expected CTID.
-# =====================================================================================
+# --- Exit Function ---
+exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
+
+# --- Script Variables ---
+CTID=""
+SNAPSHOT_NAME="docker-snapshot" # Defined in requirements
 
 # =====================================================================================
-# check_container_exists()
-#   Content:
-#     - Log checking for the existence and status of container CTID.
-#     - Execute `pct status "$CTID" > /dev/null 2>&1`.
-#     - Capture the exit code.
-#     - If the exit code is non-zero (container does not exist or error), log a fatal error and call exit_script 3.
-#     - If the exit code is 0 (container exists), log confirmation.
-#   Purpose: Performs a basic sanity check that the target BaseTemplateDocker container exists and is manageable.
+# Function: parse_arguments
+# Description: Parses and validates the command-line arguments, expecting a single
+#              argument representing the Container ID (CTID).
+#
+# Parameters:
+#   - $@: All command-line arguments.
+#
+# Global Variables Modified:
+#   - `CTID`: Stores the Container ID extracted from the arguments.
+#
+# Exit Conditions:
+#   - Exits with code 2 if an incorrect number of arguments is provided.
+#
+# RAG Keywords: argument parsing, command-line interface, script input, CTID.
 # =====================================================================================
+parse_arguments() {
+    if [ "$#" -ne 1 ]; then
+        log_error "Usage: $0 <CTID>"
+        exit_script 2
+    fi
+    CTID="$1"
+    log_info "Received CTID: $CTID"
+}
 
 # =====================================================================================
-# check_if_snapshot_exists()
-#   Content:
-#     - Log checking for the existence of the 'docker-snapshot'.
-#     - Execute `pct snapshot list "$CTID"` and capture output.
-#     - Parse the output (e.g., using `jq` or `grep`) to see if 'docker-snapshot' is listed.
-#     - If 'docker-snapshot' exists:
-#         - Log that the snapshot already exists, implying setup is complete or was previously done.
-#         - Call exit_script 0. (Idempotency)
-#     - If 'docker-snapshot' does not exist:
-#         - Log that the snapshot needs to be created.
-#         - Return/Continue to the next step.
-#   Purpose: Implements idempotency by checking if the final state (snapshot) already exists.
+# Function: validate_inputs
+# Description: Validates the provided Container ID (CTID) to ensure it is a positive
+#              integer and, specifically, that it matches `902` as this script is
+#              tailored for the BaseTemplateDocker. A warning is logged if the CTID is not 902.
+#
+# Parameters: None (operates on global script variable `CTID`)
+#
+# Exit Conditions:
+#   - Exits with code 2 if `CTID` is not a valid positive integer.
+#
+# RAG Keywords: input validation, CTID validation, BaseTemplateDocker, script specificity.
 # =====================================================================================
+validate_inputs() {
+    if ! [[ "$CTID" =~ ^[0-9]+$ ]] || [ "$CTID" -le 0 ]; then
+        log_error "FATAL: Invalid CTID '$CTID'. Must be a positive integer."
+        exit_script 2
+    fi
+    if [ "$CTID" -ne 902 ]; then
+        log_error "WARNING: This script is specifically designed for CTID 902 (BaseTemplateDocker). Proceeding, but verify usage."
+    fi
+    log_info "Input validation passed."
+}
 
 # =====================================================================================
-# install_and_configure_docker_in_container()
-#   Content:
-#     - Log starting Docker Engine/NVIDIA Container Toolkit setup inside container CTID.
-#     - Define path to the common Docker script: DOCKER_SCRIPT="/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_docker.sh"
-#     - Check if DOCKER_SCRIPT exists and is executable. Fatal error if not.
-#     - Execute the common Docker script, passing CTID and necessary parameters (e.g., portainer_role="none"):
-#         - Execute: "$DOCKER_SCRIPT" "$CTID" "none" # "none" for portainer_role
-#         - Capture exit code.
-#         - If the exit code is non-zero, log a fatal error indicating Docker setup failed and call exit_script 4.
-#     - Log Docker Engine/NVIDIA Container Toolkit setup completed successfully inside container CTID.
-#   Purpose: Delegates the task of installing and configuring Docker software to the common script.
+# Function: check_container_exists
+# Description: Verifies the existence and manageability of the target LXC container
+#              (CTID 902). This is a crucial sanity check before proceeding with
+#              any Docker-specific configuration or snapshot operations.
+#
+# Parameters: None (operates on global script variable `CTID`)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct status`).
+#
+# Exit Conditions:
+#   - Exits with code 3 if the container does not exist or is not accessible.
+#
+# RAG Keywords: container existence, LXC status, BaseTemplateDocker, Proxmox `pct`, error handling.
 # =====================================================================================
+check_container_exists() {
+    log_info "Checking for existence of container CTID: $CTID"
+    if ! pct status "$CTID" > /dev/null 2>&1; then
+        log_error "FATAL: Container $CTID does not exist or is not accessible."
+        exit_script 3
+    fi
+    log_info "Container $CTID exists."
+}
 
 # =====================================================================================
-# verify_docker_setup_inside_container()
-#   Content:
-#     - Log verifying Docker setup inside container CTID.
-#     - Execute `pct exec "$CTID" -- docker info` and capture output and exit code.
-#     - Print the output of `docker info` to the terminal/log for user visibility.
-#     - If the exit code is non-zero, log a fatal error indicating verification failed and call exit_script 4.
-#     - (Optional/Additional) Run a simple test container:
-#         - Log running docker hello-world test.
-#         - Execute: `pct exec "$CTID" -- docker run --rm hello-world`
-#         - Capture exit code. If non-zero, log warning/error.
-#     - Log Docker verification successful.
-#   Purpose: Runs docker info (and optionally hello-world) inside the container to confirm Docker is running.
+# Function: check_if_snapshot_exists
+# Description: Checks if the 'docker-snapshot' ZFS snapshot already exists for the
+#              target container (CTID 902). This function ensures idempotency,
+#              preventing redundant snapshot creation if the setup was previously completed.
+#
+# Parameters: None (operates on global script variables `CTID` and `SNAPSHOT_NAME`)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot list`).
+#   - `grep`: Used for parsing snapshot list output.
+#
+# Exit Conditions:
+#   - Exits with code 0 if the 'docker-snapshot' already exists.
+#   - Continues execution if the snapshot does not exist.
+#
+# RAG Keywords: ZFS snapshot, idempotency, Docker template, container state, Proxmox `pct`.
 # =====================================================================================
+check_if_snapshot_exists() {
+    log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
+    if pct snapshot list "$CTID" | grep -q "$SNAPSHOT_NAME"; then
+        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping setup."
+        exit_script 0
+    else
+        log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
+    fi
+}
 
 # =====================================================================================
-# shutdown_container()
-#   Content:
-#     - Log initiating shutdown of container CTID.
-#     - Execute: `pct shutdown "$CTID"`
-#     - Capture exit code. If non-zero, log error and call exit_script 6.
-#     - Implement a loop to wait for the container to reach 'stopped' status using `pct status "$CTID"`.
-#         - Use a timeout and sleep interval.
-#         - If timeout is exceeded before 'stopped', log error and call exit_script 6.
-#     - Log container CTID shutdown successfully.
-#   Purpose: Safely shuts down the container before creating the ZFS snapshot.
+# Function: install_and_configure_docker_in_container
+# Description: Orchestrates the installation and configuration of Docker Engine and
+#              the NVIDIA Container Toolkit within the BaseTemplateDocker container (CTID 902).
+#              It delegates the core installation logic to a common Docker script,
+#              passing a "none" role for Portainer as this is a base template.
+#
+# Parameters: None (operates on global script variable `CTID`)
+#
+# Dependencies:
+#   - `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_docker.sh`: The common script for Docker setup.
+#
+# Exit Conditions:
+#   - Exits with code 4 if the common Docker script is missing/not executable or if the Docker setup fails.
+#
+# RAG Keywords: Docker installation, NVIDIA Container Toolkit, LXC container,
+#               BaseTemplateDocker, common script, error handling.
 # =====================================================================================
+install_and_configure_docker_in_container() {
+    log_info "Starting Docker Engine/NVIDIA Container Toolkit setup inside container CTID: $CTID"
+    local docker_script="/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_docker.sh"
+
+    if [ ! -f "$docker_script" ] || [ ! -x "$docker_script" ]; then
+        log_error "FATAL: Common Docker script not found or not executable: $docker_script"
+        exit_script 4
+    fi
+
+    # For CTID 902, portainer_role is "none" as it's a base template for Docker
+    local portainer_role="none"
+    local portainer_server_ip="" # Not needed for role "none"
+    local portainer_agent_port="" # Not needed for role "none"
+
+    log_info "Executing common Docker setup script for CTID $CTID with PORTAINER_ROLE=$portainer_role..."
+    PORTAINER_ROLE="$portainer_role" \
+    PORTAINER_SERVER_IP="$portainer_server_ip" \
+    PORTAINER_AGENT_PORT="$portainer_agent_port" \
+    "$docker_script" "$CTID"
+    local exit_status=$?
+
+    if [ "$exit_status" -ne 0 ]; then
+        log_error "FATAL: Common Docker setup script failed for CTID $CTID with exit code $exit_status."
+        exit_script 4
+    fi
+    log_info "Docker Engine/NVIDIA Container Toolkit setup completed successfully inside container $CTID."
+}
 
 # =====================================================================================
-# create_docker_snapshot()
-#   Content:
-#     - Log creating ZFS snapshot 'docker-snapshot' for container CTID.
-#     - Execute: `pct snapshot create "$CTID" "docker-snapshot"`
-#     - Capture exit code.
-#     - If the exit code is non-zero, log a fatal error indicating snapshot creation failed and call exit_script 5.
-#     - If the exit code is 0, log successful creation of 'docker-snapshot'.
-#   Purpose: Creates the ZFS snapshot for the Docker template hierarchy.
+# Function: verify_docker_setup_inside_container
+# Description: Verifies the successful installation and configuration of Docker Engine
+#              and the NVIDIA Container Toolkit within the specified LXC container (CTID).
+#              It executes `docker info` and an optional `hello-world` test to confirm
+#              Docker's operational status.
+#
+# Parameters: None (operates on global script variable `CTID`)
+#
+# Dependencies:
+#   - `pct exec`: For executing commands inside the LXC container.
+#   - `docker`: Docker CLI, expected to be available in the container.
+#
+# Exit Conditions:
+#   - Exits with code 4 if the `docker info` command fails, indicating a problem with the Docker setup.
+#   - Logs a warning if the `docker run hello-world` test fails, but continues execution.
+#
+# RAG Keywords: Docker verification, container runtime, `docker info`, `hello-world` test,
+#               LXC container, error handling, diagnostic.
 # =====================================================================================
+verify_docker_setup_inside_container() {
+    log_info "Verifying Docker setup inside container CTID: $CTID."
+    local docker_info_output
+    if ! docker_info_output=$(pct exec "$CTID" -- docker info 2>&1); then
+        log_error "FATAL: Docker setup verification failed for CTID $CTID. 'docker info' command failed."
+        echo "$docker_info_output" | log_error # Log the output of docker info for debugging
+        exit_script 4
+    fi
+    log_info "Docker setup verification successful for CTID $CTID. docker info output:"
+    echo "$docker_info_output" | while IFS= read -r line; do log_info "$line"; done
+
+    log_info "Running docker hello-world test inside container $CTID..."
+    local hello_world_output
+    if ! hello_world_output=$(pct exec "$CTID" -- docker run --rm hello-world 2>&1); then
+        log_error "WARNING: Docker hello-world test failed for CTID $CTID."
+        echo "$hello_world_output" | log_error
+    else
+        log_info "Docker hello-world test successful for CTID $CTID."
+        echo "$hello_world_output" | while IFS= read -r line; do log_info "$line"; done
+    fi
+}
 
 # =====================================================================================
-# start_container()
-#   Content:
-#     - Log starting container CTID after snapshot creation.
-#     - Execute: `pct start "$CTID"`
-#     - Capture exit code. If non-zero, log error and call exit_script 6.
-#     - Implement a loop to wait for the container to reach 'running' status using `pct status "$CTID"`.
-#         - Use a timeout and sleep interval.
-#         - If timeout is exceeded before 'running', log error and call exit_script 6.
-#     - Log container CTID started successfully.
-#   Purpose: Restarts the container after the snapshot has been created.
+# Function: shutdown_container
+# Description: Safely shuts down the specified LXC container (CTID). It initiates
+#              the shutdown process using `pct shutdown` and then polls the container's
+#              status until it reaches a 'stopped' state or a timeout occurs.
+#
+# Parameters:
+#   - $1 (CTID): The Container ID of the LXC container to shut down.
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct shutdown`, `pct status`).
+#
+# Exit Conditions:
+#   - Exits with code 6 if the shutdown initiation fails or if the container
+#     does not stop within the defined timeout.
+#
+# RAG Keywords: container shutdown, LXC management, Proxmox `pct`, graceful shutdown,
+#               timeout, error handling.
 # =====================================================================================
+# =====================================================================================
+shutdown_container() {
+    local ctid="$1"
+    local timeout=60 # seconds
+    local interval=3 # seconds
+    local elapsed_time=0
+
+    log_info "Initiating shutdown of container $ctid..."
+    if ! pct shutdown "$ctid"; then
+        log_error "FATAL: Failed to initiate shutdown for container $ctid."
+        exit_script 6
+    fi
+
+    log_info "Waiting for container $ctid to stop..."
+    while [ "$elapsed_time" -lt "$timeout" ]; do
+        if pct status "$ctid" | grep -q "status: stopped"; then
+            log_info "Container $ctid is stopped."
+            return 0
+        fi
+        sleep "$interval"
+        elapsed_time=$((elapsed_time + interval))
+    done
+
+    log_error "FATAL: Container $ctid did not stop within ${timeout} seconds."
+    exit_script 6
+}
 
 # =====================================================================================
-# exit_script(exit_code)
-#   Content:
-#     - Accept an integer exit_code.
-#     - If exit_code is 0:
-#         - Log a success message (e.g., "BaseTemplateDocker CTID 902 setup and 'docker-snapshot' creation completed successfully." or "BaseTemplateDocker CTID 902 'docker-snapshot' already exists, skipping setup.").
-#     - If exit_code is non-zero:
-#         - Log a failure message indicating the script encountered an error during setup/snapshot creation, specifying the stage if possible.
-#     - Ensure logs are flushed.
-#     - Exit the script with the provided exit_code.
-#   Purpose: Provides a single point for script termination, ensuring final logging and correct exit status.
+# Function: create_docker_snapshot
+# Description: Creates the 'docker-snapshot' ZFS snapshot for the specified LXC container
+#              (CTID 902). This snapshot captures the state of the BaseTemplateDocker
+#              after Docker Engine and NVIDIA Container Toolkit have been successfully
+#              integrated, making it ready for cloning into Docker-enabled LXC containers.
+#
+# Parameters: None (operates on global script variables `CTID` and `SNAPSHOT_NAME`)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot create`).
+#
+# Exit Conditions:
+#   - Exits with code 5 if the snapshot creation fails.
+#
+# RAG Keywords: ZFS snapshot, Docker template, container imaging, Docker integration,
+#               Proxmox `pct`, error handling.
 # =====================================================================================
+create_docker_snapshot() {
+    log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $CTID..."
+    if ! pct snapshot create "$CTID" "$SNAPSHOT_NAME"; then
+        log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $CTID."
+        exit_script 5
+    fi
+    log_info "Snapshot '$SNAPSHOT_NAME' created successfully for container $CTID."
+}
+
+# =====================================================================================
+# Function: start_container
+# Description: Restarts the specified LXC container (CTID) after the ZFS snapshot
+#              has been successfully created. It initiates the startup using `pct start`
+#              and then polls the container's status until it reaches a 'running' state
+#              or a timeout occurs.
+#
+# Parameters:
+#   - $1 (CTID): The Container ID of the LXC container to start.
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct start`, `pct status`).
+#
+# Exit Conditions:
+#   - Exits with code 6 if the startup initiation fails or if the container
+#     does not start within the defined timeout.
+#
+# RAG Keywords: container startup, LXC management, Proxmox `pct`, container restart,
+#               timeout, error handling.
+# =====================================================================================
+start_container() {
+    local ctid="$1"
+    local timeout=60 # seconds
+    local interval=3 # seconds
+    local elapsed_time=0
+
+    log_info "Starting container $ctid after snapshot creation..."
+    if ! pct start "$ctid"; then
+        log_error "FATAL: Failed to start container $ctid."
+        exit_script 6
+    fi
+
+    log_info "Waiting for container $ctid to start..."
+    while [ "$elapsed_time" -lt "$timeout" ]; do
+        if pct status "$ctid" | grep -q "status: running"; then
+            log_info "Container $ctid is running."
+            return 0
+        fi
+        sleep "$interval"
+        elapsed_time=$((elapsed_time + interval))
+    done
+
+    log_error "FATAL: Container $ctid did not start within ${timeout} seconds."
+    exit_script 6
+}
+
+# =====================================================================================
+# Function: main
+# Description: The main entry point for the BaseTemplateDocker (CTID 902) setup script.
+#              It orchestrates the entire process of preparing the Docker-enabled template,
+#              including argument parsing, input validation, checking for existing
+#              snapshots, installing and verifying Docker components, shutting down,
+#              creating the 'docker-snapshot', and restarting the container.
+#
+# Parameters:
+#   - $@: All command-line arguments passed to the script.
+#
+# Dependencies:
+#   - `parse_arguments()`
+#   - `validate_inputs()`
+#   - `check_container_exists()`
+#   - `check_if_snapshot_exists()`
+#   - `install_and_configure_docker_in_container()`
+#   - `verify_docker_setup_inside_container()`
+#   - `shutdown_container()`
+#   - `create_docker_snapshot()`
+#   - `start_container()`
+#   - `exit_script()`
+#
+# RAG Keywords: main function, script entry point, BaseTemplateDocker setup, ZFS snapshot,
+#               Docker configuration, LXC management.
+# =====================================================================================
+# =====================================================================================
+main() {
+    parse_arguments "$@"
+    validate_inputs
+    check_container_exists
+    check_if_snapshot_exists # Exits 0 if snapshot already exists
+
+    install_and_configure_docker_in_container
+    verify_docker_setup_inside_container "$CTID"
+    shutdown_container "$CTID"
+    create_docker_snapshot "$CTID"
+    start_container "$CTID"
+
+    exit_script 0
+}
+
+# Call the main function
+main "$@"

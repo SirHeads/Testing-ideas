@@ -10,27 +10,23 @@ The `phoenix_lxc_configs.json` file is the core definition file for all LXC cont
 
 ## Key Responsibilities
 
-1.  **Define Container and Template Blueprints:**
+*   **Define Container and Template Blueprints:**
     *   Contains a map/object where each key is a Container ID (CTID) and the value is the detailed configuration object.
     *   Specifies per-container/template settings like name, memory, CPU cores, storage details, network configuration, LXC features, and security settings.
     *   **For Templates:** Includes flags and metadata to identify them and define their role in the snapshot hierarchy.
-
-2.  **Manage Snapshot-Based Templates:**
+*   **Manage Snapshot-Based Templates:**
     *   Defines which containers are "templates" (`is_template`: true).
     *   Specifies the name of the ZFS snapshot a template container should create (`template_snapshot_name`).
     *   Defines the source template for cloning (`clone_from_template_ctid`), enabling a chain of base templates (e.g., Base OS -> Base+Docker -> Base+vLLM).
-
-3.  **Specify Specialized Configurations:**
+*   **Specify Specialized Configurations:**
     *   Defines GPU assignment for containers/templates (`gpu_assignment`: "none", "0", "1", "0,1").
     *   Defines the role within the Portainer management system (`portainer_role`: "server", "agent", "none").
     *   Includes placeholders for AI-specific configurations (e.g., `vllm_model`, `vllm_tensor_parallel_size`).
-
-4.  **Provide Global NVIDIA Settings:**
+*   **Provide Global NVIDIA Settings:**
     *   Defines the expected NVIDIA driver version (`nvidia_driver_version`) on the host.
     *   Defines the URL for the NVIDIA CUDA APT repository (`nvidia_repo_url`).
     *   Defines the URL for the NVIDIA Driver `.run` file (`nvidia_runfile_url`).
-
-5.  **Enable Validation:**
+*   **Enable Validation:**
     *   The `phoenix_lxc_configs.schema.json` file allows tools (like `ajv-cli`) and scripts to validate that `phoenix_lxc_configs.json` adheres to the expected structure and data types before it's used, preventing runtime errors due to misconfiguration.
 
 ## Structure & Content (`phoenix_lxc_configs.json`)

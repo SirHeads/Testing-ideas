@@ -15,34 +15,28 @@ While the main orchestrator and its core/cloning scripts handle generic setup (c
 
 ## Key Responsibilities
 
-1.  **Template Finalization & Snapshot Creation (If `is_template: true`):**
-    *   Perform any final software installations or configurations specific to the template's role (e.g., installing vLLM framework).
-    *   Verify that the template environment is correctly set up (e.g., running a test command or checking service status).
-    *   **Crucially:** Shut down the template container and create the ZFS snapshot specified by `template_snapshot_name` in the container's configuration block. This snapshot becomes the base for cloning dependent containers/templates.
-
-2.  **Application Container Customization (If `is_template: false`):**
-    *   Execute any commands or processes required to finalize the setup of the application container for its designated purpose.
+*   **Template Finalization & Snapshot Creation (If `is_template: true`):**
+    *   Performs any final software installations or configurations specific to the template's role (e.g., installing vLLM framework).
+    *   Verifies that the template environment is correctly set up (e.g., running a test command or checking service status).
+    *   **Crucially:** Shuts down the template container and creates the ZFS snapshot specified by `template_snapshot_name` in the container's configuration block. This snapshot becomes the base for cloning dependent containers/templates.
+*   **Application Container Customization (If `is_template: false`):**
+    *   Executes any commands or processes required to finalize the setup of the application container for its designated purpose.
     *   This can include file manipulation *inside* the container, running specific installers or scripts *inside* the container, starting unique services *inside* the container, or even making final adjustments to the container's configuration *on the host*.
-
-3.  **Conditional Execution:**
+*   **Conditional Execution:**
     *   These scripts are *optional*. The orchestrator (`phoenix_establish_hypervisor.sh`) checks for their existence based on the `CTID`.
     *   If the script `phoenix_hypervisor_setup_<CTID>.sh` exists and is executable, the orchestrator will run it.
     *   If it does not exist, the orchestrator simply skips this step for that container.
-
-4.  **Execution Context:**
-    *   Run non-interactively on the Proxmox host.
-    *   Typically use `pct exec <CTID> -- <command>` to run commands *inside* the target LXC container.
+*   **Execution Context:**
+    *   Runs non-interactively on the Proxmox host.
+    *   Typically uses `pct exec <CTID> -- <command>` to run commands *inside* the target LXC container.
     *   May also interact with the host filesystem (e.g., to execute `pct` commands for shutdown/snapshot/start) or Proxmox API if needed for host-level configurations specific to that container.
-
-5.  **Input & Integration:**
-    *   Receive the `CTID` as a command-line argument from the orchestrator.
+*   **Input & Integration:**
+    *   Receives the `CTID` as a command-line argument from the orchestrator.
     *   May rely on environment variables set by the orchestrator (e.g., paths, flags, specific configuration values like model names).
     *   May parse parts of `phoenix_lxc_configs.json` if they need access to the container's specific configuration details not passed directly by the orchestrator.
-
-6.  **Idempotency:**
+*   **Idempotency:**
     *   Should be designed to be idempotent. If run multiple times, they should detect if their specific task (e.g., snapshot creation, service start) is already complete and skip unnecessary actions to prevent errors.
-
-7.  **Error Handling & Logging:**
+*   **Error Handling & Logging:**
     *   Should provide detailed logs of their actions.
     *   Should handle errors gracefully. A failure should log the error and exit with a non-zero code, signaling the orchestrator. The orchestrator's behavior (stop or continue) will depend on its error handling logic.
 

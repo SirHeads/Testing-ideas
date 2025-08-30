@@ -1,17 +1,26 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_initial_setup.sh
-# Description: Ensures the Proxmox host environment is prepared for the Phoenix Hypervisor system.
+# Description: Prepares the Proxmox host environment for the Phoenix Hypervisor system.
+#              This script performs essential setup tasks, including checking for and
+#              installing required tools (jq, curl, ajv-cli), verifying core configuration
+#              files and directories, and managing a completion marker file. Comments are
+#              optimized for Retrieval Augmented Generation (RAG), facilitating effective
+#              chunking and vector database indexing.
 # Version: 0.1.0
 # Author: Heads, Qwen3-coder (AI Assistant)
 #
-# This script checks for and installs necessary tools, verifies core configuration files
-# and directories, and manages a simple marker file to indicate completion.
+# This script is designed to be idempotent, ensuring that repeated executions do not
+# cause issues and only perform necessary actions. It establishes the foundational
+# environment required for LXC container orchestration.
 #
-# Usage: ./phoenix_hypervisor_initial_setup.sh
+# Usage:
+#   ./phoenix_hypervisor_initial_setup.sh
+#
 # Requirements:
-#   - Access to Proxmox host
-#   - Ability to run apt-get and npm (if needed)
+#   - Root or `sudo` privileges on the Proxmox host.
+#   - Internet access for package installations.
+#   - Core configuration files present in `/usr/local/phoenix_hypervisor/etc/`.
 #
 # Exit Codes:
 #   0: Success
@@ -20,143 +29,351 @@
 #   3: Tool installation failed
 #   4: Tool verification failed
 
-# =====================================================================================
-# main()
-#   Content:
-#     - Entry point.
-#     - Calls initialize_environment.
-#     - Calls check_and_create_marker.
-#     - If marker check indicates setup is needed or forced:
-#         - Calls verify_core_config_files.
-#         - Calls install_required_packages.
-#         - Calls verify_required_tools.
-#         - Calls ensure_core_directories_exist.
-#         - Calls finalize_setup.
-#     - Calls exit_script.
-#   Purpose: Controls the overall flow of the initial setup process.
-# =====================================================================================
+# --- Global Variables and Constants ---
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+LOG_FILE="/var/log/phoenix_hypervisor_initial_setup.log"
+MARKER_FILE="/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized"
 
-# --- Main Script Execution Starts Here ---
+# --- Logging Functions ---
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $*" | tee -a "$LOG_FILE" | tee -a "$MAIN_LOG_FILE"
+}
 
-# =====================================================================================
-# initialize_environment()
-#   Content:
-#     - Define hardcoded path to phoenix_hypervisor_config.json: HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json".
-#     - Check if HYPERVISOR_CONFIG_FILE exists. If not, log a fatal error and call exit_script 1.
-#     - (Optional) Source or parse HYPERVISOR_CONFIG_FILE to get paths like HYPERVISOR_MARKER_DIR, HYPERVISOR_MARKER. If parsing, use jq.
-#     - Define log file path (e.g., /var/log/phoenix_hypervisor_initial_setup.log).
-#     - Initialize/Clear the log file.
-#     - Log script start message with timestamp.
-#     - Source common library functions from /usr/local/phoenix_hypervisor/lib/ if needed (e.g., for logging functions).
-#   Purpose: Prepares the script's runtime environment, including loading base config and setting up logging.
-# =====================================================================================
+log_error() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $*" | tee -a "$LOG_FILE" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# --- Exit Function ---
+exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Initial setup completed successfully."
+    else
+        log_error "Initial setup failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
 
 # =====================================================================================
-# check_and_create_marker()
-#   Content:
-#     - Define marker file path: MARKER_FILE="/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized". (Use path from parsed config if sourced).
-#     - Log checking for marker file.
-#     - Check if MARKER_FILE exists.
-#     - If MARKER_FILE exists:
-#         - Log that marker file found, indicating setup might have been completed previously.
-#         - Set internal flag/state indicating setup is likely complete.
-#     - If MARKER_FILE does not exist:
-#         - Log that marker file not found. Setup will proceed.
-#         - Set internal flag/state indicating setup is needed.
-#     - (Optional/Advanced) Could add a --force flag check here to override the marker.
-#   Purpose: Determines if the initial setup has been previously completed using a marker file, influencing subsequent actions.
+# Function: initialize_environment
+# Description: Initializes the script's runtime environment. This involves setting up
+#              the dedicated log file for this script, logging the script's start,
+#              and verifying the existence of the main hypervisor configuration file.
+#
+# Parameters: None
+#
+# Global Variables Accessed:
+#   - `HYPERVISOR_CONFIG_FILE`: Path to the main hypervisor configuration.
+#   - `LOG_FILE`: Path to this script's specific log file.
+#
+# Exit Conditions:
+#   - Exits with code 2 if `HYPERVISOR_CONFIG_FILE` is not found.
+#
+# RAG Keywords: environment setup, logging initialization, configuration file verification.
 # =====================================================================================
+# =====================================================================================
+initialize_environment() {
+    # Initialize/Clear the log file
+    > "$LOG_FILE"
+    log_info "Script started: phoenix_hypervisor_initial_setup.sh"
+
+    log_info "Verifying existence of HYPERVISOR_CONFIG_FILE: $HYPERVISOR_CONFIG_FILE"
+    if [ ! -f "$HYPERVISOR_CONFIG_FILE" ]; then
+        log_error "FATAL: Hypervisor configuration file not found at $HYPERVISOR_CONFIG_FILE."
+        exit_script 2
+    fi
+    log_info "HYPERVISOR_CONFIG_FILE found."
+}
 
 # =====================================================================================
-# verify_core_config_files()
-#   Content:
-#     - Define a list of core configuration files based on standard paths or those from HYPERVISOR_CONFIG_FILE:
-#         - /usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json (this file)
-#         - /usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json
-#         - /usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json
-#     - Iterate through the list.
-#     - For each file:
-#         - Log checking file.
-#         - Check if file exists (test -f).
-#         - If it does not exist, log a fatal error and call exit_script 1.
-#         - (Optional) Perform a basic readability check (e.g., jq empty < "$file"). If it fails, log an error.
-#   Purpose: Ensures that the essential configuration files required by the Phoenix system are present on the host.
+# Function: check_and_create_marker
+# Description: Checks for the existence of a marker file (`.phoenix_hypervisor_initialized`)
+#              to determine if the initial setup has been previously completed. This
+#              mechanism ensures idempotency and prevents redundant setup operations.
+#
+# Parameters: None
+#
+# Global Variables Modified:
+#   - `SETUP_NEEDED`: A boolean flag indicating whether setup steps need to be performed.
+#
+# Global Variables Accessed:
+#   - `MARKER_FILE`: Path to the marker file.
+#
+# RAG Keywords: idempotency, setup marker, initial setup status, script control flow.
 # =====================================================================================
+# =====================================================================================
+SETUP_NEEDED=true # Global flag to indicate if setup steps need to be performed
+
+check_and_create_marker() {
+    log_info "Checking for marker file: $MARKER_FILE"
+    if [ -f "$MARKER_FILE" ]; then
+        log_info "Marker file found. Initial setup appears to have been completed previously."
+        SETUP_NEEDED=false
+    else
+        log_info "Marker file not found. Initial setup will proceed."
+        SETUP_NEEDED=true
+    fi
+}
 
 # =====================================================================================
-# install_required_packages()
-#   Content:
-#     - Define a list of packages to check/install: PACKAGES=("jq" "curl" "nodejs" "npm").
-#     - Log starting package installation check.
-#     - Update package list: apt-get update (handle errors).
-#     - Iterate through PACKAGES.
-#     - For each package:
-#         - Log checking for package.
-#         - Check if package is installed (e.g., dpkg -l "$package" > /dev/null 2>&1).
-#         - If not installed:
-#             - Log installing package.
-#             - Install package: apt-get install -y "$package" (handle errors).
-#             - If installation fails, log a fatal error and call exit_script 1.
-#         - If installed, log package already present.
-#     - After installing npm, install ajv-cli:
-#         - Log checking for ajv-cli.
-#         - Check if ajv command is available.
-#         - If not:
-#             - Log installing ajv-cli via npm.
-#             - Run npm install -g ajv-cli (handle errors). Use sudo if necessary and appropriate.
-#             - If installation fails, log a fatal error and call exit_script 1.
-#         - If installed, log ajv-cli already present.
-#   Purpose: Ensures all necessary command-line tools for the Phoenix scripts are installed on the host.
+# Function: verify_core_config_files
+# Description: Verifies the presence and readability of essential configuration files
+#              required for the Phoenix Hypervisor system. This includes the main
+#              hypervisor config, LXC configs, and their schema definitions.
+#
+# Parameters: None
+#
+# Global Variables Accessed:
+#   - `HYPERVISOR_CONFIG_FILE`: Path to the main hypervisor configuration.
+#
+# Dependencies:
+#   - `jq`: Used for basic JSON readability checks.
+#
+# Exit Conditions:
+#   - Exits with code 2 if any core configuration file is missing, or is not a valid/readable JSON.
+#
+# RAG Keywords: configuration file verification, system integrity, JSON schema,
+#               LXC configuration, error handling.
+# =====================================================================================
 # =====================================================================================
 
-# =====================================================================================
-# verify_required_tools()
-#   Content:
-#     - Define a list of critical tools to verify: TOOLS=("jq" "curl" "pct" "ajv").
-#     - Log starting tool verification.
-#     - Iterate through TOOLS.
-#     - For each tool:
-#         - Log verifying tool.
-#         - Check if tool is available in PATH (command -v "$tool" > /dev/null 2>&1).
-#         - If not available, log a fatal error (tool missing despite install attempt or not found in PATH) and call exit_script 1.
-#   Purpose: Confirms that critical tools are not only installed but also accessible and executable by the script.
-# =====================================================================================
+verify_core_config_files() {
+    local config_files=(
+        "$HYPERVISOR_CONFIG_FILE"
+        "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+        "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
+    )
+
+    log_info "Verifying core configuration files..."
+    for file in "${config_files[@]}"; do
+        log_info "Checking file: $file"
+        if [ ! -f "$file" ]; then
+            log_error "FATAL: Core configuration file not found: $file."
+            exit_script 2
+        fi
+        
+        # Optional: Perform a basic readability check using jq
+        if ! jq empty < "$file" > /dev/null 2>&1; then
+            log_error "ERROR: Core configuration file $file is not a valid JSON file or is unreadable."
+            exit_script 2
+        fi
+        log_info "File $file is present and readable."
+    done
+    log_info "All core configuration files verified."
+}
 
 # =====================================================================================
-# ensure_core_directories_exist()
-#   Content:
-#     - Define a list of core directories based on standard paths:
-#         - /usr/local/phoenix_hypervisor/bin
-#         - /usr/local/phoenix_hypervisor/etc
-#         - /usr/local/phoenix_hypervisor/lib
-#     - Log ensuring core directories exist.
-#     - Iterate through the list.
-#     - For each directory:
-#         - Log checking/creating directory.
-#         - Check if directory exists (test -d).
-#         - If it does not exist, create it: mkdir -p "$directory" (handle errors).
-#         - If creation fails, log a fatal error and call exit_script 1.
-#   Purpose: Ensures that the standard directory structure for the Phoenix Hypervisor is present on the host.
+# Function: install_required_packages
+# Description: Installs or verifies the installation of essential system packages
+#              and Node.js global modules required by the Phoenix Hypervisor.
+#              This includes `jq`, `curl`, `nodejs`, `npm`, and `ajv-cli`.
+#              It ensures the host has the necessary command-line tools for script execution.
+#
+# Parameters: None
+#
+# Dependencies:
+#   - `apt-get`: For Debian/Ubuntu package management.
+#   - `npm`: For Node.js package management.
+#   - `sudo`: Required for package installations.
+#
+# Exit Conditions:
+#   - Exits with code 3 if `apt-get update` or any package/tool installation fails.
+#
+# RAG Keywords: package installation, tool dependencies, apt-get, npm, jq, curl,
+#               nodejs, ajv-cli, host preparation, error handling.
+# =====================================================================================
 # =====================================================================================
 
-# =====================================================================================
-# finalize_setup()
-#   Content:
-#     - Log finalizing setup.
-#     - If setup actions were performed (based on marker check or force):
-#         - Log creating marker file.
-#         - Create the marker file: touch "$MARKER_FILE" (handle errors).
-#         - If creation fails, log a warning (setup considered complete but marker failed).
-#     - Log that initial host setup is complete.
-#   Purpose: Performs final actions upon successful completion of setup steps, primarily creating the marker file.
-# =====================================================================================
+install_required_packages() {
+    local packages=("jq" "curl" "nodejs" "npm")
+
+    log_info "Starting package installation check..."
+
+    log_info "Updating apt package list..."
+    if ! sudo apt-get update; then
+        log_error "FATAL: Failed to update apt package list."
+        exit_script 3
+    fi
+    log_info "Apt package list updated."
+
+    for package in "${packages[@]}"; do
+        log_info "Checking for package: $package"
+        if ! dpkg -l "$package" > /dev/null 2>&1; then
+            log_info "Package $package not found. Installing..."
+            if ! sudo apt-get install -y "$package"; then
+                log_error "FATAL: Failed to install package: $package."
+                exit_script 3
+            fi
+            log_info "Package $package installed successfully."
+        else
+            log_info "Package $package already present."
+        fi
+    done
+
+    log_info "Checking for ajv-cli..."
+    if ! command -v ajv > /dev/null 2>&1; then
+        log_info "ajv-cli not found. Installing via npm..."
+        if ! sudo npm install -g ajv-cli; then
+            log_error "FATAL: Failed to install ajv-cli via npm."
+            exit_script 3
+        fi
+        log_info "ajv-cli installed successfully."
+    else
+        log_info "ajv-cli already present."
+    fi
+    log_info "All required packages and tools installed/verified."
+}
 
 # =====================================================================================
-# exit_script(exit_code)
-#   Content:
-#     - Accept an integer exit_code.
-#     - Log the final status message (e.g., "Initial setup completed successfully" for 0, "Initial setup failed" for non-zero).
-#     - Ensure logs are flushed.
-#     - Exit the script with the provided exit_code.
-#   Purpose: Provides a single point for script termination, ensuring final logging and correct exit status.
+# Function: verify_required_tools
+# Description: Verifies that all critical command-line tools (`jq`, `curl`, `pct`, `ajv`)
+#              are installed and accessible in the system's PATH. This is a final check
+#              to ensure the environment is fully prepared for subsequent operations.
+#
+# Parameters: None
+#
+# Exit Conditions:
+#   - Exits with code 4 if any critical tool is not found in the PATH.
+#
+# RAG Keywords: tool verification, system dependencies, command-line tools,
+#               PATH environment, error handling.
 # =====================================================================================
+# =====================================================================================
+
+verify_required_tools() {
+    local tools=("jq" "curl" "pct" "ajv")
+
+    log_info "Starting critical tool verification..."
+    for tool in "${tools[@]}"; do
+        log_info "Verifying tool: $tool"
+        if ! command -v "$tool" > /dev/null 2>&1; then
+            log_error "FATAL: Critical tool '$tool' not found in PATH. Please ensure it is installed and accessible."
+            exit_script 4
+        fi
+        log_info "Tool '$tool' verified."
+    done
+    log_info "All critical tools verified."
+}
+
+# =====================================================================================
+# Function: ensure_core_directories_exist
+# Description: Ensures that the standard directory structure required by the Phoenix
+#              Hypervisor is present on the host filesystem. This includes creating
+#              `/usr/local/phoenix_hypervisor/bin`, `/etc`, and `/lib` if they do not exist.
+#
+# Parameters: None
+#
+# Dependencies:
+#   - `mkdir -p`: For creating directories recursively.
+#   - `sudo`: Required for creating directories in `/usr/local/`.
+#
+# Exit Conditions:
+#   - Exits with code 1 if any required directory fails to be created.
+#
+# RAG Keywords: directory structure, filesystem management, host preparation,
+#               Phoenix Hypervisor, error handling.
+# =====================================================================================
+# =====================================================================================
+
+ensure_core_directories_exist() {
+    local core_directories=(
+        "/usr/local/phoenix_hypervisor/bin"
+        "/usr/local/phoenix_hypervisor/etc"
+        "/usr/local/phoenix_hypervisor/lib"
+    )
+
+    log_info "Ensuring core directories exist..."
+    for dir in "${core_directories[@]}"; do
+        log_info "Checking/creating directory: $dir"
+        if [ ! -d "$dir" ]; then
+            if ! sudo mkdir -p "$dir"; then
+                log_error "FATAL: Failed to create directory: $dir."
+                exit_script 1
+            fi
+            log_info "Directory $dir created."
+        else
+            log_info "Directory $dir already exists."
+        fi
+    done
+    log_info "All core directories ensured."
+}
+
+# =====================================================================================
+# Function: finalize_setup
+# Description: Performs final actions upon successful completion of the initial setup steps.
+#              This primarily involves creating a marker file to indicate that the setup
+#              has been completed, preventing redundant executions in the future.
+#
+# Parameters: None
+#
+# Global Variables Accessed:
+#   - `SETUP_NEEDED`: Flag indicating if setup actions were performed.
+#   - `MARKER_FILE`: Path to the marker file.
+#
+# Dependencies:
+#   - `sudo`: May be required to create the marker file.
+#
+# RAG Keywords: setup finalization, marker file, idempotency, host configuration.
+# =====================================================================================
+# =====================================================================================
+
+finalize_setup() {
+    log_info "Finalizing setup..."
+    if $SETUP_NEEDED; then
+        log_info "Creating marker file: $MARKER_FILE"
+        if ! sudo touch "$MARKER_FILE"; then
+            log_error "WARNING: Failed to create marker file at $MARKER_FILE. Setup considered complete, but marker creation failed."
+        else
+            log_info "Marker file created."
+        fi
+    else
+        log_info "Setup actions were not performed (marker existed), skipping marker file creation."
+    fi
+    log_info "Initial host setup is complete."
+}
+
+# =====================================================================================
+# Function: main
+# Description: The main entry point for the initial host setup script.
+#              It orchestrates the entire setup process by initializing the environment,
+#              checking for previous completion via a marker file, and then conditionally
+#              executing core setup steps including configuration file verification,
+#              package installation, tool verification, and directory creation.
+#
+# Parameters: None
+#
+# Dependencies:
+#   - `initialize_environment()`
+#   - `check_and_create_marker()`
+#   - `verify_core_config_files()`
+#   - `install_required_packages()`
+#   - `verify_required_tools()`
+#   - `ensure_core_directories_exist()`
+#   - `finalize_setup()`
+#   - `exit_script()`
+#
+# RAG Keywords: main function, script entry point, host setup flow, idempotency,
+#               environment preparation.
+# =====================================================================================
+# =====================================================================================
+main() {
+    initialize_environment
+    check_and_create_marker
+
+    if $SETUP_NEEDED; then
+        log_info "Proceeding with initial setup steps..."
+        verify_core_config_files
+        install_required_packages
+        verify_required_tools
+        ensure_core_directories_exist
+        finalize_setup
+    else
+        log_info "Initial setup steps skipped as marker file was found."
+    fi
+
+    exit_script 0
+}
+
+# Call the main function
+main

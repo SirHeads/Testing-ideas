@@ -1,14 +1,12 @@
-# LXC Container 900 - BaseTemplate - Requirements & Details
+# LXC Container 900 - `BaseTemplate` - Details
 
 ## Overview
 
 This document details the purpose, configuration, and setup process for LXC container `900`, named `BaseTemplate`. This container serves exclusively as the foundational layer within the Phoenix Hypervisor's snapshot-based template hierarchy. It is never intended to be used as a final, running application container. All other templates (`901`, `902`, `903`, `920`) and standard application containers will be created by cloning snapshots taken from this base.
 
-## Core Purpose & Function
+## Purpose
 
-*   **Role:** Foundational Template.
-*   **Primary Function:** Provide a minimal, standardized Ubuntu 24.04 environment that serves as the starting point for all other, more specialized templates and containers.
-*   **Usage:** Exclusively used for cloning. A ZFS snapshot (`base-snapshot`) is created after its initial setup for other containers/templates to clone from.
+LXC container `900`'s primary purpose is to provide a minimal, standardized Ubuntu 24.04 environment that serves as the starting point for all other, more specialized templates and containers. It is exclusively used for cloning; a ZFS snapshot (`base-snapshot`) is created after its initial setup for other containers/templates to clone from.
 
 ## Configuration (`phoenix_lxc_configs.json`)
 
@@ -35,18 +33,17 @@ This document details the purpose, configuration, and setup process for LXC cont
     *   **`is_template`:** `true` (Identifies this configuration as a template)
     *   **`template_snapshot_name`:** `base-snapshot` (Name of the ZFS snapshot this template will produce)
 
-## Specific Setup Script (`phoenix_hypervisor_setup_900.sh`) Requirements
+## Specific Setup Script (`phoenix_hypervisor/bin/phoenix_hypervisor_lxc_900.sh`) Requirements
 
-The `phoenix_hypervisor_setup_900.sh` script is responsible for the final configuration of the `BaseTemplate` container *after* its initial creation (`pct create`) and before the `base-snapshot` is taken. Its core responsibilities are:
+The `phoenix_hypervisor/bin/phoenix_hypervisor_lxc_900.sh` script is responsible for the final configuration of the `BaseTemplate` container *after* its initial creation (`pct create`) and before the `base-snapshot` is taken. Its core responsibilities are:
 
-1.  **Basic OS Configuration:**
-    *   Ensure the container is fully booted and ready for setup.
-    *   Perform standard OS updates (`apt update && apt upgrade`).
-    *   Install fundamental utility packages (e.g., `curl`, `wget`, `vim`, `nano`, `htop`, `jq`, `rsync`, `git`).
-    *   Perform any basic OS hardening or configuration steps deemed necessary for *all* derived containers.
-    *   Ensure the default user (likely `ubuntu`) is configured appropriately.
-
-2.  **Finalize and Snapshot Creation:**
+*   **Basic OS Configuration:**
+    *   Ensures the container is fully booted and ready for setup.
+    *   Performs standard OS updates (`apt update && apt upgrade`).
+    *   Installs fundamental utility packages (e.g., `curl`, `wget`, `vim`, `htop`, `jq`, `rsync`, `git`, `s-tui`).
+    *   Performs any basic OS hardening or configuration steps deemed necessary for *all* derived containers. (Note: The current script does not explicitly implement these beyond standard package updates and installations.)
+    *   Ensures the default user (likely `ubuntu`) is configured appropriately. (Note: The current script does not explicitly implement these.)
+*   **Finalize and Snapshot Creation:**
     *   Once the base OS and essential tools are installed and configured, the script's final step is to shut down the container.
     *   It then executes `pct snapshot create 900 base-snapshot` to create the ZFS snapshot that forms the basis for the entire template hierarchy.
     *   Finally, it restarts the container.
@@ -54,9 +51,9 @@ The `phoenix_hypervisor_setup_900.sh` script is responsible for the final config
 ## Interaction with Phoenix Hypervisor System
 
 *   **Creation:** `phoenix_establish_hypervisor.sh` will identify `900` as a template (`is_template: true`) and that it has no `clone_from_template_ctid`. It will therefore call the standard creation process (`phoenix_hypervisor_create_lxc.sh` or direct `pct create` logic) to instantiate it from the Ubuntu template.
-*   **Setup:** After creation and initial boot, `phoenix_establish_hypervisor.sh` will execute `phoenix_hypervisor_setup_900.sh`.
+*   **Setup:** After creation and initial boot, `phoenix_establish_hypervisor.sh` will execute `phoenix_hypervisor/bin/phoenix_hypervisor_lxc_900.sh`.
 *   **Consumption:** Other templates (`901`, `902`, etc.) have `clone_from_template_ctid: "900"` in their configuration. The orchestrator will use this to determine that they should be created by cloning `900`'s `base-snapshot`.
-*   **Idempotency:** The setup script (`phoenix_hypervisor_setup_900.sh`) must be idempotent. If `base-snapshot` already exists, it should skip the OS setup steps and potentially just log that the template is already prepared.
+*   **Idempotency:** The setup script (`phoenix_hypervisor/bin/phoenix_hypervisor_lxc_900.sh`) must be idempotent. If `base-snapshot` already exists, it should skip the OS setup steps and potentially just log that the template is already prepared.
 
 ## Key Characteristics Summary
 

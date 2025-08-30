@@ -1,31 +1,38 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_clone_lxc.sh
-# Description: Clones an LXC container from a specified template container's ZFS snapshot.
+# Description: Clones an LXC container from a specified ZFS snapshot of a template container.
+#              This script automates the `pct clone` command and applies post-clone configurations
+#              based on a provided JSON configuration block. Comments are optimized for
+#              Retrieval Augmented Generation (RAG), facilitating effective chunking and
+#              vector database indexing.
 # Version: 0.1.0
 # Author: Heads, Qwen3-coder (AI Assistant)
 #
-# This script handles the `pct clone` command to create a new LXC container based on
-# a snapshot of an existing template container. It configures the new container
-# with settings derived from its specific configuration block.
+# This script is a core component of the Phoenix Hypervisor, enabling rapid deployment
+# of new LXC containers from pre-configured templates. It ensures that cloned containers
+# inherit base settings and then receive specific customizations, particularly network
+# configurations.
 #
-# Usage: ./phoenix_hypervisor_clone_lxc.sh <SOURCE_CTID> <SOURCE_SNAPSHOT_NAME> <TARGET_CTID> <LXC_CONFIG_FILE> <TARGET_CONFIG_BLOCK_JSON>
-# Example: ./phoenix_hypervisor_clone_lxc.sh 902 docker-snapshot 910 /path/to/phoenix_lxc_configs.json '{"name":"MyApp","memory_mb":4096,...}'
+# Usage:
+#   ./phoenix_hypervisor_clone_lxc.sh <SOURCE_CTID> <SOURCE_SNAPSHOT_NAME> <TARGET_CTID> <LXC_CONFIG_FILE> <TARGET_CONFIG_BLOCK_JSON>
 #
 # Arguments:
-#   $1 - SOURCE_CTID (integer): The Container ID of the template container to clone from.
-#   $2 - SOURCE_SNAPSHOT_NAME (string): The name of the ZFS snapshot of the source container to use.
-#   $3 - TARGET_CTID (integer): The Container ID for the new container to be created.
-#   $4 - LXC_CONFIG_FILE (string): Path to the main LXC configuration JSON file (for reference, if needed).
-#   $5 - TARGET_CONFIG_BLOCK_JSON (string): The JSON string representing the configuration block for the *target* container.
-#                                        This should be passed by the orchestrator and contains the specific settings
-#                                        (name, IP, resources, features, etc.) for the new container.
+#   - SOURCE_CTID (integer): The Container ID of the template container to clone from.
+#   - SOURCE_SNAPSHOT_NAME (string): The name of the ZFS snapshot on the source container to use for cloning.
+#   - TARGET_CTID (integer): The Container ID for the new LXC container to be created.
+#   - LXC_CONFIG_FILE (string): Absolute path to the main LXC configuration JSON file.
+#   - TARGET_CONFIG_BLOCK_JSON (string): A JSON string containing the full configuration
+#                                         block for the *target* container, as defined
+#                                         in `phoenix_lxc_configs.json`. This includes
+#                                         settings like name, memory, cores, storage,
+#                                         network configuration, and features.
 #
 # Requirements:
-#   - pct (Proxmox VE Container Toolkit)
-#   - jq (for parsing JSON if needed)
-#   - Access to Proxmox host and defined storage paths
-#   - The source container and its specified snapshot must exist.
+#   - Proxmox VE host environment with `pct` command available.
+#   - `jq` for robust JSON parsing.
+#   - The specified `SOURCE_CTID` and `SOURCE_SNAPSHOT_NAME` must exist on the Proxmox host.
+#   - Appropriate permissions to manage LXC containers and ZFS snapshots.
 #
 # Exit Codes:
 #   0: Success (Container cloned and configured successfully)
@@ -35,119 +42,265 @@
 #   4: pct clone command failed
 #   5: Post-clone configuration adjustments failed
 
-# =====================================================================================
-# main()
-#   Content:
-#     - Entry point.
-#     - Calls parse_arguments to get SOURCE_CTID, SOURCE_SNAPSHOT_NAME, TARGET_CTID, LXC_CONFIG_FILE, TARGET_CONFIG_BLOCK_JSON.
-#     - Calls validate_inputs to check argument validity and existence of source/snapshot.
-#     - Calls construct_pct_clone_command using TARGET_CTID, SOURCE_CTID, SOURCE_SNAPSHOT_NAME, and TARGET_CONFIG_BLOCK_JSON.
-#     - Calls execute_pct_clone to run the constructed command.
-#     - Calls apply_post_clone_configurations (if needed, e.g., for specific network adjustments not handled perfectly by clone).
-#     - Calls exit_script.
-#   Purpose: Controls the overall flow of the LXC cloning process.
-# =====================================================================================
+# --- Global Variables and Constants ---
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
-# --- Main Script Execution Starts Here ---
+# --- Logging Functions ---
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_clone_lxc.sh: $*" | tee -a "$MAIN_LOG_FILE"
+}
 
-# =====================================================================================
-# parse_arguments()
-#   Content:
-#     - Check the number of command-line arguments. Expect exactly 5.
-#     - If incorrect number of arguments, log a usage error message and call exit_script 2.
-#     - Assign arguments to variables:
-#         SOURCE_CTID=$1
-#         SOURCE_SNAPSHOT_NAME=$2
-#         TARGET_CTID=$3
-#         LXC_CONFIG_FILE=$4 # Might be needed for complex lookups, but TARGET_CONFIG_BLOCK_JSON should have most needed info.
-#         TARGET_CONFIG_BLOCK_JSON=$5
-#     - Log the received arguments (source, target, snapshot name).
-#   Purpose: Retrieves and stores the input arguments for the script.
-# =====================================================================================
+log_error() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_clone_lxc.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
+}
 
-# =====================================================================================
-# validate_inputs()
-#   Content:
-#     - Validate that SOURCE_CTID, TARGET_CTID are positive integers. If not, log error and call exit_script 2.
-#     - Validate that SOURCE_SNAPSHOT_NAME, LXC_CONFIG_FILE, and TARGET_CONFIG_BLOCK_JSON are non-empty strings. If not, log error and call exit_script 2.
-#     - Check if the source container exists: `pct status "$SOURCE_CTID" > /dev/null 2>&1`.
-#         - If it does not exist, log error and call exit_script 3.
-#     - Check if the specified snapshot exists on the source container.
-#         - This might involve `pct snapshot list "$SOURCE_CTID"` and parsing the output with `jq` or `grep`.
-#         - If the snapshot does not exist, log error and call exit_script 3.
-#     - (Optional) Validate the JSON syntax of TARGET_CONFIG_BLOCK_JSON using `jq empty <<< "$TARGET_CONFIG_BLOCK_JSON"`. If invalid, log error and call exit_script 2.
-#     - Log validation passed.
-#   Purpose: Ensures all inputs are present, valid, and that the source container and snapshot exist.
-# =====================================================================================
+# --- Exit Function ---
+exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
+
+# --- Script Variables ---
+SOURCE_CTID=""
+SOURCE_SNAPSHOT_NAME=""
+TARGET_CTID=""
+LXC_CONFIG_FILE=""
+TARGET_CONFIG_BLOCK_JSON=""
+PCT_CLONE_CMD=()
 
 # =====================================================================================
-# construct_pct_clone_command()
-#   Content:
-#     - Log starting construction of the pct clone command.
-#     - Initialize an empty array or string for the command: PCT_CLONE_CMD=("pct" "clone").
-#     - Add positional arguments: SOURCE_CTID, TARGET_CTID.
-#     - Add the snapshot argument: --snapshot "$SOURCE_SNAPSHOT_NAME".
-#     - Extract arguments from TARGET_CONFIG_BLOCK_JSON using `jq`:
-#         - --hostname: `jq -r '.name' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - --memory: `jq -r '.memory_mb' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - --cores: `jq -r '.cores' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - --storage: `jq -r '.storage_pool' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - Potentially --rootfs size if resizing is needed/desired (e.g., `jq -r '.storage_size_gb' <<< "$TARGET_CONFIG_BLOCK_JSON"` -> `storage_pool:size`).
-#         - --features: `jq -r '.features' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - --hostname: `jq -r '.name' <<< "$TARGET_CONFIG_BLOCK_JSON"` (if not already set by --hostname, or to be safe).
-#         - --unprivileged: Map `jq -r '.unprivileged' <<< "$TARGET_CONFIG_BLOCK_JSON"` (boolean `true`/`false`) to `1`/`0`.
-#         - Network configuration is trickier with clone. `pct clone` primarily clones the config.
-#             - The orchestrator should ensure the source template's config is generic enough.
-#             - Post-clone adjustments might be needed for IP/MAC. This script can handle that.
-#             - For now, assume basic clone. If specific network settings are critical and not handled by post-clone, they could be added here,
-#               but it's often easier post-clone. Let's lean towards post-clone for network.
-#     - Combine arguments into the final command string or ensure the array is correctly formed.
-#     - Log the constructed command string (for debugging).
-#   Purpose: Dynamically builds the full `pct clone` command string based on the target container's specific configuration.
+# Function: parse_arguments
+# Description: Parses and validates the command-line arguments provided to the script.
+#              It expects exactly five arguments: source CTID, source snapshot name,
+#              target CTID, LXC configuration file path, and the target container's
+#              JSON configuration block.
+#
+# Parameters:
+#   - $@: All command-line arguments.
+#
+# Global Variables Modified:
+#   - `SOURCE_CTID`: Stores the source container ID.
+#   - `SOURCE_SNAPSHOT_NAME`: Stores the name of the ZFS snapshot to clone from.
+#   - `TARGET_CTID`: Stores the target container ID.
+#   - `LXC_CONFIG_FILE`: Stores the path to the main LXC configuration file.
+#   - `TARGET_CONFIG_BLOCK_JSON`: Stores the JSON configuration block for the target container.
+#
+# Exit Conditions:
+#   - Exits with code 2 if an incorrect number of arguments is provided.
+#
+# RAG Keywords: argument parsing, command-line interface, script input, LXC cloning parameters.
 # =====================================================================================
+# =====================================================================================
+parse_arguments() {
+    if [ "$#" -ne 5 ]; then
+        log_error "Usage: $0 <SOURCE_CTID> <SOURCE_SNAPSHOT_NAME> <TARGET_CTID> <LXC_CONFIG_FILE> <TARGET_CONFIG_BLOCK_JSON>"
+        exit_script 2
+    fi
+    SOURCE_CTID="$1"
+    SOURCE_SNAPSHOT_NAME="$2"
+    TARGET_CTID="$3"
+    LXC_CONFIG_FILE="$4"
+    TARGET_CONFIG_BLOCK_JSON="$5"
+    log_info "Received arguments: SOURCE_CTID=$SOURCE_CTID, SOURCE_SNAPSHOT_NAME=$SOURCE_SNAPSHOT_NAME, TARGET_CTID=$TARGET_CTID"
+}
 
 # =====================================================================================
-# execute_pct_clone()
-#   Content:
-#     - Log executing the pct clone command.
-#     - Execute the command stored in PCT_CLONE_CMD (e.g., `"${PCT_CLONE_CMD[@]}"` if it's an array).
-#     - Capture the exit code.
-#     - If the exit code is 0:
-#         - Log successful execution of pct clone.
-#     - If the exit code is non-zero:
-#         - Log a fatal error indicating `pct clone` failed for TARGET_CTID, including the command that was run and the exit code.
-#         - Call exit_script 4.
-#   Purpose: Runs the constructed `pct clone` command and handles its success or failure.
+# Function: validate_inputs
+# Description: Validates all input arguments to ensure they are correctly formatted
+#              and that the specified source container and its ZFS snapshot exist.
+#              This prevents cloning operations from proceeding with invalid or
+#              non-existent resources.
+#
+# Parameters: None (operates on global script variables set by `parse_arguments`)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct status`, `pct snapshot list`).
+#   - `jq`: Used for validating the JSON syntax of `TARGET_CONFIG_BLOCK_JSON`.
+#
+# Exit Conditions:
+#   - Exits with code 2 for invalid input argument formats or empty strings.
+#   - Exits with code 3 if the source container or its specified snapshot does not exist.
+#
+# RAG Keywords: input validation, argument checking, source container, ZFS snapshot,
+#               JSON validation, error handling, script robustness.
 # =====================================================================================
+# =====================================================================================
+validate_inputs() {
+    if ! [[ "$SOURCE_CTID" =~ ^[0-9]+$ ]] || [ "$SOURCE_CTID" -le 0 ]; then
+        log_error "FATAL: Invalid SOURCE_CTID '$SOURCE_CTID'. Must be a positive integer."
+        exit_script 2
+    fi
+    if ! [[ "$TARGET_CTID" =~ ^[0-9]+$ ]] || [ "$TARGET_CTID" -le 0 ]; then
+        log_error "FATAL: Invalid TARGET_CTID '$TARGET_CTID'. Must be a positive integer."
+        exit_script 2
+    fi
+    if [ -z "$SOURCE_SNAPSHOT_NAME" ] || [ -z "$LXC_CONFIG_FILE" ] || [ -z "$TARGET_CONFIG_BLOCK_JSON" ]; then
+        log_error "FATAL: One or more required arguments are empty."
+        exit_script 2
+    fi
+    if ! jq -e . >/dev/null 2>&1 <<<"$TARGET_CONFIG_BLOCK_JSON"; then
+        log_error "FATAL: TARGET_CONFIG_BLOCK_JSON is not a valid JSON string."
+        exit_script 2
+    fi
+
+    log_info "Checking for existence of source container CTID: $SOURCE_CTID"
+    if ! pct status "$SOURCE_CTID" > /dev/null 2>&1; then
+        log_error "FATAL: Source container $SOURCE_CTID does not exist."
+        exit_script 3
+    fi
+
+    log_info "Checking for existence of snapshot '$SOURCE_SNAPSHOT_NAME' on container $SOURCE_CTID"
+    if ! pct snapshot list "$SOURCE_CTID" | grep -q "$SOURCE_SNAPSHOT_NAME"; then
+        log_error "FATAL: Snapshot '$SOURCE_SNAPSHOT_NAME' not found on source container $SOURCE_CTID."
+        exit_script 3
+    fi
+
+    log_info "Input validation passed."
+}
 
 # =====================================================================================
-# apply_post_clone_configurations()
-#   Content:
-#     - Log applying post-clone configurations for TARGET_CTID.
-#     - Extract specific network settings from TARGET_CONFIG_BLOCK_JSON:
-#         - IP: `jq -r '.network_config.ip' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - Gateway: `jq -r '.network_config.gw' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - MAC: `jq -r '.mac_address' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#         - Interface name (usually eth0): `jq -r '.network_config.name' <<< "$TARGET_CONFIG_BLOCK_JSON"`
-#     - Use `pct set` commands to apply these specific settings to the newly cloned container.
-#         - Example: `pct set "$TARGET_CTID" -net0 "name=eth0,bridge=vmbr0,ip=10.0.0.110/24,gw=10.0.0.1,hwaddr=52:54:00:67:89:A0"`
-#         - Construct the network string dynamically from the extracted values.
-#         - Execute `pct set "$TARGET_CTID" -net0 "$CONSTRUCTED_NETWORK_STRING"`.
-#         - Capture exit code. Handle failure (log, exit_script 5).
-#     - (Optional) Apply other specific settings if `pct clone` doesn't capture them perfectly (e.g., very specific mounts, descriptions).
-#     - Log post-clone configurations applied.
-#   Purpose: Fine-tunes the configuration of the newly cloned container to match its specific requirements, especially network settings.
+# Function: construct_pct_clone_command
+# Description: Dynamically builds the `pct clone` command array based on the provided
+#              source and target container IDs, snapshot name, and the target container's
+#              JSON configuration block. This includes setting hostname, memory, cores,
+#              storage, features, and unprivileged status. Network configuration is
+#              handled in a post-clone step.
+#
+# Parameters: None (operates on global script variables)
+#
+# Global Variables Modified:
+#   - `PCT_CLONE_CMD`: An array storing the constructed `pct clone` command and its arguments.
+#
+# Dependencies:
+#   - `jq`: Used for extracting configuration values from `TARGET_CONFIG_BLOCK_JSON`.
+#
+# RAG Keywords: `pct clone` command, LXC container cloning, command construction,
+#               container resources, Proxmox configuration, JSON parsing.
 # =====================================================================================
+# =====================================================================================
+construct_pct_clone_command() {
+    log_info "Constructing pct clone command for TARGET_CTID: $TARGET_CTID"
+
+    local hostname=$(jq -r '.name' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local memory_mb=$(jq -r '.memory_mb' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local cores=$(jq -r '.cores' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local storage_pool=$(jq -r '.storage_pool' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local features=$(jq -r '.features' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local unprivileged_bool=$(jq -r '.unprivileged' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0")
+
+    PCT_CLONE_CMD=(
+        pct clone "$SOURCE_CTID" "$TARGET_CTID"
+        --snapshot "$SOURCE_SNAPSHOT_NAME"
+        --hostname "$hostname"
+        --memory "$memory_mb"
+        --cores "$cores"
+        --storage "$storage_pool"
+        --features "$features"
+        --unprivileged "$unprivileged_val"
+    )
+    log_info "Constructed pct clone command: ${PCT_CLONE_CMD[*]}"
+}
 
 # =====================================================================================
-# exit_script(exit_code)
-#   Content:
-#     - Accept an integer exit_code.
-#     - If exit_code is 0:
-#         - Log a success message (e.g., "Container TARGET_CTID cloned from SOURCE_CTID@SOURCE_SNAPSHOT_NAME successfully").
-#     - If exit_code is non-zero:
-#         - Log a failure message indicating the script encountered an error, specifying the stage if possible.
-#     - Ensure logs are flushed.
-#     - Exit the script with the provided exit_code.
-#   Purpose: Provides a single point for script termination, ensuring final logging and correct exit status.
+# Function: execute_pct_clone
+# Description: Executes the pre-constructed `pct clone` command to create the new
+#              LXC container from the specified template snapshot. It captures
+#              and handles the command's exit status.
+#
+# Parameters: None (operates on global script variable `PCT_CLONE_CMD`)
+#
+# Dependencies:
+#   - `PCT_CLONE_CMD`: Must be populated by `construct_pct_clone_command()`.
+#
+# Exit Conditions:
+#   - Exits with code 4 if the `pct clone` command fails.
+#
+# RAG Keywords: `pct clone` execution, LXC container creation, command execution,
+#               error handling, Proxmox CLI.
 # =====================================================================================
+# =====================================================================================
+execute_pct_clone() {
+    log_info "Executing pct clone command for TARGET_CTID: $TARGET_CTID"
+    if ! "${PCT_CLONE_CMD[@]}"; then
+        log_error "FATAL: 'pct clone' command failed for TARGET_CTID $TARGET_CTID. Command: ${PCT_CLONE_CMD[*]}"
+        exit_script 4
+    fi
+    log_info "'pct clone' command executed successfully for TARGET_CTID $TARGET_CTID."
+}
+
+# =====================================================================================
+# Function: apply_post_clone_configurations
+# Description: Applies specific configurations to the newly cloned LXC container that
+#              are not fully handled by the `pct clone` command itself. This primarily
+#              includes detailed network settings (IP address, gateway, MAC address,
+#              and bridge) extracted from the target container's configuration block.
+#
+# Parameters: None (operates on global script variables)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct set`).
+#   - `jq`: Used for extracting network configuration values from `TARGET_CONFIG_BLOCK_JSON`.
+#
+# Exit Conditions:
+#   - Exits with code 5 if the `pct set` command fails to apply network configurations.
+#
+# RAG Keywords: post-clone configuration, network settings, LXC customization,
+#               IP address, MAC address, Proxmox `pct set`, error handling.
+# =====================================================================================
+# =====================================================================================
+apply_post_clone_configurations() {
+    log_info "Applying post-clone configurations for TARGET_CTID: $TARGET_CTID"
+
+    local net0_name=$(jq -r '.network_config.name' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local net0_bridge=$(jq -r '.network_config.bridge' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local net0_ip=$(jq -r '.network_config.ip' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local net0_gw=$(jq -r '.network_config.gw' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local mac_address=$(jq -r '.mac_address' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
+
+    log_info "Setting network configuration for TARGET_CTID $TARGET_CTID: $net0_string"
+    if ! pct set "$TARGET_CTID" --net0 "$net0_string"; then
+        log_error "FATAL: 'pct set' command failed to apply network configuration for TARGET_CTID $TARGET_CTID."
+        exit_script 5
+    fi
+    log_info "Post-clone configurations applied successfully."
+}
+
+# =====================================================================================
+# Function: main
+# Description: The main entry point for the LXC container cloning script.
+#              It orchestrates the entire cloning process by parsing arguments,
+#              validating inputs, constructing and executing the `pct clone` command,
+#              and applying any necessary post-clone configurations.
+#
+# Parameters:
+#   - $@: All command-line arguments passed to the script.
+#
+# Dependencies:
+#   - `parse_arguments()`
+#   - `validate_inputs()`
+#   - `construct_pct_clone_command()`
+#   - `execute_pct_clone()`
+#   - `apply_post_clone_configurations()`
+#   - `exit_script()`
+#
+# RAG Keywords: main function, script entry point, LXC cloning flow, Proxmox automation.
+# =====================================================================================
+# =====================================================================================
+main() {
+    parse_arguments "$@"
+    validate_inputs
+    construct_pct_clone_command
+    execute_pct_clone
+    apply_post_clone_configurations
+    exit_script 0
+}
+
+# Call the main function
+main "$@"

@@ -10,29 +10,25 @@ The `phoenix_hypervisor_initial_setup.sh` script is responsible for performing t
 
 ## Key Responsibilities
 
-1.  **Tool Installation & Verification:**
-    *   Check for the presence of critical command-line utilities required by other Phoenix scripts.
-    *   Install any missing tools. Key tools identified include:
+*   **Tool Installation & Verification:**
+    *   Checks for the presence of critical command-line utilities required by other Phoenix scripts.
+    *   Installs any missing tools. Key tools identified include:
         *   `jq`: For parsing and manipulating JSON configuration files.
         *   `curl`: For downloading files or making web requests.
         *   `pct`: The Proxmox Container Toolkit (assumed present on Proxmox, but a check is beneficial).
         *   `ajv-cli` (or similar): For validating JSON files against their schemas.
-    *   Update tools to the latest version if necessary (based on configuration preference, though default is latest).
-
-2.  **Environment Validation:**
-    *   Verify the existence and basic readability of the core Phoenix Hypervisor configuration files:
+    *   Updates tools to the latest version if necessary (based on configuration preference, though default is latest).
+*   **Environment Validation:**
+    *   Verifies the existence and basic readability of the core Phoenix Hypervisor configuration files:
         *   `phoenix_hypervisor_config.json`
         *   `phoenix_lxc_configs.json`
         *   `phoenix_lxc_configs.schema.json`
-    *   Potentially ensure that core directory structures defined in the configurations exist (e.g., `/usr/local/phoenix_hypervisor/etc/`, `/usr/local/phoenix_hypervisor/bin/`, `/usr/local/phoenix_hypervisor/lib/`).
-
-3.  **Idempotency:**
+    *   Ensures that core directory structures defined in the configurations exist (e.g., `/usr/local/phoenix_hypervisor/etc/`, `/usr/local/phoenix_hypervisor/bin/`, `/usr/local/phoenix_hypervisor/lib/`).
+*   **Idempotency:**
     *   Designed to be safe to run multiple times. It should check the current state and only perform actions if the required conditions are not already met.
-
-4.  **Marker System:**
-    *   Implement a simple marker file mechanism (e.g., creating `/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized`) to indicate successful completion of the initial setup. This can help prevent unnecessary re-runs or provide a quick status check.
-
-5.  **Execution Context:**
+*   **Marker System:**
+    *   Implements a simple marker file mechanism (e.g., creating `/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized`) to indicate successful completion of the initial setup. This can help prevent unnecessary re-runs or provide a quick status check.
+*   **Execution Context:**
     *   Runs non-interactively directly on the Proxmox host.
     *   Has full access to the Phoenix Hypervisor configuration files to guide its actions and checks.
 

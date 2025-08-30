@@ -4,12 +4,12 @@
 
 Phoenix Hypervisor is a comprehensive automation framework designed for Proxmox Virtual Environment (PVE). It streamlines the creation, configuration, and management of LXC containers specifically tailored for AI and machine learning workloads. Leveraging ZFS snapshots for rapid provisioning and a centralized JSON configuration system, Phoenix Hypervisor ensures consistency, reproducibility, and scalability across your containerized AI infrastructure.
 
-The system establishes a hierarchy of base templates (OS, GPU, Docker, vLLM) which are snapshotted. Application containers (like Portainer or specific vLLM model servers) are then rapidly cloned from these optimized snapshots, significantly reducing setup times.
+The system establishes a hierarchical chain of base templates: Base OS (CTID 900) -> Base+GPU (CTID 901) / Base+Docker (CTID 902) -> Base+Docker+GPU (CTID 903) -> Base+vLLM (CTID 920). Application containers (like Portainer or specific vLLM model servers) are then rapidly cloned from these optimized snapshots, significantly reducing setup times.
 
 ## Key Features
 
 *   **Configuration-Driven:** All aspects of container creation and setup are defined in structured JSON files (`phoenix_hypervisor_config.json`, `phoenix_lxc_configs.json`).
-*   **Snapshot-Based Templates:** Uses ZFS snapshots to create a hierarchy of base templates (Base OS, Base+GPU, Base+Docker, Base+Docker+GPU, Base+vLLM), enabling ultra-fast cloning of new containers.
+*   **Snapshot-Based Templates:** Uses ZFS snapshots to create a hierarchical chain of base templates (Base OS, Base+GPU, Base+Docker, Base+Docker+GPU, Base+vLLM), enabling ultra-fast cloning of new containers. The hierarchy is: Base OS (CTID 900) -> Base+GPU (CTID 901) / Base+Docker (CTID 902) -> Base+Docker+GPU (CTID 903) -> Base+vLLM (CTID 920).
 *   **Modular Design:** Orchestrated by a main script (`phoenix_establish_hypervisor.sh`) that calls dedicated sub-scripts for specific tasks (creation, cloning, NVIDIA setup, Docker setup, container-specific customization).
 *   **Conditional Logic:** Applies NVIDIA or Docker setup only when required by a container's configuration.
 *   **Multi-GPU Support:** Handles containers assigned to specific GPUs or multiple GPUs.
@@ -34,7 +34,7 @@ This repository contains the definitions, documentation, and shell script skelet
 
 Place these files in `/usr/local/phoenix_hypervisor/etc/`.
 
-*   `phoenix_hypervisor_config.json`: System-wide settings (paths, network defaults, Proxmox defaults, behavior flags).
+*   `phoenix_hypervisor_config.json`: System-wide settings (paths, network defaults, Proxmox defaults, Docker image versions, behavior flags).
 *   `phoenix_lxc_configs.json`: Definitions for all LXC containers and templates (resources, network, GPU assignment, roles, AI model details).
 *   `phoenix_lxc_configs.schema.json`: JSON Schema for validating `phoenix_lxc_configs.json`.
 *   `phoenix_hypervisor_config.schema.json`: JSON Schema for validating `phoenix_hypervisor_config.json`.
@@ -49,11 +49,9 @@ Place these executable scripts (`chmod +x`) in `/usr/local/phoenix_hypervisor/bi
 *   `phoenix_hypervisor_initial_setup.sh`: Performs one-time checks and installations on the Proxmox host.
 *   `phoenix_hypervisor_create_lxc.sh`: Handles the `pct create` command for base containers.
 *   `phoenix_hypervisor_clone_lxc.sh`: Handles the `pct clone` command for creating containers from template snapshots.
-*   `phoenix_hypervisor_lxc_nvidia.sh`: Configures NVIDIA drivers, CUDA, and tools inside a specified LXC container.
-*   `phoenix_hypervisor_lxc_docker.sh`: Installs and configures Docker Engine, NVIDIA Container Toolkit, and potentially integrates with Portainer inside the LXC.
+*   `phoenix_hypervisor_lxc_common_nvidia.sh`: Configures NVIDIA drivers, CUDA, and tools inside a specified LXC container.
+*   `phoenix_hypervisor_lxc_common_docker.sh`: Installs and configures Docker Engine, NVIDIA Container Toolkit, and potentially integrates with Portainer inside the LXC.
 *   `phoenix_hypervisor_setup_<CTID>.sh`: Optional, container-specific customization scripts (e.g., `phoenix_hypervisor_setup_901.sh`, `phoenix_hypervisor_setup_910.sh`).
-
-*(Note: `phoenix_hypervisor_lxc_common_nvidia.sh` and `phoenix_hypervisor_lxc_common_docker.sh` were conceptualized but not explicitly created/shelled in our session. Their logic is often integrated into `phoenix_hypervisor_lxc_nvidia.sh` and `phoenix_hypervisor_lxc_docker.sh` respectively, or they can be created as needed for shared functions).*
 
 #### 3. Library Functions
 
@@ -83,7 +81,7 @@ These markdown documents provide detailed insights into the project's architectu
 *   `phoenix_hypervisor_clone_lxc_summary.md`
 *   `phoenix_hypervisor_lxc_nvidia_summary.md`
 *   `phoenix_hypervisor_lxc_docker_summary.md`
-*   `phoenix_hypervisor_lxc_common_functions_summary.md` *(Deferred/Future Enhancement)*
+*   `phoenix_hypervisor_project_summary_initialbuild.md`
 
 *(Note: Shell script skeletons (`.sh` files with only comments) are also part of the repository structure and follow the placement rules for scripts/libs above.)*
 

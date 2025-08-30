@@ -1,10 +1,10 @@
-# `phoenix_hypervisor_initial_setup.sh` - Detailed Requirements
+# `phoenix_hypervisor_initial_setup.sh` - Requirements
 
 ## Overview
 
 This document outlines the detailed requirements for the `phoenix_hypervisor_initial_setup.sh` script. This script ensures the Proxmox host environment is prepared for the Phoenix Hypervisor system.
 
-## 1. Key Aspects & Responsibilities
+## Key Aspects & Responsibilities
 
 *   **Role:** Perform essential one-time setup and validation on the Proxmox host.
 *   **Input:** Relies on `phoenix_hypervisor_config.json` (path hardcoded to `/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json`) for determining paths and settings. Does not directly process `phoenix_lxc_configs.json`.
@@ -14,7 +14,7 @@ This document outlines the detailed requirements for the `phoenix_hypervisor_ini
 *   **Error Handling:** Prioritizes clear, detailed logging (stdout/stderr) to inform the user of actions and failures. Exits with a non-zero code on critical failure.
 *   **Output:** Detailed logs indicating actions taken and status. Creates a marker file upon successful completion.
 
-## 2. Function Sequence, Content, and Purpose
+## Function Sequence, Content, and Purpose
 
 ### `main()`
 *   **Content:**
@@ -33,12 +33,12 @@ This document outlines the detailed requirements for the `phoenix_hypervisor_ini
 ### `initialize_environment()`
 *   **Content:**
     *   Define hardcoded path to `phoenix_hypervisor_config.json`: `HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"`.
-    *   Check if `HYPERVISOR_CONFIG_FILE` exists. If not, log a fatal error and call `exit_script 1`.
-    *   (Optional) Source or parse `HYPERVISOR_CONFIG_FILE` to get paths like `HYPERVISOR_MARKER_DIR`, `HYPERVISOR_MARKER`. If parsing, use `jq`.
+    *   Check if `HYPERVISOR_CONFIG_FILE` exists. If not, log a fatal error and call `exit_script 2`.
+    *   The script hardcodes the `MARKER_FILE` path and does not parse it from `HYPERVISOR_CONFIG_FILE`.
     *   Define log file path (e.g., `/var/log/phoenix_hypervisor_initial_setup.log`).
     *   Initialize/Clear the log file.
     *   Log script start message with timestamp.
-    *   Source common library functions from `/usr/local/phoenix_hypervisor/lib/` if needed (e.g., for logging functions).
+    *   The script defines logging functions internally and does not source common library functions.
 *   **Purpose:** Prepares the script's runtime environment, including loading base config and setting up logging.
 
 ### `check_and_create_marker()`
@@ -52,7 +52,7 @@ This document outlines the detailed requirements for the `phoenix_hypervisor_ini
     *   If `MARKER_FILE` does not exist:
         *   Log that marker file not found. Setup will proceed.
         *   Set internal flag/state indicating setup is needed.
-    *   (Optional/Advanced) Could add a `--force` flag check here to override the marker.
+    *   The script does not implement a `--force` flag.
 *   **Purpose:** Determines if the initial setup has been previously completed using a marker file, influencing subsequent actions.
 
 ### `verify_core_config_files()`
@@ -81,16 +81,16 @@ This document outlines the detailed requirements for the `phoenix_hypervisor_ini
         *   If not installed:
             *   Log installing package.
             *   Install package: `apt-get install -y "$package"` (handle errors).
-            *   If installation fails, log a fatal error and call `exit_script 1`.
+            *   If installation fails, log a fatal error and call `exit_script 3`.
         *   If installed, log package already present.
     *   After installing `npm`, install `ajv-cli`:
-        *   Log checking for ajv-cli.
+        *   Log checking for `ajv-cli`.
         *   Check if `ajv` command is available.
         *   If not:
-            *   Log installing ajv-cli via npm.
+            *   Log installing `ajv-cli` via `npm`.
             *   Run `npm install -g ajv-cli` (handle errors). Use `sudo` if necessary and appropriate.
-            *   If installation fails, log a fatal error and call `exit_script 1`.
-        *   If installed, log ajv-cli already present.
+            *   If installation fails, log a fatal error and call `exit_script 3`.
+        *   If installed, log `ajv-cli` already present.
 *   **Purpose:** Ensures all necessary command-line tools for the Phoenix scripts are installed on the host.
 
 ### `verify_required_tools()`
@@ -101,7 +101,7 @@ This document outlines the detailed requirements for the `phoenix_hypervisor_ini
     *   For each tool:
         *   Log verifying tool.
         *   Check if tool is available in PATH (`command -v "$tool" > /dev/null 2>&1`).
-        *   If not available, log a fatal error (tool missing despite install attempt or not found in PATH) and call `exit_script 1`.
+        *   If not available, log a fatal error (tool missing despite install attempt or not found in PATH) and call `exit_script 4`.
 *   **Purpose:** Confirms that critical tools are not only installed but also accessible and executable by the script.
 
 ### `ensure_core_directories_exist()`

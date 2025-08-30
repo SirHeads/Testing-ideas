@@ -1,196 +1,355 @@
 #!/bin/bash
 #
-# File: phoenix_hypervisor_lxc_nvidia.sh
-# Description: Configures NVIDIA GPU support inside a specific LXC container.
+# File: phoenix_hypervisor_lxc_common_nvidia.sh
+# Description: This script automates the configuration of NVIDIA GPU passthrough and driver installation
+#              within a Proxmox LXC container. It ensures the container can access and utilize
+#              NVIDIA GPUs from the host system, and installs the necessary NVIDIA drivers and CUDA toolkit.
 # Version: 0.1.0
 # Author: Heads, Qwen3-coder (AI Assistant)
 #
-# This script configures NVIDIA GPU support inside an LXC container by passing
-# through host devices and installing the necessary driver and CUDA toolkit.
+# ### Usage
+# To execute this script, provide the Container ID (CTID) as a command-line argument and set the
+# following environment variables:
 #
-# Usage: CTID=<CTID> GPU_ASSIGNMENT=<assignment> NVIDIA_DRIVER_VERSION=<version> NVIDIA_REPO_URL=<url> NVIDIA_RUNFILE_URL=<url> ./phoenix_hypervisor_lxc_nvidia.sh <CTID>
-# Requirements:
-#   - Proxmox host environment
-#   - pct command
-#   - jq (if needed for complex parsing, though not required here)
-#   - curl or wget (inside the container, assumed to be present or installed by this script if needed)
+# ```bash
+# CTID=<CTID> \
+# GPU_ASSIGNMENT="<comma_separated_gpu_indices | none>" \
+# NVIDIA_DRIVER_VERSION="<driver_version_string>" \
+# NVIDIA_REPO_URL="<nvidia_apt_repository_url>" \
+# NVIDIA_RUNFILE_URL="<nvidia_driver_runfile_download_url>" \
+# ./phoenix_hypervisor_lxc_common_nvidia.sh <CTID>
+# ```
 #
-# Exit Codes:
-#   0: Success
-#   1: General error
-#   2: Invalid input/arguments
-#   3: Container does not exist
-#   4: Host configuration error
-#   5: Software installation error
-#   6: Container restart error
+# ### Requirements
+# *   **Proxmox Host Environment:** The script must be run on a Proxmox host.
+# *   **`pct` command:** Proxmox Container Toolkit command-line utility for LXC management.
+# *   **`curl` or `wget`:** Required inside the LXC container for downloading the NVIDIA driver runfile.
+# *   **`jq` (Optional):** May be used for complex JSON parsing in future iterations, though not currently required.
+#
+# ### Exit Codes
+# *   **0:** Script executed successfully.
+# *   **1:** General error or unhandled exception.
+# *   **2:** Invalid input or missing arguments/environment variables.
+# *   **3:** Target LXC container does not exist.
+# *   **4:** Host-side configuration error (e.g., LXC config file not found).
+# *   **5:** Error during NVIDIA software installation within the container.
+# *   **6:** Container restart operation failed.
 
-# =====================================================================================
-# main()
-#   Content:
-#     - Entry point.
-#     - Calls parse_arguments to get the CTID.
-#     - Calls validate_inputs (CTID, required environment variables).
-#     - Calls check_container_exists (basic sanity check).
-#     - Calls configure_host_gpu_passthrough.
-#     - Calls install_nvidia_software_in_container.
-#     - Calls restart_container.
-#     - Calls exit_script.
-#   Purpose: Controls the overall flow of the NVIDIA configuration process.
-# =====================================================================================
+# --- Global Variables and Constants ---
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
-# --- Main Script Execution Starts Here ---
+# --- Logging Functions ---
+log_info() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_lxc_common_nvidia.sh: $*" | tee -a "$MAIN_LOG_FILE"
+}
 
-# =====================================================================================
-# parse_arguments()
-#   Content:
-#     - Check the number of command-line arguments.
-#     - If not exactly one argument is provided, log a usage error message and call exit_script 1.
-#     - Assign the first argument to a variable CTID.
-#     - Log the received CTID.
-#   Purpose: Retrieves the CTID from the command-line arguments.
-# =====================================================================================
+log_error() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_lxc_common_nvidia.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
+}
 
-# =====================================================================================
-# validate_inputs()
-#   Content:
-#     - Validate that CTID is a positive integer. If not, log a fatal error and call exit_script 1.
-#     - Check if the required environment variables are set and not empty: GPU_ASSIGNMENT, NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL, NVIDIA_RUNFILE_URL. If any are missing/empty, log a fatal error and call exit_script 1.
-#     - Log the values of the validated environment variables.
-#     - (Optional) Validate the format of GPU_ASSIGNMENT against the pattern ^(|[0-9]+(,[0-9]+)*)$.
-#   Purpose: Ensures the script has the necessary and valid inputs (CTID, environment variables) to proceed.
-# =====================================================================================
+# --- Exit Function ---
+exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
 
-# =====================================================================================
-# check_container_exists()
-#   Content:
-#     - Log checking for the existence of container CTID.
-#     - Execute pct status "$CTID" > /dev/null 2>&1.
-#     - Capture the exit code.
-#     - If the exit code is non-zero (container does not exist or error), log a fatal error and call exit_script 1.
-#     - If the exit code is 0 (container exists), log confirmation.
-#   Purpose: Performs a basic sanity check that the target container exists.
-# =====================================================================================
+# --- Script Variables ---
+CTID=""
 
-# =====================================================================================
-# configure_host_gpu_passthrough()
-#   Content:
-#     - Log starting host GPU passthrough configuration for container CTID.
-#     - Define the LXC config file path: LXC_CONF_FILE="/etc/pve/lxc/${CTID}.conf".
-#     - Check if LXC_CONF_FILE exists. If not, log a fatal error and call exit_script 1.
-#     - Define the standard set of non-GPU-specific NVIDIA devices/mounts needed:
-#         - /dev/nvidiactl
-#         - /dev/nvidia-uvm
-#         - /dev/nvidia-uvm-tools
-#         - /dev/nvidia-caps/ (directory)
-#     - Initialize an empty list/array for mount entries to be added.
-#     - Based on GPU_ASSIGNMENT:
-#         - If "none", log that no GPU assignment is configured, skip adding GPU device mounts. Proceed to add standard mounts only.
-#         - If not "none":
-#             - Split GPU_ASSIGNMENT by comma to get a list of indices (e.g., ["0", "1"]).
-#             - Iterate through the indices:
-#                 - For each index IDX:
-#                     - Construct the device path: DEVICE_PATH="/dev/nvidia${IDX}".
-#                     - Check if DEVICE_PATH exists on the host (test -e "$DEVICE_PATH").
-#                     - If it does not exist, log a warning/error (device not found on host) and potentially continue or exit based on strictness (assume exists per earlier discussion).
-#                     - Construct the lxc.mount.entry line for the GPU device: lxc.mount.entry = ${DEVICE_PATH} ${DEVICE_PATH} none bind,optional,create=file 0 0.
-#                     - Add this line to the list of mount entries.
-#     - Iterate through the standard set of devices/mounts:
-#         - For each STD_DEVICE:
-#             - Check if it exists on the host (especially /dev/nvidia-caps/).
-#             - Construct the appropriate lxc.mount.entry line (file or directory type).
-#             - Add this line to the list of mount entries.
-#     - Iterate through the final list of mount entries:
-#         - For each ENTRY:
-#             - Check if the exact line already exists in LXC_CONF_FILE (e.g., grep -Fxq "$ENTRY" "$LXC_CONF_FILE").
-#             - If it does NOT exist:
-#                 - Log appending the entry.
-#                 - Append the entry to LXC_CONF_FILE (e.g., echo "$ENTRY" >> "$LXC_CONF_FILE").
-#                 - Handle potential errors (e.g., permission denied).
-#             - If it exists, log that the entry is already present.
-#     - Log completion of host GPU passthrough configuration.
-#   Purpose: Modifies the LXC container's configuration file on the host to bind-mount the necessary NVIDIA devices from the host into the container's filesystem.
-# =====================================================================================
+### Function: parse_arguments
+# Purpose: Parses command-line arguments to extract the Container ID (CTID).
+# Content:
+# *   Checks if exactly one argument is provided.
+# *   If not, logs a usage error and exits with code 2.
+# *   Assigns the first argument to the `CTID` variable.
+# *   Logs the successfully received CTID.
+parse_arguments() {
+    if [ "$#" -ne 1 ]; then
+        log_error "Usage: $0 <CTID>"
+        exit_script 2
+    fi
+    CTID="$1"
+    log_info "Received CTID: $CTID"
+}
 
-# =====================================================================================
-# install_nvidia_software_in_container()
-#   Content:
-#     - Log starting NVIDIA software installation inside container CTID.
-#     - Define paths/constants:
-#         - RUNFILE_DEST_PATH="/tmp/nvidia-driver-installer.run" (path inside the container).
-#     - Idempotency Check:
-#         - Log performing idempotency check.
-#         - Execute pct exec "$CTID" -- nvidia-smi --version.
-#         - Capture the exit code and output.
-#         - If the exit code is 0:
-#             - Parse the output to check if the version matches NVIDIA_DRIVER_VERSION.
-#             - If it matches, log that NVIDIA driver/CUDA appears to be correctly installed. Skip remaining installation steps. Return.
-#         - If the exit code is non-zero or version mismatch, log that installation is needed.
-#     - Add NVIDIA Repository:
-#         - Log adding NVIDIA repository inside the container.
-#         - Execute pct exec "$CTID" -- command to add NVIDIA_REPO_URL to the container's APT sources (e.g., echo "deb $NVIDIA_REPO_URL $(lsb_release -cs) main" > /etc/apt/sources.list.d/nvidia.conf or similar). Handle errors.
-#         - Execute pct exec "$CTID" -- apt-get update. Handle errors.
-#     - Download NVIDIA Driver .run File:
-#         - Log downloading NVIDIA driver .run file from NVIDIA_RUNFILE_URL to RUNFILE_DEST_PATH inside the container.
-#         - Execute pct exec "$CTID" -- curl -fL -o "$RUNFILE_DEST_PATH" "$NVIDIA_RUNFILE_URL" (or wget). Handle errors (download failure, network issues).
-#     - Install NVIDIA Driver (.run file):
-#         - Log making the .run file executable.
-#         - Execute pct exec "$CTID" -- chmod +x "$RUNFILE_DEST_PATH". Handle errors.
-#         - Log installing NVIDIA driver using the .run file.
-#         - Execute pct exec "$CTID" -- "$RUNFILE_DEST_PATH" --no-kernel-module --silent (add other flags as needed). Handle errors (installation failure, incompatible kernel headers if not using --no-kernel-module correctly).
-#     - Install CUDA and Utilities (via apt):
-#         - Log installing CUDA drivers and utilities via apt.
-#         - Derive the major version from NVIDIA_DRIVER_VERSION (e.g., 580 from 580.76.05).
-#         - Execute pct exec "$CTID" -- apt-get install -y cuda-drivers-${MAJOR_VERSION} (or cuda-toolkit-${MAJOR_VERSION} if full toolkit is needed). Handle errors.
-#         - Execute pct exec "$CTID" -- apt-get install -y nvtop. Handle errors.
-#     - Verify Installation (inside Container):
-#         - Log verifying NVIDIA installation inside the container.
-#         - Execute pct exec "$CTID" -- nvidia-smi.
-#         - Capture and log the output to show driver status and recognized GPUs.
-#         - Handle errors (driver not functioning after install).
-#     - Log completion of NVIDIA software installation.
-#   Purpose: Installs the NVIDIA driver (using the .run file) and CUDA toolkit/utilities inside the LXC container using pct exec.
-# =====================================================================================
+### Function: validate_inputs
+# Purpose: Validates all necessary inputs, including the CTID and required environment variables,
+#          to ensure the script can proceed with configuration.
+# Content:
+# *   Verifies that `CTID` is a positive integer; otherwise, logs a fatal error and exits.
+# *   Checks if `GPU_ASSIGNMENT`, `NVIDIA_DRIVER_VERSION`, `NVIDIA_REPO_URL`, and `NVIDIA_RUNFILE_URL`
+#     environment variables are set and not empty. If any are missing, logs a fatal error and exits.
+# *   Logs a success message if all input validations pass.
+validate_inputs() {
+    if ! [[ "$CTID" =~ ^[0-9]+$ ]] || [ "$CTID" -le 0 ]; then
+        log_error "FATAL: Invalid CTID '$CTID'. Must be a positive integer."
+        exit_script 2
+    fi
+    if [ -z "$GPU_ASSIGNMENT" ] || [ -z "$NVIDIA_DRIVER_VERSION" ] || [ -z "$NVIDIA_REPO_URL" ] || [ -z "$NVIDIA_RUNFILE_URL" ]; then
+        log_error "FATAL: One or more required environment variables (GPU_ASSIGNMENT, NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL, NVIDIA_RUNFILE_URL) are not set."
+        exit_script 2
+    fi
+    log_info "Input validation passed."
+}
 
-# =====================================================================================
-# restart_container()
-#   Content:
-#     - Log restarting container CTID to apply configuration changes.
-#     - Define timeout and polling interval (e.g., 60 seconds, 3 seconds).
-#     - Stop Container:
-#         - Execute pct stop "$CTID".
-#         - Handle errors.
-#     - Wait for Stopped:
-#         - Initialize timer.
-#         - Loop:
-#             - Execute pct status "$CTID".
-#             - Check if status is 'stopped'.
-#             - If 'stopped', break loop.
-#             - If not 'stopped', sleep for interval.
-#             - Check if timeout exceeded. If so, log error and call exit_script 1.
-#     - Start Container:
-#         - Execute pct start "$CTID".
-#         - Handle errors.
-#     - Wait for Running:
-#         - Initialize timer.
-#         - Loop:
-#             - Execute pct status "$CTID".
-#             - Check if status is 'running'.
-#             - If 'running', break loop.
-#             - If not 'running', sleep for interval.
-#             - Check if timeout exceeded. If so, log error and call exit_script 1.
-#     - Log successful restart of container CTID.
-#   Purpose: Restarts the LXC container to ensure the new device mounts and installed software are active.
-# =====================================================================================
+### Function: check_container_exists
+# Purpose: Confirms the existence of the target LXC container on the Proxmox host.
+# Content:
+# *   Logs the initiation of the container existence check for the given `CTID`.
+# *   Executes `pct status "$CTID"` to determine if the container is recognized by Proxmox.
+# *   If the `pct status` command fails (non-zero exit code), logs a fatal error and exits with code 3.
+# *   Logs a confirmation message if the container is found.
+check_container_exists() {
+    log_info "Checking for existence of container CTID: $CTID"
+    if ! pct status "$CTID" > /dev/null 2>&1; then
+        log_error "FATAL: Container $CTID does not exist."
+        exit_script 3
+    fi
+    log_info "Container $CTID exists."
+}
 
-# =====================================================================================
-# exit_script(exit_code)
-#   Content:
-#     - Accept an integer exit_code.
-#     - If exit_code is 0:
-#         - Log a success message (e.g., "NVIDIA configuration for container CTID completed successfully").
-#     - If exit_code is non-zero:
-#         - Log a failure message indicating the script encountered an error.
-#     - Ensure logs are flushed.
-#     - Exit the script with the provided exit_code.
-#   Purpose: Provides a single point for script termination, ensuring final logging and correct exit status based on the overall outcome.
-# =====================================================================================
+### Function: configure_host_gpu_passthrough
+# Purpose: Modifies the LXC container's configuration file on the Proxmox host to bind-mount
+#          the necessary NVIDIA devices from the host into the container's filesystem.
+#          This enables the container to access physical GPUs.
+# Content:
+# *   Defines the path to the LXC configuration file (`/etc/pve/lxc/<CTID>.conf`).
+# *   Verifies the existence of the LXC configuration file; exits if not found.
+# *   Initializes a list of standard NVIDIA devices (`/dev/nvidiactl`, `/dev/nvidia-uvm`, etc.).
+# *   **GPU Assignment Handling:**
+#     *   If `GPU_ASSIGNMENT` is not "none", it parses the comma-separated GPU indices.
+#     *   For each assigned GPU index, constructs the device path (`/dev/nvidia<IDX>`).
+#     *   Checks if the device exists on the host and adds an `lxc.mount.entry` for it.
+#     *   Logs a warning if an assigned GPU device is not found on the host.
+# *   **Standard Device Handling:**
+#     *   Iterates through the `standard_devices` list.
+#     *   Determines if the device is a file or a directory (e.g., `/dev/nvidia-caps` is a directory).
+#     *   Checks if the standard device exists on the host and adds an `lxc.mount.entry` for it.
+#     *   Logs a warning if a standard NVIDIA device is not found on the host.
+# *   **Applying Mount Entries:**
+#     *   Iterates through the collected `mount_entries`.
+#     *   For each entry, checks if it already exists in the LXC configuration file to ensure idempotency.
+#     *   If the entry does not exist, it is appended to the configuration file.
+#     *   Logs whether an entry was appended or already present.
+# *   Logs completion of the host GPU passthrough configuration.
+configure_host_gpu_passthrough() {
+    log_info "Configuring host GPU passthrough for container CTID: $CTID"
+    local lxc_conf_file="/etc/pve/lxc/${CTID}.conf"
+    if [ ! -f "$lxc_conf_file" ]; then
+        log_error "FATAL: LXC config file not found at $lxc_conf_file."
+        exit_script 4
+    fi
+
+    local standard_devices=("/dev/nvidiactl" "/dev/nvidia-uvm" "/dev/nvidia-uvm-tools" "/dev/nvidia-caps")
+    local mount_entries=()
+
+    if [ "$GPU_ASSIGNMENT" != "none" ]; then
+        IFS=',' read -ra gpu_indices <<< "$GPU_ASSIGNMENT"
+        for idx in "${gpu_indices[@]}"; do
+            local device_path="/dev/nvidia${idx}"
+            if [ -e "$device_path" ]; then
+                mount_entries+=("lxc.mount.entry: ${device_path} ${device_path} none bind,optional,create=file 0 0")
+            else
+                log_error "WARNING: GPU device not found on host: $device_path"
+            fi
+        done
+    fi
+
+    for device in "${standard_devices[@]}"; do
+        local create_type="file"
+        if [ "$device" == "/dev/nvidia-caps" ]; then
+            create_type="dir"
+        fi
+
+        if [ -e "$device" ]; then
+            mount_entries+=("lxc.mount.entry: ${device} ${device} none bind,optional,create=${create_type} 0 0")
+        else
+            log_error "WARNING: Standard NVIDIA device not found on host: $device"
+        fi
+    done
+
+    for entry in "${mount_entries[@]}"; do
+        if ! grep -Fxq "$entry" "$lxc_conf_file"; then
+            log_info "Appending to LXC config: $entry"
+            echo "$entry" >> "$lxc_conf_file"
+        else
+            log_info "Entry already exists in LXC config: $entry"
+        fi
+    done
+    log_info "Host GPU passthrough configuration complete."
+}
+
+### Function: install_nvidia_software_in_container
+# Purpose: Installs the NVIDIA driver (using a `.run` file) and the CUDA toolkit/utilities
+#          inside the specified LXC container using `pct exec` commands.
+# Content:
+# *   Defines the `RUNFILE_DEST_PATH` for the NVIDIA driver installer within the container.
+# *   **Idempotency Check:**
+#     *   Attempts to run `nvidia-smi --version` inside the container.
+#     *   If the command succeeds and the version matches `NVIDIA_DRIVER_VERSION`, logs that
+#         the driver is already installed and skips further installation steps.
+# *   **Add NVIDIA Repository:**
+#     *   Updates APT package lists.
+#     *   Installs `software-properties-common` for `add-apt-repository`.
+#     *   Adds the NVIDIA APT repository specified by `NVIDIA_REPO_URL` to the container's sources.
+#     *   Updates APT package lists again to include the new repository.
+# *   **Download NVIDIA Driver .run File:**
+#     *   Downloads the NVIDIA driver `.run` file from `NVIDIA_RUNFILE_URL` to `RUNFILE_DEST_PATH`
+#         inside the container using `curl`. Exits with an error if the download fails.
+# *   **Install NVIDIA Driver (.run file):**
+#     *   Makes the downloaded `.run` file executable.
+#     *   Executes the `.run` file with `--no-kernel-module --silent` flags for a non-interactive
+#         installation without building kernel modules (as these are handled by the host).
+#     *   Exits with an error if the driver installation fails.
+# *   **Install CUDA and Utilities (via apt):**
+#     *   Extracts the major version from `NVIDIA_DRIVER_VERSION`.
+#     *   Installs `cuda-drivers-<MAJOR_VERSION>` and `nvtop` via `apt-get`.
+#     *   Exits with an error if the installation of CUDA components fails.
+# *   **Verify Installation (inside Container):**
+#     *   Executes `nvidia-smi` inside the container to verify the driver is functioning and
+#         GPUs are recognized.
+#     *   Exits with an error if `nvidia-smi` fails post-installation.
+# *   Logs completion of NVIDIA software installation.
+install_nvidia_software_in_container() {
+    log_info "Installing NVIDIA software in container CTID: $CTID"
+    local runfile_dest_path="/tmp/nvidia-driver-installer.run"
+
+    if pct exec "$CTID" -- nvidia-smi --version | grep -q "$NVIDIA_DRIVER_VERSION"; then
+        log_info "NVIDIA driver already installed and version matches. Skipping installation."
+        return
+    fi
+
+    log_info "Adding NVIDIA repository inside the container..."
+    pct exec "$CTID" -- apt-get update
+    pct exec "$CTID" -- apt-get install -y software-properties-common
+    pct exec "$CTID" -- add-apt-repository "deb $NVIDIA_REPO_URL $(lsb_release -cs) main"
+    pct exec "$CTID" -- apt-get update
+
+    log_info "Downloading NVIDIA driver .run file..."
+    if ! pct exec "$CTID" -- curl -fL -o "$runfile_dest_path" "$NVIDIA_RUNFILE_URL"; then
+        log_error "FATAL: Failed to download NVIDIA driver .run file."
+        exit_script 5
+    fi
+
+    log_info "Installing NVIDIA driver..."
+    pct exec "$CTID" -- chmod +x "$runfile_dest_path"
+    if ! pct exec "$CTID" -- "$runfile_dest_path" --no-kernel-module --silent; then
+        log_error "FATAL: Failed to install NVIDIA driver."
+        exit_script 5
+    fi
+
+    log_info "Installing CUDA and utilities..."
+    local major_version=$(echo "$NVIDIA_DRIVER_VERSION" | cut -d. -f1)
+    if ! pct exec "$CTID" -- apt-get install -y "cuda-drivers-${major_version}" nvtop; then
+        log_error "FATAL: Failed to install CUDA drivers and utilities."
+        exit_script 5
+    fi
+
+    log_info "Verifying NVIDIA installation..."
+    if ! pct exec "$CTID" -- nvidia-smi; then
+        log_error "FATAL: nvidia-smi command failed after installation."
+        exit_script 5
+    fi
+    log_info "NVIDIA software installation complete."
+}
+
+### Function: restart_container
+# Purpose: Restarts the LXC container to ensure that newly applied device mounts
+#          and installed NVIDIA software are properly activated and recognized.
+# Content:
+# *   Logs the intention to restart the container for configuration changes.
+# *   Sets a `timeout` (60 seconds) and `interval` (3 seconds) for polling container status.
+# *   **Stop Container:**
+#     *   Attempts to stop the container using `pct stop "$CTID"`.
+#     *   Exits with an error if the stop command fails to initiate.
+# *   **Wait for Stopped State:**
+#     *   Enters a loop, polling `pct status "$CTID"` until the container reports "stopped" or a timeout occurs.
+#     *   Logs progress and exits with an error if the container does not stop within the `timeout`.
+# *   **Start Container:**
+#     *   Attempts to start the container using `pct start "$CTID"`.
+#     *   Exits with an error if the start command fails to initiate.
+# *   **Wait for Running State:**
+#     *   Enters a loop, polling `pct status "$CTID"` until the container reports "running" or a timeout occurs.
+#     *   Logs progress and exits with an error if the container does not start within the `timeout`.
+# *   Logs successful completion of the container restart.
+restart_container() {
+    log_info "Restarting container CTID: $CTID to apply configuration changes."
+    local timeout=60
+    local interval=3
+    local elapsed_time=0
+
+    log_info "Attempting to stop container $CTID..."
+    if ! pct stop "$CTID"; then
+        log_error "FATAL: Failed to initiate stop for container $CTID."
+        exit_script 6
+    fi
+
+    log_info "Waiting for container $CTID to stop (timeout: ${timeout}s, interval: ${interval}s)..."
+    elapsed_time=0
+    while [ "$elapsed_time" -lt "$timeout" ]; do
+        if [ "$(pct status "$CTID" | awk '{print $2}')" == "stopped" ]; then
+            log_info "Container $CTID successfully stopped."
+            break
+        fi
+        sleep "$interval"
+        elapsed_time=$((elapsed_time + interval))
+    done
+
+    if [ "$elapsed_time" -ge "$timeout" ]; then
+        log_error "FATAL: Container $CTID did not stop within the allotted time."
+        exit_script 6
+    fi
+
+    log_info "Attempting to start container $CTID..."
+    if ! pct start "$CTID"; then
+        log_error "FATAL: Failed to initiate start for container $CTID."
+        exit_script 6
+    fi
+
+    log_info "Waiting for container $CTID to start (timeout: ${timeout}s, interval: ${interval}s)..."
+    elapsed_time=0
+    while [ "$elapsed_time" -lt "$timeout" ]; do
+        if [ "$(pct status "$CTID" | awk '{print $2}')" == "running" ]; then
+            log_info "Container $CTID successfully started."
+            break
+        fi
+        sleep "$interval"
+        elapsed_time=$((elapsed_time + interval))
+    done
+
+    if [ "$elapsed_time" -ge "$timeout" ]; then
+        log_error "FATAL: Container $CTID did not start within the allotted time."
+        exit_script 6
+    fi
+
+    log_info "Container $CTID restarted successfully."
+}
+
+### Function: main
+# Purpose: Serves as the entry point for the script, orchestrating the entire
+#          NVIDIA GPU configuration process for an LXC container.
+# Content:
+# *   Calls `parse_arguments` to retrieve the `CTID` from command-line input.
+# *   Invokes `validate_inputs` to ensure all required arguments and environment variables are valid.
+# *   Executes `check_container_exists` to confirm the target container is present on the host.
+# *   Calls `configure_host_gpu_passthrough` to set up device mounts in the LXC configuration.
+# *   Initiates `install_nvidia_software_in_container` to install NVIDIA drivers and CUDA within the container.
+# *   Triggers `restart_container` to apply all configuration changes and activate the NVIDIA setup.
+# *   Calls `exit_script 0` upon successful completion of all steps.
+main() {
+    parse_arguments "$@"
+    validate_inputs
+    check_container_exists
+    configure_host_gpu_passthrough
+    install_nvidia_software_in_container
+    restart_container
+    exit_script 0
+}
+
+# Call the main function
+main "$@"

@@ -1,14 +1,12 @@
-# LXC Container 902 - BaseTemplateDocker - Requirements & Details
+# LXC Container 902 - `BaseTemplateDocker` - Details
 
 ## Overview
 
 This document details the purpose, configuration, and setup process for LXC container `902`, named `BaseTemplateDocker`. This container serves as the first level in the Phoenix Hypervisor's snapshot-based Docker template hierarchy. It is created by cloning the `base-snapshot` from container `900` (`BaseTemplate`) and is specifically configured with Docker Engine and the NVIDIA Container Toolkit. It is never intended to be used as a final, running application container. Templates requiring Docker support (`903`) and standard Docker-enabled application containers will be created by cloning the `docker-snapshot` taken from this template.
 
-## Core Purpose & Function
+## Purpose
 
-*   **Role:** Docker-Enabled Base Template.
-*   **Primary Function:** Provide a standardized Ubuntu 24.04 environment with Docker Engine and the NVIDIA Container Toolkit pre-installed and configured. This allows containers *running inside this LXC* to leverage Docker and potentially access the host's GPUs. It serves as the foundational layer for all other templates and containers that require Docker-in-LXC.
-*   **Usage:** Exclusively used for cloning. A ZFS snapshot (`docker-snapshot`) is created after its initial setup for other Docker-dependent containers/templates to clone from.
+LXC container `902`'s primary purpose is to provide a standardized Ubuntu 24.04 environment with Docker Engine and the NVIDIA Container Toolkit pre-installed and configured. This allows containers *running inside this LXC* to leverage Docker and potentially access the host's GPUs. It serves as the foundational layer for all other templates and containers that require Docker-in-LXC. It is exclusively used for cloning; a ZFS snapshot (`docker-snapshot`) is created after its initial setup for other Docker-dependent containers/templates to clone from.
 
 ## Configuration (`phoenix_lxc_configs.json`)
 
@@ -36,22 +34,20 @@ This document details the purpose, configuration, and setup process for LXC cont
     *   **`template_snapshot_name`:** `docker-snapshot` (Name of the ZFS snapshot this template will produce)
     *   **`clone_from_template_ctid`:** `900` (Indicates this template is created by cloning from container `900`)
 
-## Specific Setup Script (`phoenix_hypervisor_setup_902.sh`) Requirements
+## Specific Setup Script (`phoenix_hypervisor/bin/phoenix_hypervisor_lxc_902.sh`) Requirements
 
-The `phoenix_hypervisor_setup_902.sh` script is responsible for the final configuration of the `BaseTemplateDocker` container *after* it has been cloned from `900`'s `base-snapshot` and booted. Its core responsibilities are:
+The `phoenix_hypervisor/bin/phoenix_hypervisor_lxc_902.sh` script is responsible for the final configuration of the `BaseTemplateDocker` container *after* it has been cloned from `900`'s `base-snapshot` and booted. Its core responsibilities are:
 
-1.  **Docker Software Stack Installation:**
-    *   Ensure the container is fully booted and ready for setup.
-    *   Execute the common Docker setup process. This will likely involve calling or replicating the logic from `phoenix_hypervisor_lxc_docker.sh`.
+*   **Docker Software Stack Installation:**
+    *   Ensures the container is fully booted and ready for setup.
+    *   Executes the common Docker setup process. This will likely involve calling or replicating the logic from `phoenix_hypervisor_lxc_common_docker.sh`.
     *   This process will install Docker Engine, the NVIDIA Container Toolkit, and `docker-compose-plugin` inside the container.
     *   It will add the default user (e.g., `ubuntu`) to the `docker` group.
     *   It will enable and start the Docker service (`systemctl enable docker --now`).
-
-2.  **Verification:**
-    *   After installation and service start, run checks to ensure Docker is functional.
+*   **Verification:**
+    *   After installation and service start, runs checks to ensure Docker is functional.
     *   Example checks: `docker info` (to verify service is running and NVIDIA runtime is registered), `docker run hello-world` (to test basic container execution).
-
-3.  **Finalize and Snapshot Creation:**
+*   **Finalize and Snapshot Creation:**
     *   Once the Docker environment is verified, the script's final step is to shut down the container.
     *   It then executes `pct snapshot create 902 docker-snapshot` to create the ZFS snapshot that forms the basis for the Docker template hierarchy.
     *   Finally, it restarts the container.
@@ -62,6 +58,23 @@ The `phoenix_hypervisor_setup_902.sh` script is responsible for the final config
 *   **Setup:** After cloning and initial boot, `phoenix_establish_hypervisor.sh` will execute `phoenix_hypervisor_setup_902.sh`.
 *   **Consumption:** Other templates (e.g., `903` - `BaseTemplateDockerGPU`) or standard containers needing Docker can have `clone_from_template_ctid: "902"` in their configuration. The orchestrator will use this to determine they should be created by cloning `902`'s `docker-snapshot`.
 *   **Idempotency:** The setup script (`phoenix_hypervisor_setup_902.sh`) must be idempotent. If `docker-snapshot` already exists, it should skip the Docker setup steps and potentially just log that the template is already prepared.
+
+## Requirements
+
+*   Proxmox host environment with `pct` command available.
+*   Container 902 must be created/cloned and accessible.
+*   `jq` (for parsing JSON configuration files).
+*   `phoenix_hypervisor_lxc_common_docker.sh` must be available and functional.
+
+## Exit Codes
+
+*   `0`: Success (Setup completed, snapshot created or already existed).
+*   `1`: General error.
+*   `2`: Invalid input arguments.
+*   `3`: Container 902 does not exist or is not accessible.
+*   `4`: Docker Engine/NVIDIA Container Toolkit installation/configuration failed.
+*   `5`: Snapshot creation failed.
+*   `6`: Container shutdown/start failed.
 
 ## Key Characteristics Summary
 

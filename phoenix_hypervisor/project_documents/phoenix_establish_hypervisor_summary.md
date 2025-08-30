@@ -6,25 +6,26 @@ This document outlines the planned execution flow and key design decisions for t
 
 ## Execution Flow
 
-1.  **Initialization & Environment Setup:**
+1.  **Initialization & Environment Setup**
     *   Source common library functions from `/usr/local/phoenix_hypervisor/lib/*.sh`.
+    *   **NOTE:** As of current implementation, no common library functions are sourced.
     *   Define hardcoded paths to main configuration files:
         *   Hypervisor Config: `/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json`
         *   LXC Config: `/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`
         *   LXC Config Schema: `/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json`
     *   Initialize main log file.
 
-2.  **Configuration Loading & Validation:**
+2.  **Configuration Loading & Validation**
     *   Load `phoenix_hypervisor_config.json`.
-    *   Validate `phoenix_hypervisor_config.json` against its schema (if defined).
+    *   Validate `phoenix_hypervisor_config.json` (currently only checks for valid JSON, not against a schema).
     *   Load `phoenix_lxc_configs.json`.
     *   Validate `phoenix_lxc_configs.json` against `phoenix_lxc_configs.schema.json` using `ajv` or similar.
     *   Extract global NVIDIA settings (`nvidia_driver_version`, `nvidia_repo_url`, `nvidia_runfile_url`) from the LXC config JSON.
 
-3.  **Proxmox Host Initial Setup:**
+3.  **Proxmox Host Initial Setup**
     *   Execute `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_initial_setup.sh`.
 
-4.  **Iterate Through LXC Configurations:**
+4.  **Iterate Through LXC Configurations**
     *   Loop through the `lxc_configs` object from the validated `phoenix_lxc_configs.json`. Process containers/templates, generally in ascending numerical order of their CTID keys to respect potential dependencies (e.g., templates built from other templates).
     *   For each `CTID` and its `config_block`:
         *   **Log Start:** Log the processing of this container/template (e.g., "Processing CTID 901").
@@ -32,30 +33,30 @@ This document outlines the planned execution flow and key design decisions for t
             *   Check `config_block.is_template`.
             *   **If `is_template` is true:**
                 *   Check if `config_block.clone_from_template_ctid` exists.
-                *   If it exists, call a new function/script to **clone** the container from the specified source template's snapshot: `clone_lxc_from_template(source_CTID, source_snapshot_name, target_CTID, target_config_block)`.
-                *   If it does not exist (base template), call the standard **creation** function/script: `create_lxc_container(CTID, config_block)`.
+                *   If it exists, the orchestrator calls `create_or_clone_template` which then calls `phoenix_hypervisor_clone_lxc.sh` to clone the container from the specified source template's snapshot.
+                *   If it does not exist (base template), the orchestrator calls `create_or_clone_template` which then calls `phoenix_hypervisor_create_lxc.sh` for standard creation.
             *   **If `is_template` is false (or omitted):**
                 *   Analyze `config_block` (e.g., `gpu_assignment`, `features`, `vllm_model`) or check `config_block.clone_from_template_ctid` to determine the best existing template snapshot to clone from.
-                *   Call `clone_lxc_from_template(...)` with the determined source.
+                *   The orchestrator calls `clone_standard_container` which then calls `phoenix_hypervisor_clone_lxc.sh` with the determined source.
         *   **Wait for LXC Readiness:**
             *   Use a robust mechanism (e.g., polling with `pct exec CTID -- uptime` or `pct status CTID`) to ensure the newly created/cloned container is fully booted and responsive.
-        *   **(Conditional Setups - Post Clone/Create):** *If* specific setups (NVIDIA, Docker) are required and not fully handled by the cloning process (which should be the goal), they would be called here. However, the aim is for templates to include these, making these steps often redundant or just idempotent checks.
+        *   **Conditional Setups - Post Clone/Create:** These setups are called after creation/cloning and `wait_for_lxc_ready`. They include idempotent checks to ensure they only apply changes if necessary.
             *   **Conditional NVIDIA Setup:**
                 *   Check `config_block.gpu_assignment`.
                 *   If NOT `"none"`:
-                    *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_nvidia.sh CTID`
+                    *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_nvidia.sh CTID`
                     *   The sub-script handles re-parsing for its config and performing idempotency checks.
                     *   Handle exit status.
             *   **Conditional Docker Setup:**
                 *   Check `config_block.features` for `nesting=1`.
                 *   If present:
-                    *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_docker.sh CTID`
+                    *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_docker.sh CTID`
                     *   The sub-script handles re-parsing for its config and performing idempotency checks.
                     *   Handle exit status.
         *   **Conditional Specific Setup:**
-            *   Check if `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_setup_${CTID}.sh` exists and is executable.
+            *   Check if `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_${CTID}.sh` exists and is executable.
             *   If it exists:
-                *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_setup_${CTID}.sh CTID`
+                *   Execute: `/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_${CTID}.sh CTID`
                 *   For templates, this script is responsible for finalizing the environment and creating the ZFS snapshot defined by `config_block.template_snapshot_name`.
                 *   For standard containers, this script handles unique, final configuration.
                 *   The sub-script handles re-parsing for its config if needed.
@@ -67,7 +68,7 @@ This document outlines the planned execution flow and key design decisions for t
             *   Start the container/template: `pct start CTID`.
         *   **Log Completion:** Log successful completion for this container/template.
 
-5.  **Finalization:**
+5.  **Finalization**
     *   Log a summary of actions.
     *   Exit with an appropriate code.
 
