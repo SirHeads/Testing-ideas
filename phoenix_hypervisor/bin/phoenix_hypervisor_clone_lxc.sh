@@ -155,7 +155,7 @@ validate_inputs() {
     fi
 
     log_info "Checking for existence of snapshot '$SOURCE_SNAPSHOT_NAME' on container $SOURCE_CTID"
-    if ! pct snapshot list "$SOURCE_CTID" | grep -q "$SOURCE_SNAPSHOT_NAME"; then
+    if ! pct listsnapshot $SOURCE_CTID | grep -q "$SOURCE_SNAPSHOT_NAME"; then
         log_error "FATAL: Snapshot '$SOURCE_SNAPSHOT_NAME' not found on source container $SOURCE_CTID."
         exit_script 3
     fi
@@ -194,15 +194,14 @@ construct_pct_clone_command() {
     local unprivileged_bool=$(jq -r '.unprivileged' <<< "$TARGET_CONFIG_BLOCK_JSON")
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0")
 
+    log_info "DEBUG: SOURCE_CTID=$SOURCE_CTID, TARGET_CTID=$TARGET_CTID, SOURCE_SNAPSHOT_NAME=$SOURCE_SNAPSHOT_NAME"
+    log_info "DEBUG: Hostname=$hostname, Memory=$memory_mb, Cores=$cores, Storage=$storage_pool, Features=$features, Unprivileged=$unprivileged_val"
+
     PCT_CLONE_CMD=(
-        pct clone "$SOURCE_CTID" "$TARGET_CTID"
-        --snapshot "$SOURCE_SNAPSHOT_NAME"
+        pct clone $SOURCE_CTID "$TARGET_CTID"
+        --snapname "$SOURCE_SNAPSHOT_NAME"
         --hostname "$hostname"
-        --memory "$memory_mb"
-        --cores "$cores"
         --storage "$storage_pool"
-        --features "$features"
-        --unprivileged "$unprivileged_val"
     )
     log_info "Constructed pct clone command: ${PCT_CLONE_CMD[*]}"
 }
@@ -257,6 +256,35 @@ execute_pct_clone() {
 apply_post_clone_configurations() {
     log_info "Applying post-clone configurations for TARGET_CTID: $TARGET_CTID"
 
+    local memory_mb=$(jq -r '.memory_mb' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local cores=$(jq -r '.cores' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local features=$(jq -r '.features' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local unprivileged_bool=$(jq -r '.unprivileged' <<< "$TARGET_CONFIG_BLOCK_JSON")
+    local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0")
+
+    log_info "Setting memory for TARGET_CTID $TARGET_CTID: $memory_mb"
+    if ! pct set "$TARGET_CTID" --memory "$memory_mb"; then
+        log_error "FATAL: 'pct set' command failed to apply memory configuration for TARGET_CTID $TARGET_CTID."
+        exit_script 5
+    fi
+
+    log_info "Setting cores for TARGET_CTID $TARGET_CTID: $cores"
+    if ! pct set "$TARGET_CTID" --cores "$cores"; then
+        log_error "FATAL: 'pct set' command failed to apply cores configuration for TARGET_CTID $TARGET_CTID."
+        exit_script 5
+    fi
+
+    if [ -n "$features" ] && [ "$features" != "null" ]; then
+        log_info "Setting features for TARGET_CTID $TARGET_CTID: $features"
+        if ! pct set "$TARGET_CTID" --features "$features"; then
+            log_error "FATAL: 'pct set' command failed to apply features configuration for TARGET_CTID $TARGET_CTID."
+            exit_script 5
+        fi
+    else
+        log_info "No features to set for TARGET_CTID $TARGET_CTID (features is null or empty)."
+    fi
+
+
     local net0_name=$(jq -r '.network_config.name' <<< "$TARGET_CONFIG_BLOCK_JSON")
     local net0_bridge=$(jq -r '.network_config.bridge' <<< "$TARGET_CONFIG_BLOCK_JSON")
     local net0_ip=$(jq -r '.network_config.ip' <<< "$TARGET_CONFIG_BLOCK_JSON")
@@ -264,6 +292,7 @@ apply_post_clone_configurations() {
     local mac_address=$(jq -r '.mac_address' <<< "$TARGET_CONFIG_BLOCK_JSON")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
 
+    log_info "DEBUG: Network config string: $net0_string"
     log_info "Setting network configuration for TARGET_CTID $TARGET_CTID: $net0_string"
     if ! pct set "$TARGET_CTID" --net0 "$net0_string"; then
         log_error "FATAL: 'pct set' command failed to apply network configuration for TARGET_CTID $TARGET_CTID."

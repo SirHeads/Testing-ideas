@@ -98,12 +98,23 @@ load_and_validate_configs() {
     fi
     log_info "'jq' command found."
 
+    # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
+    export PATH="/usr/local/bin:$PATH"
+    log_info "PATH environment variable: $PATH"
+
     # Pre-check for ajv
     if ! command -v ajv &> /dev/null; then
         log_error "FATAL: 'ajv' command not found. Please install ajv-cli to proceed. Exiting."
         exit_script 4
     fi
     log_info "'ajv' command found."
+
+    # Check for ajv-formats package
+    if npm list -g ajv-formats &> /dev/null; then
+        log_info "'ajv-formats' package found globally."
+    else
+        log_error "WARNING: 'ajv-formats' package not found globally. This may cause 'uri' format validation errors."
+    fi
 
     if [ ! -f "$HYPERVISOR_CONFIG_FILE" ]; then
         log_error "FATAL: Hypervisor configuration file not found at $HYPERVISOR_CONFIG_FILE."
@@ -387,7 +398,7 @@ create_or_clone_template() {
             log_error "FATAL: Clone script not found or not executable: $clone_script"
             return 1
         fi
-        if ! "$clone_script" "$clone_from_template_ctid" "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
+        if ! "$clone_script" $clone_from_template_ctid "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
             log_error "Failed to clone template $ctid from $clone_from_template_ctid@$source_snapshot_name."
             return 1
         fi
@@ -398,6 +409,7 @@ create_or_clone_template() {
             log_error "FATAL: Create script not found or not executable: $create_script"
             return 1
         fi
+        export LXC_CONFIG_FILE="$LXC_CONFIG_FILE"
         if ! "$create_script" "$ctid"; then
             log_error "Failed to create base template $ctid."
             return 1
@@ -493,8 +505,7 @@ clone_standard_container() {
         log_error "FATAL: Clone script not found or not executable: $clone_script"
         return 1
     fi
-
-    if ! "$clone_script" "$source_ctid" "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
+    if ! "$clone_script" $source_ctid "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
         log_error "Failed to clone standard container $ctid from $source_ctid@$source_snapshot_name."
         return 0 # Non-critical failure for standard containers
     fi
@@ -797,7 +808,7 @@ finalize_container_state() {
     fi
 
     log_info "Creating 'configured-state' snapshot for container $ctid..."
-    if ! pct snapshot create "$ctid" "configured-state"; then
+    if ! pct snapshot "$ctid" "configured-state"; then
         log_error "FATAL: Failed to create 'configured-state' snapshot for container $ctid."
         return 1
     fi

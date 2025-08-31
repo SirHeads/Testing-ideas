@@ -36,7 +36,7 @@
 
 # --- Global Variables and Constants ---
 MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
-LXC_CONFIG_FILE="" # This will be set via environment variable by the orchestrator
+# LXC_CONFIG_FILE will be set via environment variable by the orchestrator
 
 # --- Logging Functions ---
 log_info() {
@@ -227,21 +227,23 @@ construct_pct_create_command() {
     local net0_bridge=$(jq -r '.network_config.bridge' <<< "$CONFIG_BLOCK_JSON")
     local net0_ip=$(jq -r '.network_config.ip' <<< "$CONFIG_BLOCK_JSON")
     local net0_gw=$(jq -r '.network_config.gw' <<< "$CONFIG_BLOCK_JSON")
-    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw}"
+    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
 
     PCT_CREATE_CMD=(
-        pct create "$CTID"
+        pct create "$CTID" "$template"
         --hostname "$hostname"
         --memory "$memory_mb"
         --cores "$cores"
-        --template "$template"
         --storage "$storage_pool"
         --rootfs "${storage_pool}:${storage_size_gb}"
         --net0 "$net0_string"
-        --features "$features"
-        --hwaddress "$mac_address"
-        --unprivileged "$unprivileged_val"
     )
+
+    if [ -n "$features" ] && [ "$features" != "null" ]; then
+        PCT_CREATE_CMD+=(--features "$features")
+    fi
+
+    PCT_CREATE_CMD+=(--unprivileged "$unprivileged_val")
     log_info "Constructed pct create command: ${PCT_CREATE_CMD[*]}"
 }
 
@@ -321,7 +323,7 @@ start_container() {
 # =====================================================================================
 # =====================================================================================
 main() {
-    parse_arguments
+    parse_arguments "$@"
     validate_inputs
     check_container_exists # This function will exit_script 0 if container already exists
 
@@ -334,4 +336,4 @@ main() {
 }
 
 # Call the main function
-main
+main "$@"

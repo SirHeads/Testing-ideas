@@ -280,7 +280,7 @@ shutdown_container() {
 # =====================================================================================
 create_base_snapshot() {
     log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $CTID..."
-    if ! pct snapshot create "$CTID" "$SNAPSHOT_NAME"; then
+    if ! pct snapshot "$CTID" "$SNAPSHOT_NAME"; then
         log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $CTID."
         exit_script 5
     fi

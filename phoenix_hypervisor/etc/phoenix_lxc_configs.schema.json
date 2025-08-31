@@ -14,12 +14,12 @@
         },
         "nvidia_repo_url": {
             "type": "string",
-            "format": "uri",
+            "pattern": "^(https?|ftp):\\/\\/[^\\s\\/$.?#].[^\\s]*$",
             "description": "URL for the NVIDIA CUDA repository."
         },
         "nvidia_runfile_url": {
             "type": "string",
-            "format": "uri",
+            "pattern": "^(https?|ftp):\\/\\/[^\\s\\/$.?#].[^\\s]*$",
             "description": "URL for the NVIDIA Driver runfile installer."
         },
         "lxc_configs": {

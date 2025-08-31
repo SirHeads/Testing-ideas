@@ -17,7 +17,6 @@
                 "ip": "10.0.0.200/24",
                 "gw": "10.0.0.1"
             },
-            "features": "",
             "static_ip": "10.0.0.200/24",
             "mac_address": "52:54:00:AA:BB:CC",
             "gpu_assignment": "none",
@@ -39,7 +38,6 @@
                 "ip": "10.0.0.201/24",
                 "gw": "10.0.0.1"
             },
-            "features": "",
             "static_ip": "10.0.0.201/24",
             "mac_address": "52:54:00:AA:BB:CD",
             "gpu_assignment": "0,1",
