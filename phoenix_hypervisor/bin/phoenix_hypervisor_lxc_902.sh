@@ -87,8 +87,8 @@ parse_arguments() {
         log_error "Usage: $0 <CTID>"
         exit_script 2
     fi
-    CTID="$1"
-    log_info "Received CTID: $CTID"
+    CTID="$(echo "$1" | xargs)" # Trim whitespace
+    log_info "Received CTID: '$CTID'"
 }
 
 # =====================================================================================
@@ -159,9 +159,10 @@ check_container_exists() {
 # RAG Keywords: ZFS snapshot, idempotency, Docker template, container state, Proxmox `pct`.
 # =====================================================================================
 check_if_snapshot_exists() {
-    log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
+    log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'."
+    log_info "Executing: pct snapshot list '$CTID'"
     if pct snapshot list "$CTID" | grep -q "$SNAPSHOT_NAME"; then
-        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping setup."
+        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'. Skipping setup."
         exit_script 0
     else
         log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
@@ -201,10 +202,7 @@ install_and_configure_docker_in_container() {
     local portainer_agent_port="" # Not needed for role "none"
 
     log_info "Executing common Docker setup script for CTID $CTID with PORTAINER_ROLE=$portainer_role..."
-    PORTAINER_ROLE="$portainer_role" \
-    PORTAINER_SERVER_IP="$portainer_server_ip" \
-    PORTAINER_AGENT_PORT="$portainer_agent_port" \
-    "$docker_script" "$CTID"
+    "$docker_script" "$CTID" "none"
     local exit_status=$?
 
     if [ "$exit_status" -ne 0 ]; then
@@ -321,12 +319,13 @@ shutdown_container() {
 #               Proxmox `pct`, error handling.
 # =====================================================================================
 create_docker_snapshot() {
-    log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $CTID..."
-    if ! pct snapshot create "$CTID" "$SNAPSHOT_NAME"; then
-        log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $CTID."
+    log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container '$CTID'..."
+    log_info "Executing: pct snapshot '${CTID}' '${SNAPSHOT_NAME}'"
+    if ! pct snapshot "${CTID}" "${SNAPSHOT_NAME}"; then
+        log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container '$CTID'."
         exit_script 5
     fi
-    log_info "Snapshot '$SNAPSHOT_NAME' created successfully for container $CTID."
+    log_info "Snapshot '$SNAPSHOT_NAME' created successfully for container '$CTID'."
 }
 
 # =====================================================================================
@@ -409,9 +408,9 @@ main() {
     check_if_snapshot_exists # Exits 0 if snapshot already exists
 
     install_and_configure_docker_in_container
-    verify_docker_setup_inside_container "$CTID"
+    verify_docker_setup_inside_container
     shutdown_container "$CTID"
-    create_docker_snapshot "$CTID"
+    create_docker_snapshot
     start_container "$CTID"
 
     exit_script 0

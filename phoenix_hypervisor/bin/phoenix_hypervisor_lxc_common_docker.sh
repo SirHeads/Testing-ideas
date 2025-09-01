@@ -1,4 +1,17 @@
 #!/bin/bash
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+source "$(dirname "$0")/phoenix_hypervisor_lxc_common_loghelpers.sh"
+
+# Add a diagnostic log to confirm the settings
+# --- Global Configuration Variables ---
+# These variables define paths to configuration files and log files used throughout the script.
+HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_docker.sh: LANG is set to: $LANG" | tee -a "$MAIN_LOG_FILE"
+echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_docker.sh: LC_ALL is set to: $LC_ALL" | tee -a "$MAIN_LOG_FILE"
+
 #
 # phoenix_hypervisor/bin/phoenix_hypervisor_lxc_common_docker.sh
 #
@@ -24,9 +37,9 @@
 # To execute this script, provide the Container ID (CTID) and Portainer role
 # as environment variables, followed by the CTID as a command-line argument.
 #
-# ### Environment Variables:
-# - `CTID`: (Required) The ID of the LXC container.
-# - `PORTAINER_ROLE`: (Required) Specifies the Portainer deployment role.
+# ### Arguments:
+# - `$1` (CTID): (Required) The ID of the LXC container.
+# - `$2` (PORTAINER_ROLE): (Required) Specifies the Portainer deployment role.
 #   - `server`: Deploys Portainer Server.
 #   - `agent`: Deploys Portainer Agent, requiring `PORTAINER_SERVER_IP` and `PORTAINER_AGENT_PORT`.
 #   - `none`: Skips Portainer deployment.
@@ -50,27 +63,6 @@
 # - `4`: Docker installation or configuration failed.
 # - `5`: Portainer setup or deployment failed.
 
-# --- Global Configuration Variables ---
-# These variables define paths to configuration files and log files used throughout the script.
-HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
-
-# --- Logging Functions ---
-# Provides standardized logging for script execution, directing output to console and a log file.
-
-# log_info: Logs informational messages.
-# Arguments:
-#   $*: The message to log.
-log_info() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_lxc_docker.sh: $*" | tee -a "$MAIN_LOG_FILE"
-}
-
-# log_error: Logs error messages and directs them to standard error.
-# Arguments:
-#   $*: The error message to log.
-log_error() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_lxc_docker.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
-}
 
 # --- Script Exit Handler ---
 # Manages script exit, logging the final status based on the exit code.
@@ -135,12 +127,6 @@ wait_for_portainer_ready() {
     return 1
 }
 
-# --- Script-Specific Variables ---
-# These variables store input parameters and are used throughout the script's execution.
-CTID=""                 # Stores the Container ID of the target LXC.
-PORTAINER_ROLE=""       # Defines the role for Portainer deployment (server, agent, or none).
-PORTAINER_SERVER_IP=""  # IP address of the Portainer Server (required for agent role).
-PORTAINER_AGENT_PORT="" # Port for the Portainer Agent to connect (required for agent role).
 
 # =====================================================================================
 # ## Function: parse_arguments
@@ -161,12 +147,16 @@ PORTAINER_AGENT_PORT="" # Port for the Portainer Agent to connect (required for 
 # - `2`: Invalid number of arguments provided.
 # =====================================================================================
 parse_arguments() {
-    if [ "$#" -ne 1 ]; then
-        log_error "Usage: $0 <CTID>"
+    if [ "$#" -ne 2 ]; then
+        log_error "Usage: $0 <CTID> <PORTAINER_ROLE>"
+        log_error "Received arguments: $*"
+        log_error "Expected 2 arguments, got $#."
         exit_script 2
     fi
     CTID="$1"
+    PORTAINER_ROLE="$2"
     log_info "Received CTID: $CTID"
+    log_info "Received PORTAINER_ROLE: $PORTAINER_ROLE"
 }
 
 # =====================================================================================
@@ -193,10 +183,6 @@ parse_arguments() {
 validate_inputs() {
     if ! [[ "$CTID" =~ ^[0-9]+$ ]] || [ "$CTID" -le 0 ]; then
         log_error "FATAL: Invalid CTID '$CTID'. Must be a positive integer."
-        exit_script 2
-    fi
-    if [ -z "$PORTAINER_ROLE" ]; then
-        log_error "FATAL: PORTAINER_ROLE environment variable is not set."
         exit_script 2
     fi
     if ! [[ "$PORTAINER_ROLE" =~ ^(server|agent|none)$ ]]; then
@@ -273,8 +259,11 @@ install_and_configure_docker_in_container() {
     local default_user="ubuntu" # Assuming Ubuntu base image for LXC.
     local docker_daemon_config_file="/etc/docker/daemon.json"
     local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }'
-    local portainer_server_image=$(jq -r '.docker.portainer_server_image' "$HYPERVISOR_CONFIG_FILE")
+    local portainer_server_image="portainer/portainer-ce:latest"
     local portainer_agent_image=$(jq -r '.docker.portainer_agent_image' "$HYPERVISOR_CONFIG_FILE")
+
+    log_debug "DEBUG: portainer_server_image: $portainer_server_image"
+    log_debug "DEBUG: portainer_agent_image: $portainer_agent_image"
 
     # --- Idempotency Check ---
     # Checks if Docker, NVIDIA Container Toolkit, and the specified Portainer container
@@ -317,6 +306,14 @@ install_and_configure_docker_in_container() {
         return 0
     fi
 
+    # Generate and set the locale to en_US.UTF-8
+    log_info "Generating and setting locale to en_US.UTF-8 inside the container (CTID: $CTID)..."
+    if ! pct exec "$CTID" -- bash -c "apt-get update && apt-get install -y locales && locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8"; then
+        log_error "FATAL: Failed to generate and set en_US.UTF-8 locale."
+        exit_script 4
+    fi
+    log_info "Locale en_US.UTF-8 generated and set successfully."
+
     # --- Add Docker Official Repository ---
     # Adds the official Docker APT repository to the LXC container's package sources.
     # This ensures that the latest stable versions of Docker components can be installed.
@@ -324,7 +321,12 @@ install_and_configure_docker_in_container() {
     if ! pct exec "$CTID" -- apt-get update; then log_error "Failed to update apt package list." && exit_script 4; fi
     if ! pct exec "$CTID" -- apt-get install -y ca-certificates curl gnupg lsb-release; then log_error "Failed to install Docker repository prerequisites." && exit_script 4; fi
     if ! pct exec "$CTID" -- mkdir -p /etc/apt/keyrings; then log_error "Failed to create /etc/apt/keyrings directory." && exit_script 4; fi
-    if ! pct exec "$CTID" -- curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then log_error "Failed to download Docker GPG key." && exit_script 4; fi
+    # Remove existing Docker GPG key to prevent overwrite prompts
+    if pct exec "$CTID" -- [ -f /etc/apt/keyrings/docker.gpg ]; then
+        log_info "Removing existing /etc/apt/keyrings/docker.gpg"
+        if ! pct exec "$CTID" -- rm /etc/apt/keyrings/docker.gpg; then log_error "Failed to remove existing Docker GPG key." && exit_script 4; fi
+    fi
+    if ! pct exec "$CTID" -- bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"; then log_error "Failed to download Docker GPG key." && exit_script 4; fi
     if ! pct exec "$CTID" -- chmod a+r /etc/apt/keyrings/docker.gpg; then log_error "Failed to set permissions on Docker GPG key." && exit_script 4; fi
     if ! pct exec "$CTID" -- bash -c "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"; then log_error "Failed to add Docker repository to sources.list.d." && exit_script 4; fi
     if ! pct exec "$CTID" -- apt-get update; then log_error "Failed to update apt package list after adding Docker repo." && exit_script 4; fi
@@ -339,6 +341,7 @@ install_and_configure_docker_in_container() {
     fi
     log_info "Docker Engine and Compose Plugin installed successfully."
 
+
     # --- Install NVIDIA Container Toolkit ---
     # Installs the NVIDIA Container Toolkit, which enables Docker containers to
     # access NVIDIA GPUs within the LXC environment.
@@ -348,6 +351,12 @@ install_and_configure_docker_in_container() {
         exit_script 4
     fi
     log_info "NVIDIA Container Toolkit installed successfully."
+    log_info "Creating NVIDIA Container Toolkit config file..."
+    local toolkit_config_content="[nvidia-container-cli]\ndriver-root = \"/usr/lib/x86_64-linux-gnu/nvidia/current\"\n"
+    if ! pct exec "$CTID" -- bash -c "mkdir -p /etc/nvidia-container-runtime && echo -e \"$toolkit_config_content\" > /etc/nvidia-container-runtime/config.toml"; then
+        log_error "FATAL: Failed to create NVIDIA Container Toolkit config file."
+        exit_script 4
+    fi
 
     # --- Configure Docker Daemon for NVIDIA Runtime ---
     # Modifies the Docker daemon configuration to set NVIDIA as the default runtime.
@@ -358,12 +367,25 @@ install_and_configure_docker_in_container() {
         log_error "FATAL: Failed to write Docker daemon configuration for NVIDIA runtime."
         exit_script 4
     fi
-    log_info "Docker daemon configured for NVIDIA runtime."
+    log_info "Docker daemon configured for NVIDIA runtime. Restarting Docker service..."
+    if ! pct exec "$CTID" -- systemctl restart docker; then
+        log_error "FATAL: Failed to restart Docker service after daemon.json configuration."
+        exit_script 4
+    fi
+    log_info "Docker service restarted successfully."
 
     # --- User Group Management ---
-    # Adds the default user (`ubuntu`) to the `docker` group inside the container.
+    # Ensures the default user (`ubuntu`) exists and adds it to the `docker` group.
     # This allows the user to run Docker commands without `sudo`.
-    log_info "Adding user '$default_user' to the docker group (CTID: $CTID)..."
+    log_info "Ensuring user '$default_user' exists and adding to the docker group (CTID: $CTID)..."
+    if ! pct exec "$CTID" -- id -u "$default_user" > /dev/null 2>&1; then
+        log_info "User '$default_user' does not exist. Creating user..."
+        if ! pct exec "$CTID" -- useradd -m -s /bin/bash "$default_user"; then
+            log_error "FATAL: Failed to create user '$default_user'."
+            exit_script 4
+        fi
+        log_info "User '$default_user' created successfully."
+    fi
     if ! pct exec "$CTID" -- usermod -aG docker "$default_user"; then
         log_error "FATAL: Failed to add user '$default_user' to the docker group."
         exit_script 4
@@ -390,7 +412,8 @@ install_and_configure_docker_in_container() {
     if [ "$PORTAINER_ROLE" == "server" ]; then
         log_info "Setting up Portainer Server container (CTID: $CTID)..."
         if ! pct exec "$CTID" -- docker volume create portainer_data; then log_error "Failed to create portainer_data volume." && exit_script 5; fi
-        if ! pct exec "$CTID" -- docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data "$portainer_server_image"; then
+        local portainer_server_docker_command="docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data \"$portainer_server_image\""
+        if ! pct exec "$CTID" -- bash -c "$portainer_server_docker_command"; then
             log_error "FATAL: Failed to run Portainer Server container."
             exit_script 5
         fi
@@ -405,7 +428,8 @@ install_and_configure_docker_in_container() {
         local agent_cluster_addr="tcp://${PORTAINER_SERVER_IP}:${PORTAINER_AGENT_PORT}"
         local portainer_agent_url="http://localhost:9999/status" # Default agent status endpoint for readiness check.
         if ! pct exec "$CTID" -- docker volume create portainer_agent_data; then log_error "Failed to create portainer_agent_data volume." && exit_script 5; fi
-        if ! pct exec "$CTID" -- docker run -d --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes -v portainer_agent_data:/data -e AGENT_CLUSTER_ADDR="$agent_cluster_addr" "$portainer_agent_image"; then
+        local portainer_agent_docker_command="docker run -d --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes -v portainer_agent_data:/data -e AGENT_CLUSTER_ADDR=\"$agent_cluster_addr\" \"$portainer_agent_image\""
+        if ! pct exec "$CTID" -- bash -c "$portainer_agent_docker_command"; then
             log_error "FATAL: Failed to run Portainer Agent container."
             exit_script 5
         fi

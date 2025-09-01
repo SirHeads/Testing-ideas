@@ -184,7 +184,7 @@ verify_docker_is_functional_inside_container() {
 # **Purpose:** Deploys the Portainer Server Docker container within the specified LXC container.
 #
 # **Details:**
-# - **Image Specification:** Uses `portainer/portainer-ce:2.33.1-lts` for consistent deployment.
+# - **Image Specification:** Uses `portainer/portainer-ce:latest` for consistent deployment.
 # - **Container Configuration:**
 #   - `container_name`: `portainer`
 #   - `ports`: `-p 9443:9443 -p 9001:9001` (maps host ports to container ports for UI and agent).
@@ -200,7 +200,7 @@ verify_docker_is_functional_inside_container() {
 deploy_portainer_server_container_inside_container() {
     log_info "Deploying Portainer Server Docker container inside container CTID: $CTID"
 
-    local portainer_image="portainer/portainer-ce:2.33.1-lts" # Using specific LTS version
+    local portainer_image="portainer/portainer-ce:latest"
     local container_name="portainer"
     local ports="-p 9443:9443 -p 9001:9001"
     local docker_socket_volume="-v /var/run/docker.sock:/var/run/docker.sock"
@@ -208,7 +208,7 @@ deploy_portainer_server_container_inside_container() {
     local restart_policy="--restart=always"
     local command="" # No initial password set via CLI for now, user will set via UI
 
-    local full_run_cmd="docker run -d $ports $docker_socket_volume $data_volume $restart_policy --name $container_name $portainer_image $command"
+    local full_run_cmd="/usr/bin/docker run -d $ports $docker_socket_volume $data_volume $restart_policy --name $container_name $portainer_image $command"
 
     log_info "Executing docker run command for Portainer Server: $full_run_cmd"
     if ! pct exec "$CTID" -- "$full_run_cmd"; then

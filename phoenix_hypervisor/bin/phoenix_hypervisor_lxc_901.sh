@@ -65,6 +65,10 @@ exit_script() {
 
 # --- Script Variables ---
 CTID=""
+GPU_ASSIGNMENT=""
+NVIDIA_DRIVER_VERSION=""
+NVIDIA_REPO_URL=""
+NVIDIA_RUNFILE_URL=""
 SNAPSHOT_NAME="gpu-snapshot" # Defined in requirements
 
 # =====================================================================================
@@ -85,12 +89,16 @@ SNAPSHOT_NAME="gpu-snapshot" # Defined in requirements
 # =====================================================================================
 # =====================================================================================
 parse_arguments() {
-    if [ "$#" -ne 1 ]; then
-        log_error "Usage: $0 <CTID>"
+    if [ "$#" -ne 5 ]; then
+        log_error "Usage: $0 <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL> <NVIDIA_RUNFILE_URL>"
         exit_script 2
     fi
-    CTID="$1"
-    log_info "Received CTID: $CTID"
+    CTID="$(echo "$1" | xargs)" # Trim whitespace
+    GPU_ASSIGNMENT="$2"
+    NVIDIA_DRIVER_VERSION="$3"
+    NVIDIA_REPO_URL="$4"
+    NVIDIA_RUNFILE_URL="$5"
+    log_info "Received CTID: '$CTID', GPU_ASSIGNMENT: '$GPU_ASSIGNMENT', NVIDIA_DRIVER_VERSION: '$NVIDIA_DRIVER_VERSION', NVIDIA_REPO_URL: '$NVIDIA_REPO_URL', NVIDIA_RUNFILE_URL: '$NVIDIA_RUNFILE_URL'"
 }
 
 # =====================================================================================
@@ -164,9 +172,11 @@ check_container_exists() {
 # =====================================================================================
 # =====================================================================================
 check_if_snapshot_exists() {
-    log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
-    if pct snapshot list "$CTID" | grep -q "$SNAPSHOT_NAME"; then
-        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping setup."
+    log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'."
+    local CTID_INT=$((CTID))
+    log_info "Executing: pct snapshot list '${CTID_INT}'"
+    if pct snapshot list "${CTID_INT}" | grep -q "$SNAPSHOT_NAME"; then
+        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'. Skipping setup."
         exit_script 0
     else
         log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
@@ -206,25 +216,8 @@ install_and_configure_nvidia_in_container() {
         exit_script 4
     fi
 
-    # Extract global NVIDIA settings from LXC_CONFIG_FILE
-    local nvidia_driver_version=$(jq -r '.nvidia_driver_version' "$LXC_CONFIG_FILE")
-    local nvidia_repo_url=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-    local nvidia_runfile_url=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE")
-
-    if [ -z "$nvidia_driver_version" ] || [ -z "$nvidia_repo_url" ] || [ -z "$nvidia_runfile_url" ]; then
-        log_error "FATAL: Global NVIDIA settings (driver version, repo URL, runfile URL) are incomplete in $LXC_CONFIG_FILE."
-        exit_script 4
-    fi
-
-    # For CTID 901, we assign GPUs "0,1" as per the project summary for BaseTemplateGPU
-    local gpu_assignment="0,1" 
-
-    log_info "Executing common NVIDIA setup script for CTID $CTID with GPU_ASSIGNMENT=$gpu_assignment..."
-    GPU_ASSIGNMENT="$gpu_assignment" \
-    NVIDIA_DRIVER_VERSION="$nvidia_driver_version" \
-    NVIDIA_REPO_URL="$nvidia_repo_url" \
-    NVIDIA_RUNFILE_URL="$nvidia_runfile_url" \
-    "$nvidia_script" "$CTID"
+    log_info "Executing common NVIDIA setup script for CTID $CTID with GPU_ASSIGNMENT=$GPU_ASSIGNMENT..."
+    "$nvidia_script" "${CTID}" "${GPU_ASSIGNMENT}" "${NVIDIA_DRIVER_VERSION}" "${NVIDIA_REPO_URL}" "${NVIDIA_RUNFILE_URL}"
     local exit_status=$?
 
     if [ "$exit_status" -ne 0 ]; then
@@ -322,7 +315,7 @@ shutdown_container() {
 # Parameters: None (operates on global script variables `CTID` and `SNAPSHOT_NAME`)
 #
 # Dependencies:
-#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot create`).
+#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot`).
 #
 # Exit Conditions:
 #   - Exits with code 5 if the snapshot creation fails.
@@ -332,12 +325,15 @@ shutdown_container() {
 # =====================================================================================
 # =====================================================================================
 create_gpu_snapshot() {
-    log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $CTID..."
-    if ! pct snapshot create "$CTID" "$SNAPSHOT_NAME"; then
-        log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $CTID."
+    local CTID_INT=$((CTID))
+    log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container '${CTID_INT}'..."
+    local snapshot_command="pct snapshot ${CTID_INT} ${SNAPSHOT_NAME}"
+    log_info "Executing: ${snapshot_command}"
+    if ! ${snapshot_command}; then
+        log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container '$CTID'."
         exit_script 5
     fi
-    log_info "Snapshot '$SNAPSHOT_NAME' created successfully for container $CTID."
+    log_info "Snapshot '$SNAPSHOT_NAME' created successfully for container '$CTID'."
 }
 
 # =====================================================================================
@@ -421,9 +417,9 @@ main() {
     check_if_snapshot_exists # Exits 0 if snapshot already exists
 
     install_and_configure_nvidia_in_container
-    verify_nvidia_setup_inside_container "$CTID"
+    verify_nvidia_setup_inside_container
     shutdown_container "$CTID"
-    create_gpu_snapshot "$CTID"
+    create_gpu_snapshot
     start_container "$CTID"
 
     exit_script 0

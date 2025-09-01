@@ -18,8 +18,8 @@
         "portainer_agent_port": 9001
     },
     "docker": {
-        "portainer_server_image": "portainer/portainer-ce:2.33.1-lts",
-        "portainer_agent_image": "portainer/agent:2.33.1-lts"
+        "portainer_server_image": "portainer/portainer-ce:latest",
+        "portainer_agent_image": "portainer/agent:latest"
     },
     "proxmox_defaults": {
         "zfs_lxc_pool": "quickOS/lxc-disks",

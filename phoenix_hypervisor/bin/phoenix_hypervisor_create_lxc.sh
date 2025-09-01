@@ -291,12 +291,27 @@ execute_pct_create() {
 # =====================================================================================
 # =====================================================================================
 start_container() {
-    log_info "Starting container CTID: $CTID"
-    if ! pct start "$CTID"; then
-        log_error "FATAL: 'pct start' command failed for CTID $CTID."
-        exit_script 4
-    fi
-    log_info "Container $CTID started successfully."
+    log_info "Attempting to start container CTID: $CTID with retries..."
+    local attempts=0
+    local max_attempts=3
+    local interval=5 # seconds
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        if pct start "$CTID"; then
+            log_info "Container $CTID started successfully."
+            return 0
+        else
+            attempts=$((attempts + 1))
+            log_error "WARNING: 'pct start' command failed for CTID $CTID (Attempt $attempts/$max_attempts)."
+            if [ "$attempts" -lt "$max_attempts" ]; then
+                log_info "Retrying in $interval seconds..."
+                sleep "$interval"
+            fi
+        fi
+    done
+
+    log_error "FATAL: Container $CTID failed to start after $max_attempts attempts."
+    exit_script 4
 }
 
 # =====================================================================================

@@ -160,8 +160,8 @@ check_container_exists() {
 # =====================================================================================
 check_if_snapshot_exists() {
     log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
-    if pct snapshot list "$CTID" | grep -q "$SNAPSHOT_NAME"; then
-        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping setup."
+    if pct config "$CTID" | grep -q "snapname: $SNAPSHOT_NAME"; then
+        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping entire setup."
         exit_script 0
     else
         log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
@@ -190,7 +190,9 @@ check_if_snapshot_exists() {
 # =====================================================================================
 perform_base_os_setup() {
     log_info "Performing base OS setup inside container CTID: $CTID"
-    local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui")
+    
+
+    local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui" "gnupg" "locales")
 
     log_info "Updating package lists inside container $CTID..."
     if ! pct exec "$CTID" -- apt-get update; then
@@ -211,6 +213,12 @@ perform_base_os_setup() {
     fi
 
     log_info "Base OS setup completed successfully for container $CTID."
+
+    log_info "Configuring en_US.UTF-8 locale inside container $CTID..."
+    if ! pct exec "$CTID" -- bash -c "echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen"; then log_error "Failed to add en_US.UTF-8 to /etc/locale.gen." && exit_script 4; fi
+    if ! pct exec "$CTID" -- locale-gen; then log_error "Failed to generate locales." && exit_script 4; fi
+    if ! pct exec "$CTID" -- update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8; then log_error "Failed to update system locale." && exit_script 4; fi
+    log_info "en_US.UTF-8 locale configured successfully."
 }
 
 # =====================================================================================
@@ -269,7 +277,7 @@ shutdown_container() {
 # Parameters: None (operates on global script variables `CTID` and `SNAPSHOT_NAME`)
 #
 # Dependencies:
-#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot create`).
+#   - `pct`: Proxmox VE Container Toolkit (`pct snapshot`).
 #
 # Exit Conditions:
 #   - Exits with code 5 if the snapshot creation fails.

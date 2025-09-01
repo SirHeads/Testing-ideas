@@ -302,11 +302,54 @@ apply_post_clone_configurations() {
 }
 
 # =====================================================================================
+# Function: start_container
+# Description: Initiates the startup of the newly cloned LXC container using `pct start`.
+#              This function includes retry logic to ensure the container transitions
+#              to a running state robustly.
+#
+# Parameters: None (operates on global script variable `TARGET_CTID`)
+#
+# Dependencies:
+#   - `pct`: Proxmox VE Container Toolkit (`pct start`).
+#
+# Exit Conditions:
+#   - Exits with code 4 if the `pct start` command fails after all retries.
+#
+# RAG Keywords: LXC container startup, Proxmox `pct start`, container management,
+#               retry logic, error handling.
+# =====================================================================================
+# =====================================================================================
+start_container() {
+    log_info "Attempting to start container CTID: $TARGET_CTID with retries..."
+    local attempts=0
+    local max_attempts=3
+    local interval=5 # seconds
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        if pct start "$TARGET_CTID"; then
+            log_info "Container $TARGET_CTID started successfully."
+            return 0
+        else
+            attempts=$((attempts + 1))
+            log_error "WARNING: 'pct start' command failed for CTID $TARGET_CTID (Attempt $attempts/$max_attempts)."
+            if [ "$attempts" -lt "$max_attempts" ]; then
+                log_info "Retrying in $interval seconds..."
+                sleep "$interval"
+            fi
+        fi
+    done
+
+    log_error "FATAL: Container $TARGET_CTID failed to start after $max_attempts attempts."
+    exit_script 4
+}
+
+# =====================================================================================
 # Function: main
 # Description: The main entry point for the LXC container cloning script.
 #              It orchestrates the entire cloning process by parsing arguments,
 #              validating inputs, constructing and executing the `pct clone` command,
-#              and applying any necessary post-clone configurations.
+#              applying any necessary post-clone configurations, and finally
+#              starting the newly cloned container.
 #
 # Parameters:
 #   - $@: All command-line arguments passed to the script.
@@ -317,6 +360,7 @@ apply_post_clone_configurations() {
 #   - `construct_pct_clone_command()`
 #   - `execute_pct_clone()`
 #   - `apply_post_clone_configurations()`
+#   - `start_container()`
 #   - `exit_script()`
 #
 # RAG Keywords: main function, script entry point, LXC cloning flow, Proxmox automation.
@@ -328,6 +372,7 @@ main() {
     construct_pct_clone_command
     execute_pct_clone
     apply_post_clone_configurations
+    start_container # Start the container after cloning and configuration
     exit_script 0
 }
 

@@ -406,13 +406,13 @@ shutdown_container() {
 # *   `$1` (ctid): The Container ID of the LXC container.
 #
 # ### Logic
-# 1.  **Snapshot Creation:** Executes `pct snapshot create "$ctid" "$SNAPSHOT_NAME"`.
+# 1.  **Snapshot Creation:** Executes `pct snapshot "$ctid" "$SNAPSHOT_NAME"`.
 #     *   If the snapshot creation command fails, logs a fatal error and exits with code `7`.
 # 2.  **Logging:** Confirms successful creation of the snapshot.
 create_vllm_base_snapshot() {
     local ctid="$1"
     log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $ctid..."
-    if ! pct snapshot create "$ctid" "$SNAPSHOT_NAME"; then
+    if ! pct snapshot "$ctid" "$SNAPSHOT_NAME"; then
         log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $ctid."
         exit_script 7
     fi

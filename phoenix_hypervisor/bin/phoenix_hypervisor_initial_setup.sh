@@ -186,7 +186,7 @@ verify_core_config_files() {
 # =====================================================================================
 
 install_required_packages() {
-    local packages=("jq" "curl" "nodejs" "npm")
+    local packages=("jq" "curl" "nodejs" "npm" "nvidia-persistenced")
 
     log_info "Starting package installation check..."
 
@@ -210,6 +210,17 @@ install_required_packages() {
             log_info "Package $package already present."
         fi
     done
+
+    log_info "Ensuring nvidia-persistenced service is running and enabled..."
+    if ! systemctl is-active --quiet nvidia-persistenced; then
+        log_info "nvidia-persistenced is not active. Starting service..."
+        sudo systemctl start nvidia-persistenced
+    fi
+    if ! systemctl is-enabled --quiet nvidia-persistenced; then
+        log_info "nvidia-persistenced is not enabled. Enabling service..."
+        sudo systemctl enable nvidia-persistenced
+    fi
+    log_info "nvidia-persistenced service status ensured."
 
     log_info "Checking for ajv-cli..."
     if ! command -v ajv > /dev/null 2>&1; then

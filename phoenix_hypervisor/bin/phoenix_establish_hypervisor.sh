@@ -1,4 +1,17 @@
 #!/bin/bash
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+
+# Add a diagnostic log to confirm the settings
+# --- Global Variables and Constants ---
+HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
+MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+
+echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_establish_hypervisor.sh: LANG is set to: $LANG" | tee -a "$MAIN_LOG_FILE"
+echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_establish_hypervisor.sh: LC_ALL is set to: $LC_ALL" | tee -a "$MAIN_LOG_FILE"
+
 #
 # File: phoenix_establish_hypervisor.sh
 # Description: Orchestrates the creation and configuration of LXC containers and templates for an AI Toolbox.
@@ -35,16 +48,9 @@
 #   4: Critical script missing
 #   5: Critical container/template processing failure
 
-# --- Global Variables and Constants ---
-HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
-LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
-MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
-
 # Global variables for NVIDIA settings
 NVIDIA_DRIVER_VERSION=""
 NVIDIA_REPO_URL=""
-NVIDIA_RUNFILE_URL=""
 
 # --- Logging Functions ---
 log_info() {
@@ -84,7 +90,6 @@ exit_script() {
 #     - Extract global NVIDIA settings:
 #         NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version' "$LXC_CONFIG_FILE")
 #         NVIDIA_REPO_URL=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-#         NVIDIA_RUNFILE_URL=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE") # New
 #     - Store LXC_CONFIG_FILE path and parsed data globally.
 #   Purpose: Ensures configs are present, valid, and extracts global settings. Halts on critical failures.
 # =====================================================================================
@@ -150,10 +155,9 @@ load_and_validate_configs() {
 
     NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version' "$LXC_CONFIG_FILE")
     NVIDIA_REPO_URL=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-    NVIDIA_RUNFILE_URL=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE")
 
-    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ -z "$NVIDIA_REPO_URL" ] || [ -z "$NVIDIA_RUNFILE_URL" ]; then
-        log_error "WARNING: Global NVIDIA settings (driver version, repo URL, runfile URL) are incomplete in $LXC_CONFIG_FILE. NVIDIA setup might fail if required."
+    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ -z "$NVIDIA_REPO_URL" ]; then
+        log_error "WARNING: Global NVIDIA settings (driver version, repo URL) are incomplete in $LXC_CONFIG_FILE. NVIDIA setup might fail if required."
     else
         log_info "Global NVIDIA settings extracted."
     fi
@@ -302,6 +306,12 @@ process_single_lxc() {
 
     log_info "Starting processing for CTID: $ctid (Name: $container_name, Is Template: $is_template)"
 
+    # Check if container exists and has the 'configured-state' snapshot
+    if pct status "$ctid" &>/dev/null && pct listsnapshot "$ctid" | grep -q "configured-state"; then
+        log_info "Container $ctid ($container_name) is already configured with 'configured-state' snapshot. Skipping."
+        return 0
+    fi
+
     if [ "$is_template" == "true" ]; then
         if ! create_or_clone_template "$ctid" "$config_block"; then
             log_error "Failed to create or clone template $ctid ($container_name)."
@@ -339,14 +349,38 @@ process_single_lxc() {
     fi
 
     log_info "Running specific setup script for $ctid (if exists)..."
-    if ! run_specific_setup_script "$ctid"; then
-        log_error "WARNING: Specific setup script failed for $ctid. Continuing with next step."
+    if [ "$ctid" -eq 903 ]; then
+        log_info "Disabling AppArmor for CTID 903 for testing purposes..."
+        local lxc_conf_file="/etc/pve/lxc/${ctid}.conf"
+        local apparmor_profile="lxc.apparmor.profile: unconfined"
+        if ! grep -qF "$apparmor_profile" "$lxc_conf_file"; then
+            if ! echo "$apparmor_profile" >> "$lxc_conf_file"; then
+                log_error "WARNING: Failed to set AppArmor profile to unconfined for CTID $ctid. This may affect GPU passthrough."
+            fi
+        else
+            log_info "AppArmor profile is already set to unconfined for CTID $ctid."
+        fi
     fi
 
-    log_info "Finalizing container state for $ctid..."
-    if ! finalize_container_state "$ctid"; then
-        log_error "FATAL: Failed to finalize state (shutdown, snapshot, restart) for $ctid."
-        return 1 # Critical failure
+    if ! run_specific_setup_script "$ctid" "${gpu_assignment}"; then
+        if [ "$is_template" == "true" ]; then
+            log_error "FATAL: Specific setup script failed for template $ctid. Halting orchestration."
+            return 1 # Critical failure for templates
+        else
+            log_error "WARNING: Specific setup script failed for $ctid. Continuing with next step."
+        fi
+    fi
+
+    # Differentiated finalization logic: Templates handle their own specific snapshotting.
+    # Standard containers use the generic finalize_container_state.
+    if [ "$is_template" == "false" ]; then
+        log_info "Finalizing container state for $ctid..."
+        if ! finalize_container_state "$ctid"; then
+            log_error "FATAL: Failed to finalize state (shutdown, snapshot, restart) for $ctid."
+            return 1 # Critical failure
+        fi
+    else
+        log_info "Container $ctid is a template. Skipping generic finalize_container_state as it handles its own snapshotting."
     fi
 
     log_info "Successfully processed CTID: $ctid ($container_name)."
@@ -577,7 +611,7 @@ create_lxc_container() {
 # =====================================================================================
 wait_for_lxc_ready() {
     local ctid="$1"
-    local timeout=180 # 3 minutes
+    local timeout=30 # 30 seconds
     local interval=5  # 5 seconds
     local elapsed_time=0
 
@@ -639,14 +673,10 @@ setup_lxc_nvidia() {
         log_error "FATAL: NVIDIA setup script not found or not executable: $nvidia_script"
         return 1 # Critical failure
     fi
-
+    
     log_info "Executing NVIDIA setup for CTID $ctid..."
-    # Pass global NVIDIA settings as environment variables
-    GPU_ASSIGNMENT="$gpu_assignment" \
-    NVIDIA_DRIVER_VERSION="$NVIDIA_DRIVER_VERSION" \
-    NVIDIA_REPO_URL="$NVIDIA_REPO_URL" \
-    NVIDIA_RUNFILE_URL="$NVIDIA_RUNFILE_URL" \
-    "$nvidia_script" "$ctid"
+    # Pass global NVIDIA settings as arguments
+    "$nvidia_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"
     local exit_status=$?
 
     if [ "$exit_status" -ne 0 ]; then
@@ -704,11 +734,8 @@ setup_lxc_docker() {
     local portainer_agent_port=$(jq -r '.network.portainer_agent_port // ""' "$HYPERVISOR_CONFIG_FILE")
 
     log_info "Executing Docker setup for CTID $ctid..."
-    # Pass Portainer details as environment variables
-    PORTAINER_ROLE="$portainer_role" \
-    PORTAINER_SERVER_IP="$portainer_server_ip" \
-    PORTAINER_AGENT_PORT="$portainer_agent_port" \
-    "$docker_script" "$ctid"
+    # Pass Portainer details as arguments
+    "$docker_script" "$ctid" "$portainer_role"
     local exit_status=$?
 
     if [ "$exit_status" -ne 0 ]; then
@@ -742,6 +769,7 @@ setup_lxc_docker() {
 # =====================================================================================
 run_specific_setup_script() {
     local ctid="$1"
+    local gpu_assignment="$2"
     local specific_script="/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_${ctid}.sh" # Using lxc_ prefix for consistency
 
     if [ ! -f "$specific_script" ] || [ ! -x "$specific_script" ]; then
@@ -750,9 +778,16 @@ run_specific_setup_script() {
     fi
 
     log_info "Executing specific setup script for CTID $ctid: $specific_script"
-    if ! "$specific_script" "$ctid"; then
-        log_error "Specific setup script $specific_script failed for CTID $ctid."
-        return 1 # Non-critical failure
+    if [ "$gpu_assignment" != "none" ]; then
+        if ! "$specific_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"; then
+            log_error "Specific setup script $specific_script failed for CTID $ctid."
+            return 1 # Non-critical failure
+        fi
+    else
+        if ! "$specific_script" "$ctid"; then
+            log_error "Specific setup script $specific_script failed for CTID $ctid."
+            return 1 # Non-critical failure
+        fi
     fi
     log_info "Specific setup script for CTID $ctid completed successfully."
     return 0
@@ -787,10 +822,13 @@ finalize_container_state() {
 
     log_info "Finalizing container state for CTID: $ctid (Shutdown, Snapshot, Restart)"
 
-    log_info "Shutting down container $ctid..."
-    if ! pct shutdown "$ctid"; then
-        log_error "FATAL: Failed to initiate shutdown for container $ctid."
-        return 1
+log_info "Shutting down container $ctid..."
+    if pct status "$ctid" | grep -q "status: running"; then
+        if ! pct shutdown "$ctid" || true; then
+            log_error "WARNING: Failed to initiate shutdown for container $ctid, but continuing as it might already be stopped."
+        fi
+    else
+        log_info "Container $ctid is already stopped. Skipping shutdown."
     fi
 
     elapsed_time=0

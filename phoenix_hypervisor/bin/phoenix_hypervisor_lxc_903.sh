@@ -1,4 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+set -x
+source "$(dirname "$0")/phoenix_hypervisor_lxc_common_loghelpers.sh"
+source "$(dirname "$0")/phoenix_hypervisor_lxc_common_nvidia.sh"
 
 # phoenix_hypervisor_lxc_903.sh
 #
@@ -23,16 +27,19 @@
 #
 # ## Usage
 # ```bash
-# ./phoenix_hypervisor_lxc_903.sh <CTID>
+# ./phoenix_hypervisor_lxc_903.sh <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL>
 # ```
 #
 # ### Example
 # ```bash
-# ./phoenix_hypervisor_lxc_903.sh 903
+# ./phoenix_hypervisor_lxc_903.sh 903 "0,1" "535.161.07" "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64"
 # ```
 #
 # ## Arguments
 # *   `$1` (CTID): The Container ID, expected to be `903` for `BaseTemplateDockerGPU`.
+# *   `$2` (GPU_ASSIGNMENT): Comma-separated GPU indices (e.g., "0,1") or "none".
+# *   `$3` (NVIDIA_DRIVER_VERSION): The specific NVIDIA driver version to install (e.g., "535.161.07").
+# *   `$4` (NVIDIA_REPO_URL): The URL for the NVIDIA APT repository.
 #
 # ## Requirements
 # *   Proxmox host environment with `pct` command available.
@@ -50,16 +57,10 @@
 # *   `6`: Container shutdown/start failed.
 
 # --- Global Variables and Constants ---
-MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
 # --- Logging Functions ---
-log_info() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_lxc_903.sh: $*" | tee -a "$MAIN_LOG_FILE"
-}
+# These functions are now sourced from phoenix_hypervisor_lxc_common_loghelpers.sh
 
-log_error() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_lxc_903.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
-}
 
 # --- Exit Function ---
 exit_script() {
@@ -74,6 +75,9 @@ exit_script() {
 
 # --- Script Variables ---
 CTID=""
+GPU_ASSIGNMENT=""
+NVIDIA_DRIVER_VERSION=""
+NVIDIA_REPO_URL=""
 SNAPSHOT_NAME="docker-gpu-snapshot" # Defined in requirements
 
 ### Function: `parse_arguments()`
@@ -85,12 +89,15 @@ SNAPSHOT_NAME="docker-gpu-snapshot" # Defined in requirements
 # *   Assigns the first argument to the global `CTID` variable.
 # *   Logs the successfully received CTID.
 parse_arguments() {
-    if [ "$#" -ne 1 ]; then
-        log_error "Usage: $0 <CTID>"
+    if [ "$#" -ne 4 ]; then
+        log_error "Usage: $0 <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL>"
         exit_script 2
     fi
     CTID="$1"
-    log_info "Received CTID: $CTID"
+    GPU_ASSIGNMENT="$2"
+    NVIDIA_DRIVER_VERSION="$3"
+    NVIDIA_REPO_URL="$4"
+    log_info "Received CTID: $CTID, GPU_ASSIGNMENT: $GPU_ASSIGNMENT, NVIDIA_DRIVER_VERSION: $NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL: $NVIDIA_REPO_URL"
 }
 
 ### Function: `validate_inputs()`
@@ -140,11 +147,11 @@ check_container_exists() {
 check_if_snapshot_exists() {
     log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
     if pct snapshot list "$CTID" | grep -q "$SNAPSHOT_NAME"; then
-        log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping setup."
+        log_info "Snapshot '$SNAPSHOT_NAME' already exists. Skipping setup."
+        # Potentially start the container if it's stopped and exit
         exit_script 0
-    else
-        log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
     fi
+    log_info "Snapshot '$SNAPSHOT_NAME' does not exist. Proceeding with setup."
 }
 
 ### Function: `verify_docker_and_gpu_setup_inside_container()`
@@ -171,6 +178,19 @@ check_if_snapshot_exists() {
 #     *   Note: Failure to pull the test image is logged as a warning, allowing the script to continue if the base setup is otherwise functional.
 verify_docker_and_gpu_setup_inside_container() {
     log_info "Starting verification of Docker and GPU setup inside container CTID: $CTID"
+
+    # Add diagnostic logs for daemon.json and device permissions
+    log_info "DEBUG: Checking /etc/docker/daemon.json content before Docker GPU verification..."
+    pct exec "$CTID" -- cat /etc/docker/daemon.json 2>&1 | while IFS= read -r line; do log_debug "DAEMON_JSON_BEFORE: $line"; done
+
+    log_info "DEBUG: Listing /dev/nvidia* devices and their permissions before Docker GPU verification..."
+    log_info "DEBUG: Checking NVIDIA Container Toolkit config..."
+    pct exec "$CTID" -- cat /etc/nvidia-container-runtime/config.toml 2>&1 | while IFS= read -r line; do log_debug "NVIDIA_TOOLKIT_CONFIG: $line"; done
+
+    log_info "DEBUG: Checking AppArmor profile..."
+    pct exec "$CTID" -- cat /proc/self/attr/current 2>&1 | while IFS= read -r line; do log_debug "APPARMOR_PROFILE: $line"; done
+    pct exec "$CTID" -- ls -la /dev/nvidia* 2>/dev/null | while IFS= read -r line; do log_debug "DEV_NVIDIA_LS_BEFORE: $line"; done
+    pct exec "$CTID" -- stat /dev/nvidia* 2>/dev/null | while IFS= read -r line; do log_debug "DEV_NVIDIA_STAT_BEFORE: $line"; done
 
     # 1. Verify Direct GPU Access
     log_info "Verifying direct GPU access by running nvidia-smi..."
@@ -256,12 +276,15 @@ shutdown_container() {
 # **Purpose:** Creates the `docker-gpu-snapshot` ZFS snapshot for the specified container.
 #
 # **Details:**
-# *   Executes `pct snapshot create "$CTID" "$SNAPSHOT_NAME"` to create the snapshot.
+# *   Executes `pct snapshot "$CTID" "$SNAPSHOT_NAME"` to create the snapshot.
 # *   If the snapshot creation fails (non-zero exit code), a fatal error is logged, and the script exits with code `5`.
 # *   Logs a success message upon successful snapshot creation.
 create_docker_gpu_snapshot() {
     log_info "Creating ZFS snapshot '$SNAPSHOT_NAME' for container $CTID..."
-    if ! pct snapshot create "$CTID" "$SNAPSHOT_NAME"; then
+    log_debug "DEBUG: CTID before pct snapshot: '$CTID'"
+    log_debug "DEBUG: SNAPSHOT_NAME before pct snapshot: '$SNAPSHOT_NAME'"
+    log_debug "DEBUG: Executing command: pct snapshot \"$CTID\" \"$SNAPSHOT_NAME\""
+    if ! command pct snapshot "$CTID" "$SNAPSHOT_NAME"; then
         log_error "FATAL: Failed to create snapshot '$SNAPSHOT_NAME' for container $CTID."
         exit_script 5
     fi
@@ -302,6 +325,56 @@ start_container() {
     exit_script 6
 }
 
+
+install_nvidia_drivers_in_container() {
+    log_info "Starting NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID"
+
+    # Ensure basic tools like curl are available inside the container
+    log_info "[CTID $CTID] Installing curl and other prerequisites..."
+    if ! pct exec "$CTID" -- apt-get update; then
+        log_error "FATAL: [CTID $CTID] Failed to apt-get update inside container."
+        exit_script 5
+    fi
+    if ! pct exec "$CTID" -- apt-get install -y curl gnupg software-properties-common; then
+        log_error "FATAL: [CTID $CTID] Failed to install curl, gnupg, software-properties-common inside container."
+        exit_script 5
+    fi
+
+    # Add NVIDIA CUDA repository
+    log_info "[CTID $CTID] Adding NVIDIA CUDA repository from $NVIDIA_REPO_URL..."
+    if ! pct exec "$CTID" -- bash -c "curl -fsSL $NVIDIA_REPO_URL/cuda-keyring.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg"; then
+        log_error "FATAL: [CTID $CTID] Failed to fetch and install CUDA GPG key."
+        exit_script 5
+    fi
+    if ! pct exec "$CTID" -- bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] $NVIDIA_REPO_URL/ /\" | tee /etc/apt/sources.list.d/cuda-\$(lsb_release -cs).list"; then
+        log_error "FATAL: [CTID $CTID] Failed to add CUDA repository to sources.list.d."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Updating apt-get after adding NVIDIA repository..."
+    if ! pct exec "$CTID" -- apt-get update; then
+        log_error "FATAL: [CTID $CTID] Failed to apt-get update after adding NVIDIA repository."
+        exit_script 5
+    fi
+
+    # Install NVIDIA drivers and CUDA toolkit
+    local cuda_toolkit_version="12-5"
+    local driver_package="cuda-drivers" # Use the metapackage for simplicity
+    local cuda_toolkit_package="cuda-toolkit-${cuda_toolkit_version}"
+
+    log_info "[CTID $CTID] Installing NVIDIA driver ($driver_package) and CUDA toolkit ($cuda_toolkit_package)..."
+    if ! pct exec "$CTID" -- apt-get install -y "$driver_package" "$cuda_toolkit_package"; then
+        log_error "FATAL: [CTID $CTID] Failed to install NVIDIA drivers and CUDA toolkit."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Running ldconfig to update shared library cache..."
+    if ! pct exec "$CTID" -- ldconfig; then
+        log_error "WARNING: [CTID $CTID] Failed to run ldconfig. This might affect library loading."
+    fi
+
+    log_info "NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID completed."
+}
 ### Function: `main()`
 # **Purpose:** Controls the overall flow of the `BaseTemplateDockerGPU` setup and snapshot creation.
 #
@@ -322,12 +395,30 @@ main() {
     check_container_exists
     check_if_snapshot_exists # This function will exit the script with code 0 if the snapshot already exists.
 
+    apply_all_host_configurations() {
+        log_info "Applying all host-side configurations for CTID: $CTID"
+
+        # Set AppArmor profile
+        log_info "Setting AppArmor profile to unconfined for CTID: $CTID"
+        if ! pct set "$CTID" --apparmor unconfined; then
+            log_error "FATAL: Failed to set AppArmor profile to unconfined for CTID $CTID."
+            exit_script 1
+        fi
+
+        # Call configure_host_gpu_passthrough from common NVIDIA script
+        # Call configure_host_gpu_passthrough from common NVIDIA script
+        configure_host_gpu_passthrough "$CTID" "$GPU_ASSIGNMENT" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"
+        verify_device_passthrough "$CTID" "$GPU_ASSIGNMENT"
+    }
+
+    shutdown_container "$CTID"
+    apply_all_host_configurations
+    start_container "$CTID"
+    install_nvidia_drivers_in_container "$CTID" "$GPU_ASSIGNMENT" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"
     verify_docker_and_gpu_setup_inside_container "$CTID"
     shutdown_container "$CTID"
     create_docker_gpu_snapshot "$CTID"
-    start_container "$CTID"
-
-    exit_script 0
+    # The container is left in a stopped state after snapshotting, as per template requirements.
 }
 
 # Call the main function
