@@ -152,10 +152,12 @@ ensure_nvidia_repo_is_configured() {
 
     local nvidia_repo_url=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
     local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu2404.pin"
-    
+    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub"
+    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg"
+
     pct_exec "$ctid" wget -qO /etc/apt/preferences.d/cuda-repository-pin-600 "$cuda_pin_url"
-    pct_exec "$ctid" apt-key adv --fetch-keys "${nvidia_repo_url}3bf863cc.pub"
-    pct_exec "$ctid" bash -c "echo \"deb ${nvidia_repo_url} /\" > /etc/apt/sources.list.d/cuda.list"
+    pct_exec "$ctid" curl -fsSL "$cuda_key_url" | pct_exec "$ctid" gpg --dearmor -o "$cuda_keyring_path"
+    pct_exec "$ctid" bash -c "echo \"deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /\" > /etc/apt/sources.list.d/cuda.list"
     pct_exec "$ctid" apt-get update
 }
 

@@ -204,11 +204,17 @@ apply_configurations() {
     # --- Retrieve configuration values ---
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
-    local features=$(jq_get_value "$CTID" ".features | join(\",\")" || echo "")
+    local features=$(jq_get_value "$CTID" ".features[]" || echo "")
 
     # --- Apply core settings ---
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
+
+    # --- Enable Nesting for Docker ---
+    if [[ " ${features[*]} " =~ " docker " ]]; then
+        log_info "Docker feature detected. Enabling nesting for CTID $CTID..."
+        run_pct_command set "$CTID" --features nesting=1 || log_fatal "Failed to enable nesting."
+    fi
     # --- The --features flag is reserved for Proxmox's internal use. ---
     # --- Custom features are handled by the state machine after creation. ---
 

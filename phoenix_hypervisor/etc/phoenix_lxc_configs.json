@@ -93,10 +93,10 @@
         },
         "920": {
             "name": "BaseTemplateVLLM",
-            "memory_mb": 4096,
-            "cores": 4,
+            "memory_mb": 65000,
+            "cores": 8,
             "storage_pool": "lxc-disks",
-            "storage_size_gb": 64,
+            "storage_size_gb": 96,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -110,7 +110,6 @@
             "template_snapshot_name": "vllm-base-snapshot",
             "clone_from_ctid": "901",
             "features": [
-                "docker",
                 "vllm"
             ]
         },

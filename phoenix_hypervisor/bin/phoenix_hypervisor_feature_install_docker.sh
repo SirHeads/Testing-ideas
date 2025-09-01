@@ -48,8 +48,12 @@ install_and_configure_docker() {
         pct_exec "$CTID" apt-get update
         pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release
         pct_exec "$CTID" mkdir -p /etc/apt/keyrings
-        pct_exec "$CTID" bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
-        pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
+        if [ ! -f "/etc/apt/keyrings/docker.gpg" ]; then
+            pct_exec "$CTID" bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
+            pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
+        else
+            log_info "Docker GPG key already exists. Skipping download."
+        fi
         pct_exec "$CTID" bash -c "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
         pct_exec "$CTID" apt-get update
 
