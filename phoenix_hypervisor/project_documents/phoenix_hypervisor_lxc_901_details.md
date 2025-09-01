@@ -26,7 +26,7 @@ LXC container `901`'s primary purpose is to provide a standardized Ubuntu 24.04 
     *   **MAC Address (Placeholder):** `52:54:00:AA:BB:CD` (Will be changed upon cloning)
 *   **LXC Features:** `` (Empty string, no special features enabled at this base level. LXC configuration for GPU access is handled by the setup script modifying the container config file).
 *   **Security & Privileges:**
-    *   **Unprivileged:** `false` (Runs in privileged mode, often necessary for full GPU access within the container)
+    *   **Unprivileged:** `true` (Runs in unprivileged mode, which is more secure)
 *   **GPU Assignment:** `0,1` (Configured to have access to both host GPUs, making the template versatile for any GPU-dependent clone)
 *   **Portainer Role:** `none` (Not a Portainer component)
 *   **Template Metadata (for Snapshot Hierarchy):**
@@ -78,7 +78,7 @@ The `phoenix_hypervisor/bin/phoenix_hypervisor_lxc_901.sh` script is responsible
 ## Key Characteristics Summary
 
 *   **GPU Base:** Provides the core OS plus the full NVIDIA GPU software stack.
-*   **Privileged Mode:** Runs privileged (`unprivileged: false`) to ensure full GPU access.
+*   **Unprivileged Mode:** Runs unprivileged (`unprivileged: true`) for enhanced security.
 *   **Generic Network:** Uses placeholder IP/MAC (`.201`) which are changed on clone to avoid conflicts.
 *   **Dual GPU Access:** Configured for GPUs 0 and 1 by default.
 *   **Template Only:** Never used as a final application container.

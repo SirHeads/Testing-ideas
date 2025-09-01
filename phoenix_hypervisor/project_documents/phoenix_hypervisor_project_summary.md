@@ -19,8 +19,8 @@ Automate the creation and configuration of a suite of LXC containers on a Proxmo
     *   **If `is_template` is true:**
         *   Clones from the specified source template (using `clone_from_template_ctid`) or creates from scratch (for the base template).
         *   Waits for the new template container to be fully online and accessible.
-        *   Conditionally configures NVIDIA/Docker based on its specific requirements.
-        *   Executes its specific setup script (e.g., `phoenix_hypervisor_setup_902.sh`), which typically finalizes the environment and creates the ZFS snapshot defined by `template_snapshot_name`.
+        *   Conditionally configures NVIDIA based on its specific requirements. Docker is now only used for specific containers, not as a base template.
+        *   Executes its specific setup script (e.g., `phoenix_hypervisor_setup_901.sh`), which typically finalizes the environment and creates the ZFS snapshot defined by `template_snapshot_name`.
     *   **If `is_template` is false (a standard container):**
         *   Determines the most suitable existing template snapshot to clone from based on its configuration requirements (e.g., needs GPU, needs Docker) or uses an explicitly defined `clone_from_template_ctid`.
         *   Calls a new internal function/script to perform `pct clone`, creating the container with settings from its specific `config_block`.
@@ -46,8 +46,8 @@ Automate the creation and configuration of a suite of LXC containers on a Proxmo
 
 *   **Configuration-Driven:** All aspects of container creation and setup are defined in JSON.
 *   **Modular Design:** Clear separation of concerns between orchestration, common setup, container creation/cloning, and specific feature setups.
-*   **Snapshot-Based Templates:** Dramatically reduces container creation time by cloning from pre-configured ZFS snapshots. Supports a hierarchical template chain (Base OS -> Base+Docker -> Base+vLLM).
-*   **Conditional Logic & Intelligent Cloning:** Applies NVIDIA or Docker setup only when required. The orchestrator intelligently selects the best base snapshot for cloning standard containers.
+*   **Snapshot-Based Templates:** Dramatically reduces container creation time by cloning from pre-configured ZFS snapshots. Supports a hierarchical template chain (Base OS -> Base+GPU -> Base+vLLM).
+*   **Conditional Logic & Intelligent Cloning:** Applies NVIDIA setup only when required. Docker is now an optional component for specific containers, not a core template dependency. The orchestrator intelligently selects the best base snapshot for cloning standard containers.
 *   **Multi-GPU Support:** Handles containers assigned to specific GPUs or multiple GPUs.
 *   **NVIDIA/CUDA Standardization:** Ensures consistent driver and toolkit versions across GPU-enabled containers.
 *   **Portainer Integration:** Sets up containers as either a Portainer server or agent for centralized management.

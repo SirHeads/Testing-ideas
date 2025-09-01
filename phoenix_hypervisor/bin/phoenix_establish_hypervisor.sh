@@ -349,18 +349,6 @@ process_single_lxc() {
     fi
 
     log_info "Running specific setup script for $ctid (if exists)..."
-    if [ "$ctid" -eq 903 ]; then
-        log_info "Disabling AppArmor for CTID 903 for testing purposes..."
-        local lxc_conf_file="/etc/pve/lxc/${ctid}.conf"
-        local apparmor_profile="lxc.apparmor.profile: unconfined"
-        if ! grep -qF "$apparmor_profile" "$lxc_conf_file"; then
-            if ! echo "$apparmor_profile" >> "$lxc_conf_file"; then
-                log_error "WARNING: Failed to set AppArmor profile to unconfined for CTID $ctid. This may affect GPU passthrough."
-            fi
-        else
-            log_info "AppArmor profile is already set to unconfined for CTID $ctid."
-        fi
-    fi
 
     if ! run_specific_setup_script "$ctid" "${gpu_assignment}"; then
         if [ "$is_template" == "true" ]; then
@@ -917,6 +905,16 @@ finalize_and_exit() {
 # =====================================================================================
 main() {
     initialize_environment
+
+    # Read debug_mode from HYPERVISOR_CONFIG_FILE
+    local debug_mode=$(jq -r '.behavior.debug_mode // false' "$HYPERVISOR_CONFIG_FILE")
+    if [ "$debug_mode" == "true" ]; then
+        export PHOENIX_DEBUG=true
+        log_info "Debug mode is enabled (PHOENIX_DEBUG=true)."
+    else
+        export PHOENIX_DEBUG=false
+        log_info "Debug mode is disabled (PHOENIX_DEBUG=false)."
+    fi
     load_and_validate_configs
     run_initial_host_setup
     process_lxc_containers

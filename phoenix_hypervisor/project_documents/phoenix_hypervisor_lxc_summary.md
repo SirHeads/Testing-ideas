@@ -16,12 +16,11 @@ The system uses a hierarchical template structure based on ZFS snapshots to opti
 ### Specialized Template Layers
 *   **`901` (`BaseTemplateGPU`):** Clones from `900`. Adds NVIDIA GPU drivers/CUDA.
 *   **`902` (`BaseTemplateDocker`):** Clones from `900`. Adds Docker Engine and NVIDIA Container Toolkit.
-*   **`903` (`BaseTemplateDockerGPU`):** Clones from `902`. Inherits Docker setup and adds GPU drivers/CUDA.
-*   **`920` (`BaseTemplateVLLM`):** Clones from `903`. Inherits Docker+GPU setup and adds the vLLM serving framework.
+*   **`920` (`BaseTemplateVLLM`):** Clones from `901`. Adds the vLLM serving framework directly (no Docker).
 
 ### Final Application Containers
 *   **`910` (`Portainer`):** Clones from `902`. A Docker-enabled container running the Portainer Server for managing Docker environments.
-*   **`950` (`vllmQwen3Coder`):** Clones from `920`. A Docker+GPU+vLLM container configured to serve a specific large language model (Qwen3 Coder 30B).
+*   **`950` (`vllmQwen3Coder`):** Clones from `920`. A GPU+vLLM container configured to serve a specific large language model (Qwen3 Coder 30B) directly (no Docker).
 
 ## Container Details
 
@@ -30,10 +29,9 @@ The system uses a hierarchical template structure based on ZFS snapshots to opti
 | 900 | `BaseTemplate` | Template | - (Created) | - | Minimal Ubuntu 24.04, 2GB RAM, 2 CPU | Foundational OS template for all other containers. |
 | 901 | `BaseTemplateGPU` | Template | 900 | `base-snapshot` | GPU Access (0,1), 2GB RAM, 2 CPU | Template adding NVIDIA drivers/CUDA. |
 | 902 | `BaseTemplateDocker` | Template | 900 | `base-snapshot` | Docker-in-LXC (nesting=1), 2GB RAM, 2 CPU | Template adding Docker Engine & NVIDIA Container Toolkit. |
-| 903 | `BaseTemplateDockerGPU` | Template | 902 | `docker-snapshot` | Docker-in-LXC, GPU Access (0,1), 2GB RAM, 2 CPU | Template combining Docker and GPU support. |
-| 920 | `BaseTemplateVLLM` | Template | 903 | `docker-gpu-snapshot` | Docker-in-LXC, GPU Access (0,1), vLLM, 4GB RAM, 4 CPU | Template adding the vLLM serving framework. |
+| 920 | `BaseTemplateVLLM` | Template | 901 | `gpu-snapshot` | GPU Access (0,1), vLLM, 4GB RAM, 4 CPU | Template adding the vLLM serving framework directly. |
 | 910 | `Portainer` | App | 902 | `docker-snapshot` | Docker-in-LXC, Portainer Server, 32GB RAM, 6 CPU | Runs the Portainer management web UI. |
-| 950 | `vllmQwen3Coder` | App | 920 | `vllm-base-snapshot` | Docker-in-LXC, GPU Access (0,1), vLLM Qwen3 Model, 40GB RAM, 8 CPU | Serves the Qwen3 Coder 30B LLM via vLLM. |
+| 950 | `vllmQwen3Coder` | App | 920 | `vllm-base-snapshot` | GPU Access (0,1), vLLM Qwen3 Model, 40GB RAM, 8 CPU | Serves the Qwen3 Coder 30B LLM via vLLM directly. |
 
 ## Notes
 

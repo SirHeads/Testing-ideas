@@ -3,7 +3,9 @@
 MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
 log_debug() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_loghelpers.sh: $*" | tee -a "$MAIN_LOG_FILE"
+    if [ "$PHOENIX_DEBUG" == "true" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_loghelpers.sh: $*" | tee -a "$MAIN_LOG_FILE"
+    fi
 }
 
 log_info() {

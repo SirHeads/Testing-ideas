@@ -22,10 +22,7 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_nvidia.
 #
 # ```bash
 # CTID=<CTID> \
-# GPU_ASSIGNMENT="<comma_separated_gpu_indices | none>" \
-# NVIDIA_DRIVER_VERSION="<nvidia_driver_version>" \
-# NVIDIA_REPO_URL="<nvidia_apt_repository_url>" \
-# ./phoenix_hypervisor_lxc_common_nvidia.sh <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL>
+# ./phoenix_hypervisor_lxc_common_nvidia.sh <CTID>
 # ```
 #
 # ### Requirements
@@ -63,9 +60,11 @@ log_info "IMPORTANT: Ensure 'nvidia-persistenced' service is running on the Prox
 
 # --- Script Variables ---
 CTID=""
+LXC_CONFIG_JSON=""
 GPU_ASSIGNMENT=""
 NVIDIA_DRIVER_VERSION=""
 NVIDIA_REPO_URL=""
+NVIDIA_RUNFILE_URL=""
 
 ### Function: parse_arguments
 # Purpose: Parses command-line arguments to extract the Container ID (CTID) and NVIDIA-related variables.
@@ -75,15 +74,12 @@ NVIDIA_REPO_URL=""
 # *   Assigns the argument to the `CTID` variable.
 # *   Logs the successfully received arguments.
 parse_arguments() {
-    if [ "$#" -ne 4 ]; then
-        log_error "Usage: $0 <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL>"
+    if [ "$#" -ne 1 ]; then
+        log_error "Usage: $0 <CTID>"
         exit_script 2
     fi
     CTID="$1"
-    GPU_ASSIGNMENT="$2"
-    NVIDIA_DRIVER_VERSION="$3"
-    NVIDIA_REPO_URL="$4"
-    log_info "Received CTID: $CTID, GPU_ASSIGNMENT: $GPU_ASSIGNMENT, NVIDIA_DRIVER_VERSION: $NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL: $NVIDIA_REPO_URL"
+    log_info "Received CTID: $CTID"
 }
 
 ### Function: validate_inputs
@@ -91,18 +87,62 @@ parse_arguments() {
 #          to ensure the script can proceed with configuration.
 # Content:
 # *   Verifies that `CTID` is a positive integer; otherwise, logs a fatal error and exits.
-# *   Checks if `GPU_ASSIGNMENT` is set and not empty. If missing, logs a fatal error and exits.
 # *   Logs a success message if all input validations pass.
 validate_inputs() {
     if ! [[ "$CTID" =~ ^[0-9]+$ ]] || [ "$CTID" -le 0 ]; then
         log_error "FATAL: Invalid CTID '$CTID'. Must be a positive integer."
         exit_script 2
     fi
-    if [ -z "$GPU_ASSIGNMENT" ]; then
-        log_error "FATAL: GPU_ASSIGNMENT is not set or empty."
+    log_info "Input validation passed."
+}
+
+### Function: read_lxc_config_json
+# Purpose: Reads the phoenix_lxc_configs.json file and extracts GPU assignment, NVIDIA driver version,
+#          and NVIDIA repository URL for the target CTID.
+# Content:
+# *   Constructs the path to phoenix_lxc_configs.json.
+# *   Verifies the existence of the JSON file; exits if not found.
+# *   Uses `jq` to parse the JSON and extract the relevant values for the given CTID.
+# *   Assigns extracted values to global variables: `GPU_ASSIGNMENT`, `NVIDIA_DRIVER_VERSION`, `NVIDIA_REPO_URL`, `NVIDIA_RUNFILE_URL`.
+# *   Logs the extracted configuration details.
+read_lxc_config_json() {
+    log_info "Reading LXC configuration from JSON for CTID: $CTID"
+    LXC_CONFIG_JSON="/Users/michaelcabezas/@AI/git/Testing-ideas-1/phoenix_hypervisor/etc/phoenix_lxc_configs.json" # Hardcoded path for now
+
+    if [ ! -f "$LXC_CONFIG_JSON" ]; then
+        log_error "FATAL: LXC configuration JSON file not found at $LXC_CONFIG_JSON."
         exit_script 2
     fi
-    log_info "Input validation passed."
+
+    GPU_ASSIGNMENT=$(jq -r ".lxc_configs.\"$CTID\".gpu_assignment" "$LXC_CONFIG_JSON")
+    NVIDIA_DRIVER_VERSION=$(jq -r ".nvidia_driver_version" "$LXC_CONFIG_JSON")
+    NVIDIA_REPO_URL=$(jq -r ".nvidia_repo_url" "$LXC_CONFIG_JSON")
+    NVIDIA_RUNFILE_URL=$(jq -r ".nvidia_runfile_url" "$LXC_CONFIG_JSON")
+
+    if [ -z "$GPU_ASSIGNMENT" ] || [ "$GPU_ASSIGNMENT" == "null" ]; then
+        log_info "No specific GPU assignment found for CTID $CTID. Defaulting to 'none'."
+        GPU_ASSIGNMENT="none"
+    fi
+
+    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ "$NVIDIA_DRIVER_VERSION" == "null" ]; then
+        log_error "FATAL: NVIDIA_DRIVER_VERSION not found in $LXC_CONFIG_JSON."
+        exit_script 2
+    fi
+
+    if [ -z "$NVIDIA_REPO_URL" ] || [ "$NVIDIA_REPO_URL" == "null" ]; then
+        log_error "FATAL: NVIDIA_REPO_URL not found in $LXC_CONFIG_JSON."
+        exit_script 2
+    fi
+
+    if [ -z "$NVIDIA_RUNFILE_URL" ] || [ "$NVIDIA_RUNFILE_URL" == "null" ]; then
+        log_error "FATAL: NVIDIA_RUNFILE_URL not found in $LXC_CONFIG_JSON."
+        exit_script 2
+    fi
+
+    log_info "Extracted GPU_ASSIGNMENT: $GPU_ASSIGNMENT"
+    log_info "Extracted NVIDIA_DRIVER_VERSION: $NVIDIA_DRIVER_VERSION"
+    log_info "Extracted NVIDIA_REPO_URL: $NVIDIA_REPO_URL"
+    log_info "Extracted NVIDIA_RUNFILE_URL: $NVIDIA_RUNFILE_URL"
 }
 
 ### Function: check_container_exists
@@ -153,20 +193,65 @@ configure_host_gpu_passthrough() {
         exit_script 4
     fi
 
-    # Define the required lxc.mount.entry lines
-    local mount_entries=(
-        "lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file"
-        "lxc.mount.entry: /dev/nvidia1 dev/nvidia1 none bind,optional,create=file"
-        "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
-        "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
-        "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
+    local mount_entries=()
+    local cgroup_entries=()
+    local idmap_entries=()
+
+    # Common devices
+    local common_devices=(
+        "/dev/dri/card0"
+        "/dev/dri/renderD128"
+        "/dev/nvidiactl"
+        "/dev/nvidia-uvm"
+        "/dev/nvidia-uvm-tools"
+        "/dev/nvidia-caps/nvidia-cap1"
+        "/dev/nvidia-caps/nvidia-cap2"
     )
 
-    # Add cgroup device allow rules for NVIDIA devices
-    local cgroup_entries=(
-        "lxc.cgroup2.devices.allow: c 195:* rwm" # NVIDIA devices
-        "lxc.cgroup2.devices.allow: c 243:* rwm" # NVIDIA UVM devices
-    )
+    # Add common devices if any GPU is assigned
+    if [ "$GPU_ASSIGNMENT" != "none" ]; then
+        for device in "${common_devices[@]}"; do
+            if [ -e "$device" ]; then
+                local device_type="file"
+                if [ -d "$device" ]; then
+                    device_type="dir"
+                fi
+                mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=$device_type")
+                log_info "Device $device exists on host. Adding mount entry."
+            else
+                log_warn "Device $device does not exist on host. Skipping mount entry."
+            fi
+        done
+
+        # Add GPU specific devices
+        IFS=',' read -ra GPUS <<< "$GPU_ASSIGNMENT"
+        for gpu_idx in "${GPUS[@]}"; do
+            local nvidia_device="/dev/nvidia${gpu_idx}"
+            if [ -e "$nvidia_device" ]; then
+                mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
+                log_info "Device $nvidia_device exists on host. Adding mount entry."
+            else
+                log_warn "Device $nvidia_device does not exist on host. Skipping mount entry."
+            fi
+        done
+
+        # Add cgroup device allow rules for NVIDIA devices
+        cgroup_entries+=(
+            "lxc.cgroup2.devices.allow: c 195:* rwm" # NVIDIA devices
+            "lxc.cgroup2.devices.allow: c 243:* rwm" # NVIDIA UVM devices
+            "lxc.cgroup2.devices.allow: c 226:* rwm" # DRI devices (for /dev/dri/card0, renderD128)
+        )
+
+        # Add GID mapping for unprivileged containers
+        # Assuming a common mapping for unprivileged containers. Adjust if specific mapping is required.
+        idmap_entries+=(
+            "lxc.idmap: g 0 100000 100000"
+            "lxc.idmap: g 100000 0 1" # Map host GID 0 (root) to container GID 100000
+            "lxc.idmap: g 100001 100001 65535" # Map host GID 100001 to container GID 100001
+        )
+    else
+        log_info "GPU_ASSIGNMENT is 'none'. No GPU devices to configure."
+    fi
 
     # Apply mount entries
     for entry in "${mount_entries[@]}"; do
@@ -196,6 +281,20 @@ configure_host_gpu_passthrough() {
         fi
     done
 
+    # Apply idmap entries
+    for entry in "${idmap_entries[@]}"; do
+        if ! grep -qF "$entry" "$lxc_conf_file"; then
+            log_info "Adding idmap entry: $entry"
+            echo "$entry" >> "$lxc_conf_file"
+            if [ $? -ne 0 ]; then
+                log_error "FATAL: Failed to add idmap entry '$entry' for CTID $CTID."
+                exit_script 4
+            fi
+        else
+            log_info "Idmap entry '$entry' already exists for CTID $CTID. Skipping."
+        fi
+    done
+
     log_info "Host GPU passthrough configuration complete."
 }
 
@@ -222,10 +321,41 @@ verify_device_passthrough() {
     )
 
     local entries_to_check=()
+    local expected_idmap_entries=(
+        "lxc.idmap: g 0 100000 100000"
+        "lxc.idmap: g 100000 0 1"
+        "lxc.idmap: g 100001 100001 65535"
+    )
 
     if [ "$GPU_ASSIGNMENT" != "none" ]; then
-        entries_to_check+=("${expected_mount_entries[@]}")
+        # Dynamically generate expected mount entries based on GPU_ASSIGNMENT
+        local dynamic_mount_entries=()
+        local common_devices=(
+            "/dev/dri/card0"
+            "/dev/dri/renderD128"
+            "/dev/nvidiactl"
+            "/dev/nvidia-uvm"
+            "/dev/nvidia-uvm-tools"
+            "/dev/nvidia-caps/nvidia-cap1"
+            "/dev/nvidia-caps/nvidia-cap2"
+        )
+        for device in "${common_devices[@]}"; do
+            local device_type="file"
+            if [ -d "$device" ]; then
+                device_type="dir"
+            fi
+            dynamic_mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=$device_type")
+        done
+
+        IFS=',' read -ra GPUS <<< "$GPU_ASSIGNMENT"
+        for gpu_idx in "${GPUS[@]}"; do
+            local nvidia_device="/dev/nvidia${gpu_idx}"
+            dynamic_mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
+        done
+
+        entries_to_check+=("${dynamic_mount_entries[@]}")
         entries_to_check+=("${expected_cgroup_entries[@]}")
+        entries_to_check+=("${expected_idmap_entries[@]}")
     else
         log_info "GPU_ASSIGNMENT is 'none'. No GPU devices to verify."
         return 0
@@ -247,6 +377,75 @@ verify_device_passthrough() {
     log_info "All required GPU device passthrough entries verified successfully."
 }
 
+### Function: install_nvidia_drivers_in_container
+# Purpose: Installs NVIDIA drivers and CUDA toolkit inside the LXC container.
+# Content:
+# *   Ensures basic tools like curl are available inside the container.
+# *   Adds NVIDIA CUDA repository.
+# *   Installs NVIDIA drivers and CUDA toolkit.
+# *   Runs ldconfig to update shared library cache.
+# *   Includes an idempotency check to verify if the correct NVIDIA driver version is already installed.
+install_nvidia_drivers_in_container() {
+    log_info "Starting NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID"
+
+    # Idempotency check: Verify if the correct NVIDIA driver version is already installed
+    log_info "[CTID $CTID] Checking for existing NVIDIA driver version..."
+    local installed_driver_version
+    installed_driver_version=$(pct exec "$CTID" -- bash -c "modinfo nvidia | grep -oP 'Version: \K.*' || true" 2>/dev/null)
+
+    if [ -n "$installed_driver_version" ] && [[ "$installed_driver_version" == *"$NVIDIA_DRIVER_VERSION"* ]]; then
+        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION already installed. Skipping installation."
+        return 0
+    else
+        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION not found or incorrect version ($installed_driver_version). Proceeding with installation."
+    fi
+
+    # Ensure basic tools like curl are available inside the container
+    log_info "[CTID $CTID] Installing curl and other prerequisites..."
+    if ! pct exec "$CTID" -- apt-get update; then
+        log_error "FATAL: [CTID $CTID] Failed to apt-get update inside container."
+        exit_script 5
+    fi
+    if ! pct exec "$CTID" -- apt-get install -y curl gnupg software-properties-common; then
+        log_error "FATAL: [CTID $CTID] Failed to install curl, gnupg, software-properties-common inside container."
+        exit_script 5
+    fi
+
+    # Add NVIDIA CUDA repository
+    log_info "[CTID $CTID] Adding NVIDIA CUDA repository from $NVIDIA_REPO_URL..."
+    if ! pct exec "$CTID" -- bash -c "curl -fsSL $NVIDIA_REPO_URL/cuda-keyring.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg"; then
+        log_error "FATAL: [CTID $CTID] Failed to fetch and install CUDA GPG key."
+        exit_script 5
+    fi
+    if ! pct exec "$CTID" -- bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] $NVIDIA_REPO_URL/ /\" | tee /etc/apt/sources.list.d/cuda-\$(lsb_release -cs).list"; then
+        log_error "FATAL: [CTID $CTID] Failed to add CUDA repository to sources.list.d."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Updating apt-get after adding NVIDIA repository..."
+    if ! pct exec "$CTID" -- apt-get update; then
+        log_error "FATAL: [CTID $CTID] Failed to apt-get update after adding NVIDIA repository."
+        exit_script 5
+    fi
+
+    # Install NVIDIA drivers and CUDA toolkit
+    local cuda_toolkit_version="12-5" # This might need to be dynamic based on NVIDIA_DRIVER_VERSION or another config
+    local driver_package="cuda-drivers" # Use the metapackage for simplicity
+    local cuda_toolkit_package="cuda-toolkit-${cuda_toolkit_version}"
+
+    log_info "[CTID $CTID] Installing NVIDIA driver ($driver_package) and CUDA toolkit ($cuda_toolkit_package)..."
+    if ! pct exec "$CTID" -- apt-get install -y "$driver_package" "$cuda_toolkit_package"; then
+        log_error "FATAL: [CTID $CTID] Failed to install NVIDIA drivers and CUDA toolkit."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Running ldconfig to update shared library cache..."
+    if ! pct exec "$CTID" -- ldconfig; then
+        log_warn "WARNING: [CTID $CTID] Failed to run ldconfig. This might affect library loading."
+    fi
+
+    log_info "NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID completed."
+}
 
 ### Function: main
 # Purpose: Serves as the entry point for the script, orchestrating the entire
@@ -260,6 +459,7 @@ verify_device_passthrough() {
 main() {
     parse_arguments "$@"
     validate_inputs
+    read_lxc_config_json
     check_container_exists
 
     log_info "--- Host-side NVIDIA Driver and Kernel Module Status ---"
@@ -285,6 +485,7 @@ main() {
 
     configure_host_gpu_passthrough
     verify_device_passthrough
+    install_nvidia_drivers_in_container
     exit_script 0
 }
 

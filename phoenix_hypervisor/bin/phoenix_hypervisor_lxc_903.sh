@@ -326,55 +326,6 @@ start_container() {
 }
 
 
-install_nvidia_drivers_in_container() {
-    log_info "Starting NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID"
-
-    # Ensure basic tools like curl are available inside the container
-    log_info "[CTID $CTID] Installing curl and other prerequisites..."
-    if ! pct exec "$CTID" -- apt-get update; then
-        log_error "FATAL: [CTID $CTID] Failed to apt-get update inside container."
-        exit_script 5
-    fi
-    if ! pct exec "$CTID" -- apt-get install -y curl gnupg software-properties-common; then
-        log_error "FATAL: [CTID $CTID] Failed to install curl, gnupg, software-properties-common inside container."
-        exit_script 5
-    fi
-
-    # Add NVIDIA CUDA repository
-    log_info "[CTID $CTID] Adding NVIDIA CUDA repository from $NVIDIA_REPO_URL..."
-    if ! pct exec "$CTID" -- bash -c "curl -fsSL $NVIDIA_REPO_URL/cuda-keyring.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg"; then
-        log_error "FATAL: [CTID $CTID] Failed to fetch and install CUDA GPG key."
-        exit_script 5
-    fi
-    if ! pct exec "$CTID" -- bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] $NVIDIA_REPO_URL/ /\" | tee /etc/apt/sources.list.d/cuda-\$(lsb_release -cs).list"; then
-        log_error "FATAL: [CTID $CTID] Failed to add CUDA repository to sources.list.d."
-        exit_script 5
-    fi
-
-    log_info "[CTID $CTID] Updating apt-get after adding NVIDIA repository..."
-    if ! pct exec "$CTID" -- apt-get update; then
-        log_error "FATAL: [CTID $CTID] Failed to apt-get update after adding NVIDIA repository."
-        exit_script 5
-    fi
-
-    # Install NVIDIA drivers and CUDA toolkit
-    local cuda_toolkit_version="12-5"
-    local driver_package="cuda-drivers" # Use the metapackage for simplicity
-    local cuda_toolkit_package="cuda-toolkit-${cuda_toolkit_version}"
-
-    log_info "[CTID $CTID] Installing NVIDIA driver ($driver_package) and CUDA toolkit ($cuda_toolkit_package)..."
-    if ! pct exec "$CTID" -- apt-get install -y "$driver_package" "$cuda_toolkit_package"; then
-        log_error "FATAL: [CTID $CTID] Failed to install NVIDIA drivers and CUDA toolkit."
-        exit_script 5
-    fi
-
-    log_info "[CTID $CTID] Running ldconfig to update shared library cache..."
-    if ! pct exec "$CTID" -- ldconfig; then
-        log_error "WARNING: [CTID $CTID] Failed to run ldconfig. This might affect library loading."
-    fi
-
-    log_info "NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID completed."
-}
 ### Function: `main()`
 # **Purpose:** Controls the overall flow of the `BaseTemplateDockerGPU` setup and snapshot creation.
 #
@@ -414,7 +365,6 @@ main() {
     shutdown_container "$CTID"
     apply_all_host_configurations
     start_container "$CTID"
-    install_nvidia_drivers_in_container "$CTID" "$GPU_ASSIGNMENT" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"
     verify_docker_and_gpu_setup_inside_container "$CTID"
     shutdown_container "$CTID"
     create_docker_gpu_snapshot "$CTID"

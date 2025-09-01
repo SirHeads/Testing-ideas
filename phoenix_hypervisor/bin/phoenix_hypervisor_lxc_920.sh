@@ -165,194 +165,153 @@ check_if_snapshot_exists() {
     fi
 }
 
-# ## Function: `verify_prerequisites_inside_container()`
+
+# ## Function: `install_and_test_vllm_inside_container()`
 #
-# Confirms that Docker Engine and the NVIDIA Container Toolkit are correctly installed
-# and functional within the target LXC container. This is crucial before attempting vLLM deployment.
+# Orchestrates the installation of vLLM, deployment of a test vLLM server,
+# verifies its API functionality, and ensures proper cleanup.
 #
 # ### Arguments
 # *   `$1` (ctid): The Container ID of the LXC container.
 #
 # ### Logic
-# 1.  **Docker Info Verification:**
-#     *   Executes `docker info` inside the container to check Docker's operational status and confirm
-#         the presence of the NVIDIA runtime.
-#     *   Captures and logs the output for detailed inspection.
-#     *   If the command fails, logs a fatal error and exits with code `4`.
-# 2.  **NVIDIA GPU Access Verification:**
-#     *   Executes `nvidia-smi` inside the container to verify direct GPU access and driver functionality.
-#     *   Captures and logs the output.
-#     *   If the command fails, logs a fatal error and exits with code `4`.
-# 3.  **Logging:** Confirms successful verification of all prerequisites.
-verify_prerequisites_inside_container() {
-    local ctid="$1"
-    log_info "Verifying prerequisites (Docker, NVIDIA) inside container CTID: $ctid."
-
-    # ### 1. Verify Docker Info (including NVIDIA Runtime)
-    log_info "Verifying Docker information inside CTID $ctid..."
-    local docker_info_output
-    if ! docker_info_output=$(pct exec "$ctid" -- docker info 2>&1); then
-        log_error "FATAL: Docker verification failed for CTID $ctid. 'docker info' command failed."
-        echo "$docker_info_output" | log_error
-        exit_script 4
-    fi
-    log_info "Docker information verified inside CTID $ctid. Docker info output:"
-    echo "$docker_info_output" | while IFS= read -r line; do log_info "$line"; done
-
-    # ### 2. Verify Direct GPU Access
-    log_info "Verifying direct GPU access by running `nvidia-smi` inside CTID $ctid..."
-    local nvidia_smi_output
-    if ! nvidia_smi_output=$(pct exec "$ctid" -- nvidia-smi 2>&1); then
-        log_error "FATAL: Direct GPU access verification failed for CTID $ctid. 'nvidia-smi' command failed."
-        echo "$nvidia_smi_output" | log_error
-        exit_script 4
-    fi
-    log_info "Direct GPU access verified inside CTID $ctid. `nvidia-smi` output:"
-    echo "$nvidia_smi_output" | while IFS= read -r line; do log_info "$line"; done
-
-    log_info "All prerequisites verified successfully inside container CTID: $ctid."
-}
-
-# ## Function: `deploy_and_test_vllm_inside_container()`
-#
-# Orchestrates the deployment of a test vLLM container, verifies its API functionality,
-# and ensures proper cleanup. This function is critical for validating the `BaseTemplateVLLM` setup.
-#
-# ### Arguments
-# *   `$1` (ctid): The Container ID of the LXC container.
-#
-# ### Logic
-# 1.  **Pull vLLM Docker Image:** Downloads the official `vllm/vllm-openai:latest` Docker image.
-#     *   If the pull fails, logs a fatal error and exits with code `5`.
-# 2.  **Run Test vLLM Container:** Starts a detached Docker container running vLLM with a specified
-#     test model (`Qwen/Qwen2.5-Coder-0.5B-Instruct-GPTQ-Int8`).
-#     *   Configures GPU access, port mapping, and IPC host mode.
-#     *   If the container fails to start, logs a fatal error and exits with code `5`.
-# 3.  **Wait for Model Load:** Polls the Docker container logs, waiting for an indication that the
-#     vLLM server is running (e.g., "Uvicorn running on").
+# 1.  **Install Python and Pip:** Installs `python3-pip` inside the container.
+# 2.  **Install vLLM:** Installs `vllm` using `pip3`.
+# 3.  **Start Test vLLM Server:** Starts a detached vLLM server with a specified
+#     test model (`Qwen/Qwen2.5-Coder-7B-Instruct-AWQ`) and host `0.0.0.0`.
+#     Captures the PID of the background process.
+# 4.  **Wait for Server Readiness:** Polls the vLLM server logs, waiting for an indication that the
+#     server is running (e.g., "Uvicorn running on").
 #     *   Includes a timeout mechanism to prevent indefinite waiting.
-#     *   Logs a warning if the model does not indicate readiness within the timeout.
-# 4.  **Verify API Access via Curl:** Sends a chat completion request to the vLLM API using `curl`.
+# 5.  **Verify API Access via Curl:** Sends a chat completion request to the vLLM API using `curl`.
 #     *   Checks the JSON response for the expected word "Paris" to confirm basic functionality.
-#     *   If the `curl` command fails, logs a fatal error, attempts cleanup, and exits with code `5`.
-#     *   Logs a warning if "Paris" is not found, as model responses can vary.
-# 5.  **Clean Up Test Container:** Stops and removes the temporary vLLM test container.
-#     *   Uses the `clean_up_test_container` helper function for this purpose.
+# 6.  **Clean Up Test Server:** Kills the temporary vLLM server process using the captured PID.
 #
 # ### Dependencies
-# *   `clean_up_test_container()`: Helper function for stopping and removing the Docker container.
-deploy_and_test_vllm_inside_container() {
+# *   `kill_vllm_server()`: Helper function for stopping the vLLM server.
+install_and_test_vllm_inside_container() {
     local ctid="$1"
-    log_info "Starting vLLM test deployment and verification inside container CTID: $ctid"
+    log_info "Starting vLLM installation and verification inside container CTID: $ctid"
 
-    local vllm_image="vllm/vllm-openai:latest" # Official vLLM Docker image.
-    local test_model="Qwen/Qwen2.5-Coder-0.5B-Instruct-GPTQ-Int8" # Small model for testing, as discussed in requirements.
-    local test_container_name="vllm_test_container" # Name for the temporary test container.
+    local test_model="Qwen/Qwen2.5-Coder-7B-Instruct-AWQ" # Small model for testing.
+    local vllm_server_log="/var/log/vllm_server.log" # Log file for the vLLM server.
+    local vllm_pid_file="/tmp/vllm_server.pid" # File to store the vLLM server PID.
 
-    # ### 1. Pull Official vLLM Docker Image
-    log_info "Pulling official vLLM Docker image: $vllm_image..."
-    if ! pct exec "$ctid" -- docker pull "$vllm_image"; then
-        log_error "FATAL: Failed to pull vLLM Docker image for CTID $ctid."
+    # ### 1. Install Python and Pip
+    log_info "Installing Python3 and Pip inside CTID $ctid..."
+    if ! pct exec "$ctid" -- bash -c "apt-get update && apt-get install -y python3-pip"; then
+        log_error "FATAL: Failed to install Python3 and Pip inside CTID $ctid."
         exit_script 5
     fi
-    log_info "vLLM image pulled successfully for CTID $ctid."
+    log_info "Python3 and Pip installed successfully inside CTID $ctid."
 
-    # ### 2. Run Test vLLM Container
-    log_info "Running test vLLM container: $test_container_name with model $test_model inside CTID $ctid..."
-    local run_opts="--runtime nvidia --gpus all -p 8000:8000 --ipc=host --name $test_container_name" # Docker run options for GPU access and port mapping.
-    local model_arg="--model $test_model" # Argument to specify the model for vLLM.
-    local full_run_cmd="docker run -d $run_opts $vllm_image $model_arg" # Complete Docker run command.
-
-    if ! pct exec "$ctid" -- $full_run_cmd; then
-        log_error "FATAL: Failed to start test vLLM container '$test_container_name' for CTID $ctid."
+    # ### 2. Install vLLM
+    log_info "Installing vLLM via pip3 inside CTID $ctid..."
+    if ! pct exec "$ctid" -- pip3 install vllm; then
+        log_error "FATAL: Failed to install vLLM inside CTID $ctid."
         exit_script 5
     fi
-    log_info "Test vLLM container '$test_container_name' started for CTID $ctid."
+    log_info "vLLM installed successfully inside CTID $ctid."
 
-    # ### 3. Wait for Model Load
-    log_info "Waiting for test model to load inside CTID $ctid..."
-    local timeout=300 # Maximum wait time in seconds (5 minutes) for the model to load.
+    # ### 3. Start Test vLLM Server
+    log_info "Starting temporary vLLM server with model $test_model inside CTID $ctid..."
+    # Start vLLM server in background, redirect output to log file, and store PID.
+    if ! pct exec "$ctid" -- bash -c "python3 -m vllm.entrypoints.api_server --host 0.0.0.0 --model \"$test_model\" &> \"$vllm_server_log\" & echo \$! > \"$vllm_pid_file\""; then
+        log_error "FATAL: Failed to start vLLM server inside CTID $ctid."
+        exit_script 5
+    fi
+    log_info "vLLM server started in background for CTID $ctid. PID stored in $vllm_pid_file."
+
+    # ### 4. Wait for Server Readiness
+    log_info "Waiting for vLLM server to become ready inside CTID $ctid..."
+    local timeout=300 # Maximum wait time in seconds (5 minutes) for the server to load.
     local interval=10 # Polling interval in seconds.
     local elapsed_time=0 # Tracks the elapsed time during the wait loop.
-    local model_ready=false # Flag to indicate if the model has reported readiness.
+    local server_ready=false # Flag to indicate if the server has reported readiness.
 
-    while [ "$elapsed_time" -lt "$timeout" ]; do # Loop until timeout or model readiness.
-        # Check Docker logs for the "Uvicorn running on" message, indicating the vLLM server is active.
-        if pct exec "$ctid" -- docker logs "$test_container_name" 2>&1 | grep -q "Uvicorn running on"; then
-            log_info "vLLM model/server appears to be ready inside CTID $ctid."
-            model_ready=true
-            break # Exit loop if ready.
+    while [ "$elapsed_time" -lt "$timeout" ]; do
+        # Check vLLM server log for "Uvicorn running on", indicating the server is active.
+        if pct exec "$ctid" -- grep -q "Uvicorn running on" "$vllm_server_log"; then
+            log_info "vLLM server appears to be ready inside CTID $ctid."
+            server_ready=true
+            break
         fi
-        sleep "$interval" # Wait before the next check.
-        elapsed_time=$((elapsed_time + interval)) # Increment elapsed time.
+        sleep "$interval"
+        elapsed_time=$((elapsed_time + interval))
     done
 
-    if [ "$model_ready" == "false" ]; then # Check if the model was ready within the timeout.
-        log_error "WARNING: vLLM model did not indicate readiness within ${timeout} seconds for CTID $ctid. Proceeding to API test, but this may indicate an issue."
+    if [ "$server_ready" == "false" ]; then
+        log_error "FATAL: vLLM server did not indicate readiness within ${timeout} seconds for CTID $ctid."
+        kill_vllm_server "$ctid" "$vllm_pid_file" # Attempt cleanup before exiting on failure.
+        exit_script 5
     else
-        log_info "vLLM model load wait completed for CTID $ctid."
+        log_info "vLLM server readiness wait completed for CTID $ctid."
     fi
 
-    # ### 4. Verify API Access via Curl (Check for 'Paris')
+    # ### 5. Verify API Access via Curl
     log_info "Verifying vLLM API access via curl inside CTID $ctid..."
-    # Construct the curl command to query the vLLM OpenAI-compatible API.
-    local curl_cmd='curl -X POST http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\": \"'$test_model'\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France?\"}]}"'
-    local curl_output # Stores the raw output from the curl command.
-    local curl_exit_code # Stores the exit code of the curl command.
+    local curl_cmd='curl -s -X POST http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\": \"'$test_model'\", \"messages\": [{\"role\": \"user\", \"content\": \"What is the capital of France?\"}]}"'
+    local curl_output
+    local api_test_success=false
 
-    # Execute the curl command inside the container.
     if ! curl_output=$(pct exec "$ctid" -- bash -c "$curl_cmd" 2>&1); then
         log_error "FATAL: vLLM API access verification failed for CTID $ctid. Curl command failed."
-        echo "$curl_output" | log_error
-        clean_up_test_container "$ctid" "$test_container_name" # Attempt cleanup before exiting on failure.
+        echo "$curl_output" | while IFS= read -r line; do log_error "$line"; done
+    else
+        log_info "vLLM API response for CTID $ctid:"
+        echo "$curl_output" | while IFS= read -r line; do log_info "$line"; done
+
+        # Install jq if not present for robust JSON parsing
+        if ! pct exec "$ctid" -- which jq > /dev/null; then
+            log_info "Installing jq inside CTID $ctid for JSON parsing..."
+            pct exec "$ctid" -- apt-get update && apt-get install -y jq
+        fi
+        local assistant_reply=$(pct exec "$ctid" -- bash -c "echo '$curl_output' | jq -r '.choices.message.content // \"\"'")
+
+        if echo "$assistant_reply" | grep -iq "Paris"; then
+            log_info "vLLM API verification successful for CTID $ctid: response contains 'Paris'."
+            api_test_success=true
+        else
+            log_error "FATAL: Model reply for CTID $ctid did not contain the expected word 'Paris'. Response content: '$assistant_reply'"
+        fi
+    fi
+
+    # ### 6. Clean Up Test Server
+    kill_vllm_server "$ctid" "$vllm_pid_file"
+
+    if [ "$api_test_success" == "false" ]; then
         exit_script 5
     fi
-    log_info "vLLM API response for CTID $ctid:"
-    echo "$curl_output" | while IFS= read -r line; do log_info "$line"; done
 
-    # Extract the assistant's reply content from the JSON response using `jq`.
-    local assistant_reply=$(echo "$curl_output" | jq -r '.choices.message.content // ""')
-    if echo "$assistant_reply" | grep -iq "Paris"; then # Case-insensitive search for "Paris".
-        log_info "vLLM API verification successful for CTID $ctid: response contains 'Paris'."
-    else
-        log_error "WARNING: Model reply for CTID $ctid did not contain the expected word 'Paris'. Response content: '$assistant_reply'"
-        # This is a warning, not a fatal error, as the model might respond differently but still be functional.
-    fi
-    # Note: If jq parsing fails, assistant_reply will be empty, and the grep will not find "Paris".
-
-    # ### 5. Clean Up Test Container
-    clean_up_test_container "$ctid" "$test_container_name"
-
-    log_info "vLLM test deployment and verification completed successfully inside container CTID: $ctid."
+    log_info "vLLM installation and verification completed successfully inside container CTID: $ctid."
 }
 
-# ## Function: `clean_up_test_container()`
+# ## Function: `kill_vllm_server()`
 #
-# A helper function to stop and remove a specified Docker container within an LXC container.
-# This ensures that temporary test containers do not persist after script execution.
+# A helper function to stop the vLLM server process within an LXC container.
+# This ensures that temporary test servers do not persist after script execution.
 #
 # ### Arguments
 # *   `$1` (ctid): The Container ID of the LXC container.
-# *   `$2` (container_name): The name of the Docker container to stop and remove.
+# *   `$2` (pid_file): The path to the file containing the PID of the vLLM server.
 #
-# ### Logic
-# 1.  **Stop Container:** Attempts to stop the Docker container using `docker stop`.
-#     *   Logs a warning if stopping fails, but continues to attempt removal.
-# 2.  **Remove Container:** Attempts to remove the Docker container using `docker rm`.
-#     *   Logs a warning if removal fails.
-clean_up_test_container() {
+kill_vllm_server() {
     local ctid="$1"
-    local container_name="$2"
-    log_info "Stopping and removing test vLLM container '$container_name' inside CTID $ctid..."
-    if pct exec "$ctid" -- docker stop "$container_name"; then
-        log_info "Test container '$container_name' stopped successfully."
+    local pid_file="$2"
+    log_info "Attempting to kill vLLM server process inside CTID $ctid using PID from $pid_file..."
+
+    local vllm_pid=$(pct exec "$ctid" -- cat "$pid_file" 2>/dev/null)
+
+    if [ -n "$vllm_pid" ]; then
+        if pct exec "$ctid" -- kill "$vllm_pid"; then
+            log_info "vLLM server process $vllm_pid killed successfully inside CTID $ctid."
+        else
+            log_error "WARNING: Failed to kill vLLM server process $vllm_pid inside CTID $ctid."
+        fi
+        # Remove the PID file
+        pct exec "$ctid" -- rm -f "$pid_file"
     else
-        log_error "WARNING: Failed to stop test container '$container_name' inside CTID $ctid."
-    fi
-    if pct exec "$ctid" -- docker rm "$container_name"; then
-        log_info "Test container '$container_name' removed successfully."
-    else
-        log_error "WARNING: Failed to remove test container '$container_name' inside CTID $ctid."
+        log_info "No vLLM server PID found in $pid_file for CTID $ctid. Server might not have started or already stopped."
     fi
 }
 
@@ -483,8 +442,7 @@ main() {
     check_container_exists # Ensure the target container exists.
     check_if_snapshot_exists # Check for existing snapshot; exits if found (idempotency).
 
-    verify_prerequisites_inside_container "$CTID" # Verify Docker and NVIDIA setup.
-    deploy_and_test_vllm_inside_container "$CTID" # Deploy and test vLLM.
+    install_and_test_vllm_inside_container "$CTID" # Install and test vLLM.
     shutdown_container "$CTID" # Shut down the container for snapshot.
     create_vllm_base_snapshot "$CTID" # Create the ZFS snapshot.
     start_container "$CTID" # Start the container after snapshot.

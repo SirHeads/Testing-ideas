@@ -3,14 +3,11 @@
 #
 # ### Description
 # This script finalizes the setup for LXC container 950, specifically for the `vllmQwen3Coder` service.
-# It automates the deployment and configuration of a vLLM Docker container, hosting the
+# It automates the deployment and configuration of a vLLM server, hosting the
 # `lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-5bit` model.
 #
 # ### Key Functionality
-# - Pulls the vLLM Docker image.
-# - Runs the Docker container with specified model and tensor parallelism (2).
-# - Mounts necessary volumes, including the HuggingFace cache.
-# - Sets environment variables, such as the HuggingFace token.
+# - Launches the vLLM server as a background process with specified model and tensor parallelism (2).
 # - Waits for the large language model (LLM) to load and become ready.
 # - Verifies the vLLM API accessibility.
 #
@@ -35,7 +32,7 @@
 # - **LXC Container 950:** Must be pre-created or cloned and accessible.
 # - **`jq`:** JSON processor for parsing configuration files.
 # - **Base Snapshot:** Container 950 is expected to be cloned from CTID 920's `vllm-base-snapshot`.
-# - **Docker & NVIDIA:** Docker and NVIDIA drivers/toolkit must be fully functional inside container 950.
+# - **NVIDIA:** NVIDIA drivers/toolkit must be fully functional inside container 950.
 # - **Configuration Files:** Access to `phoenix_lxc_configs.json` and `phoenix_hypervisor_config.json`
 #   for retrieving essential configuration details (e.g., IP, model, HF token path).
 #
@@ -44,17 +41,16 @@
 # - **`1` (General Error):** An unspecified error occurred.
 # - **`2` (Invalid Arguments):** Incorrect command-line arguments provided.
 # - **`3` (Container Not Found):** Container 950 does not exist or is inaccessible.
-# - **`4` (Docker Not Functional):** Docker is not operational inside container 950.
+# - **`4` (vLLM Server Launch Failure):** vLLM Qwen3 Coder server failed to launch.
 # - **`5` (Configuration Parse Error):** Failed to parse required details from configuration files.
-# - **`6` (Deployment Failure):** vLLM Qwen3 Coder container deployment failed.
-# - **`7` (API Verification Failure):** vLLM Qwen3 Coder API accessibility verification failed.
+# - **`6` (API Verification Failure):** vLLM Qwen3 Coder API accessibility verification failed.
 #
 # ### Version
 # 0.1.0
 #
 # ### Author
 # Heads, Qwen3-coder (AI Assistant)
-
+#
 # --- Global Variables and Constants ---
 MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
@@ -86,7 +82,8 @@ CONTAINER_IP=""
 VLLM_MODEL=""
 VLLM_TENSOR_PARALLEL_SIZE=""
 HF_TOKEN_FILE_PATH=""
-EXPECTED_CONTAINER_NAME="vllm_qwen3_coder"
+# No longer needed: EXPECTED_CONTAINER_NAME="vllm_qwen3_coder"
+VLLM_LOG_FILE="/var/log/vllm_server.log"
 
 # ## Function: parse_arguments
 #
@@ -180,79 +177,12 @@ check_container_exists() {
     log_info "Container $CTID exists."
 }
 
-# ## Function: check_if_vllm_qwen3_coder_already_running
-#
-# ### Description
-# Implements idempotency by checking if the `vllm_qwen3_coder` Docker container
-# is already running within the specified LXC container.
-#
-# ### Parameters
-# None directly, uses global variables `CTID` and `EXPECTED_CONTAINER_NAME`.
-#
-# ### Logic
-# 1.  **Docker Process Check:** Executes `docker ps` inside the LXC container, filtering
-#     by the `EXPECTED_CONTAINER_NAME` (`vllm_qwen3_coder`).
-# 2.  **Status Evaluation:**
-#     -   If the container is found running, it logs a success message and
-#         exits the script with code `0`, indicating the service is already active.
-#     -   If the container is not found, it logs that deployment is needed and
-#         allows the script to proceed.
-#
-# ### Exit Codes
-# - `0`: The `vllm_qwen3_coder` container is already running (idempotent success).
-#
-# ### Context
-# This function prevents redundant deployments and ensures that the script can be
-# run multiple times without causing conflicts or errors if the service is already operational.
-check_if_vllm_qwen3_coder_already_running() {
-    log_info "Checking if vLLM Qwen3 Coder container '$EXPECTED_CONTAINER_NAME' is already running inside CTID: $CTID"
-    if pct exec "$CTID" -- docker ps --filter "name=$EXPECTED_CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$EXPECTED_CONTAINER_NAME$"; then
-        log_info "vLLM Qwen3 Coder container '$EXPECTED_CONTAINER_NAME' is already running. Skipping deployment."
-        exit_script 0
-    else
-        log_info "vLLM Qwen3 Coder container '$EXPECTED_CONTAINER_NAME' not found running. Proceeding with deployment."
-    fi
-}
-
-# ## Function: verify_docker_is_functional_inside_container
-#
-# ### Description
-# Verifies that the Docker daemon is functional and accessible within the target LXC container.
-# This is a crucial prerequisite for deploying Dockerized applications.
-#
-# ### Parameters
-# - `$1` (CTID): The Container ID.
-#
-# ### Logic
-# 1.  **Docker Info Check:** Executes `docker info` inside the specified LXC container.
-#     This command provides detailed information about the Docker installation and its status.
-# 2.  **Error Handling:**
-#     -   If `docker info` returns a non-zero exit code, it indicates Docker is not
-#         functional (e.g., not installed, not running, or permissions issues).
-#         A fatal error is logged, and the script exits with code `4`.
-# 3.  **Confirmation:** If Docker is functional, a confirmation message is logged.
-#
-# ### Exit Codes
-# - `4`: Docker is not functional inside the container.
-#
-# ### Context
-# This function ensures that the environment is ready for Docker container deployment,
-# preventing failures in subsequent steps that depend on a working Docker setup.
-verify_docker_is_functional_inside_container() {
-    log_info "Verifying Docker functionality inside container CTID: $CTID."
-    if ! pct exec "$CTID" -- docker info > /dev/null 2>&1; then
-        log_error "FATAL: Docker is not functional inside container $CTID. Please ensure Docker is installed and running."
-        exit_script 4
-    fi
-    log_info "Docker verified as functional inside container $CTID."
-}
-
 # ## Function: parse_required_configuration_details
 #
 # ### Description
 # Extracts essential configuration parameters from `phoenix_lxc_configs.json` and
 # `phoenix_hypervisor_config.json` using `jq`. These parameters are critical for
-# deploying and verifying the vLLM Qwen3 Coder container.
+# deploying and verifying the vLLM Qwen3 Coder server.
 #
 # ### Parameters
 # - `$1` (CTID): The Container ID for which to retrieve LXC-specific configurations.
@@ -298,7 +228,7 @@ parse_required_configuration_details() {
         log_error "FATAL: LXC configuration file not found at $LXC_CONFIG_FILE."
         exit_script 5
     fi
-    CONTAINER_IP=$(jq -r --arg ctid "$CTID" '.lxc_configs[$ctid | tostring].network_config.ip | split("/")' "$LXC_CONFIG_FILE")
+    CONTAINER_IP=$(jq -r --arg ctid "$CTID" '.lxc_configs[$ctid | tostring].network_config.ip | split("/") | .' "$LXC_CONFIG_FILE")
     VLLM_MODEL=$(jq -r --arg ctid "$CTID" '.lxc_configs[$ctid | tostring].vllm_model // ""' "$LXC_CONFIG_FILE")
     VLLM_TENSOR_PARALLEL_SIZE=$(jq -r --arg ctid "$CTID" '.lxc_configs[$ctid | tostring].vllm_tensor_parallel_size // ""' "$LXC_CONFIG_FILE")
     log_info "Parsed LXC config: IP=$CONTAINER_IP, Model=$VLLM_MODEL, Tensor Parallel Size=$VLLM_TENSOR_PARALLEL_SIZE"
@@ -319,125 +249,108 @@ parse_required_configuration_details() {
     log_info "All required configuration details parsed and validated successfully."
 }
 
-# ## Function: deploy_vllm_qwen3_coder_container_inside_container
+# ## Function: launch_vllm_server_inside_container
 #
 # ### Description
-# Deploys the `vllm/vllm-openai:latest` Docker container within the specified LXC container (`CTID`).
-# This container hosts the Qwen3-Coder model, configured with specific tensor parallelism
-# and HuggingFace token for authentication.
+# Launches the vLLM server directly within the specified LXC container (`CTID`)
+# as a background process using `nohup`. This server hosts the Qwen3-Coder model,
+# configured with specific tensor parallelism and HuggingFace token for authentication.
 #
 # ### Parameters
-# - `$1` (CTID): The Container ID where the Docker container will be deployed.
+# - `$1` (CTID): The Container ID where the vLLM server will be launched.
 #
 # ### Dependencies
-# - Global variables: `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL_SIZE`, `HF_TOKEN_FILE_PATH`, `EXPECTED_CONTAINER_NAME`.
-# - Docker must be functional inside the LXC container.
+# - Global variables: `VLLM_MODEL`, `VLLM_TENSOR_PARALLEL_SIZE`, `HF_TOKEN_FILE_PATH`.
+# - `vllm` must be installed and accessible within the LXC container.
 #
 # ### Logic
 # 1.  **Parameter Preparation:**
-#     -   Defines Docker image (`vllm/vllm-openai:latest`), container name (`vllm_qwen3_coder`),
-#         port mapping (`8000:8000`), NVIDIA GPU options, IPC mode, and restart policy.
-#     -   Configures volume mounts for the HuggingFace cache (`/root/.cache/huggingface`)
-#         and the HuggingFace token file (read-only mount).
-#     -   Constructs the `vllm serve` command with the specified model and tensor parallelism.
-# 2.  **Docker Run Command Construction:**
-#     -   Assembles the complete `docker run` command string, incorporating all
-#         defined parameters and options.
+#     -   Constructs the `vllm serve` command with the specified model, tensor parallelism,
+#         and `--host 0.0.0.0` flag.
+# 2.  **Command Construction:**
+#     -   Assembles the complete `nohup` command string, redirecting stdout/stderr to a log file.
 # 3.  **Execution:**
-#     -   Executes the constructed `docker run` command inside the LXC container using `pct exec`.
+#     -   Executes the constructed `nohup` command inside the LXC container using `pct exec`.
 # 4.  **Error Handling:**
-#     -   If the `docker run` command fails (non-zero exit code), logs a fatal error
-#         and exits the script with code `6`.
-# 5.  **Confirmation:** Logs successful initiation of the vLLM Qwen3 Coder container deployment.
+#     -   If the `pct exec` command fails (non-zero exit code), logs a fatal error
+#         and exits the script with code `4`.
+# 5.  **Confirmation:** Logs successful initiation of the vLLM Qwen3 Coder server launch.
 #
 # ### Exit Codes
-# - `6`: vLLM Qwen3 Coder container deployment failed.
+# - `4`: vLLM Qwen3 Coder server launch failed.
 #
 # ### Context
 # This function is the core deployment step, responsible for launching the AI model
-# serving infrastructure within the isolated LXC environment.
-deploy_vllm_qwen3_coder_container_inside_container() {
-    log_info "Deploying specific vLLM Qwen3 Coder Docker container inside container CTID: $CTID"
+# serving infrastructure within the isolated LXC environment without Docker.
+launch_vllm_server_inside_container() {
+    log_info "Launching vLLM Qwen3 Coder server directly inside container CTID: $CTID"
 
-    local vllm_image="vllm/vllm-openai:latest" # Using latest for now, can be made configurable
-    local container_name="$EXPECTED_CONTAINER_NAME"
-    local port_mapping="-p 8000:8000"
-    local gpu_options="--runtime nvidia --gpus all"
-    local ipc_option="--ipc=host"
-    local restart_policy="--restart=always"
-    local hf_cache_volume="-v /root/.cache/huggingface:/root/.cache/huggingface" # Standard path inside container
-    local hf_token_volume="-v $HF_TOKEN_FILE_PATH:/root/.cache/huggingface/token:ro" # Mount RO
+    local serve_cmd="vllm serve $VLLM_MODEL --host 0.0.0.0 --port 8000 --tensor-parallel-size $VLLM_TENSOR_PARALLEL_SIZE"
 
-    local serve_cmd="vllm serve $VLLM_MODEL --tensor-parallel-size $VLLM_TENSOR_PARALLEL_SIZE"
+    # Construct the full nohup command string
+    local full_launch_cmd="nohup $serve_cmd > $VLLM_LOG_FILE 2>&1 &"
 
-    # Construct the full docker run command string
-    local full_run_cmd="docker run -d $port_mapping $gpu_options $ipc_option $restart_policy $hf_cache_volume $hf_token_volume --name $container_name $vllm_image $serve_cmd"
-
-    log_info "Constructing and executing the docker run command for vLLM Qwen3 Coder:"
-    log_info "$full_run_cmd"
-    if ! pct exec "$CTID" -- bash -c "$full_run_cmd"; then
-        log_error "FATAL: vLLM Qwen3 Coder container deployment failed for CTID $CTID."
-        exit_script 6
+    log_info "Constructing and executing the vLLM server launch command:"
+    log_info "$full_launch_cmd"
+    if ! pct exec "$CTID" -- bash -c "$full_launch_cmd"; then
+        log_error "FATAL: vLLM Qwen3 Coder server launch failed for CTID $CTID."
+        exit_script 4
     fi
-    log_info "vLLM Qwen3 Coder container deployment initiated successfully."
+    log_info "vLLM Qwen3 Coder server launch initiated successfully."
 }
 
-# ## Function: wait_for_qwen3_model_initialization
+# ## Function: wait_for_vllm_server_readiness
 #
 # ### Description
-# Monitors the initialization process of the Qwen3 Coder model within the vLLM Docker container.
-# It waits until the vLLM service indicates that it is running and ready to serve requests.
+# Monitors the vLLM server's readiness by polling its health endpoint.
+# It waits until the vLLM service is responsive and ready to serve requests.
 #
 # ### Parameters
-# - `$1` (CTID): The Container ID where the vLLM Docker container is running.
+# - `$1` (CTID): The Container ID where the vLLM server is running.
 #
 # ### Dependencies
-# - Global variable: `EXPECTED_CONTAINER_NAME`.
-# - Docker must be running inside the LXC container.
+# - `curl`: Must be available inside the LXC container for making HTTP requests.
 #
 # ### Logic
 # 1.  **Timeout and Polling:** Sets a maximum `timeout` (10 minutes) and a `polling interval` (15 seconds)
 #     to prevent indefinite waiting.
-# 2.  **Loop for Readiness:** Enters a `while` loop that continues until the model is ready or the timeout is reached.
-#     -   **Container Status Check:** Verifies if the `vllm_qwen3_coder` Docker container is still running.
-#     -   **Log Readiness Indicator:** Checks the Docker logs of the `vllm_qwen3_coder` container for the
-#         "Uvicorn running on" message, which signifies the vLLM API server is active.
+# 2.  **Loop for Readiness:** Enters a `while` loop that continues until the server is ready or the timeout is reached.
+#     -   **Health Check:** Uses `curl` to send a request to `http://localhost:8000/v1/health`.
+#     -   **Status Evaluation:** If `curl` returns a 200 OK status, the server is considered ready.
 #     -   **Sleep:** Pauses for the defined `interval` before the next check.
-# 3.  **Timeout Handling:** If the `timeout` is exceeded before the model is ready, logs a fatal error and returns `1`.
-# 4.  **Confirmation:** If the model indicates readiness, logs a success message and returns `0`.
+# 3.  **Timeout Handling:** If the `timeout` is exceeded before the server is ready, logs a fatal error and returns `1`.
+# 4.  **Confirmation:** If the server indicates readiness, logs a success message and returns `0`.
 #
 # ### Return Codes
-# - `0`: Qwen3 Coder model/server is ready.
-# - `1`: Timeout occurred, model did not indicate readiness.
+# - `0`: vLLM server is ready.
+# - `1`: Timeout occurred, server did not indicate readiness.
 #
 # ### Context
 # This function is crucial for ensuring that the deployed AI service is fully operational
 # before proceeding with API verification or declaring the deployment successful.
 # Large language models require significant time to load, making this a necessary step.
-wait_for_qwen3_model_initialization() {
-    log_info "Waiting for Qwen3 Coder model to initialize inside container CTID: $CTID"
+wait_for_vllm_server_readiness() {
+    log_info "Waiting for vLLM server to become ready inside container CTID: $CTID"
     local timeout=600 # 10 minutes for large model
     local interval=15 # 15 seconds
     local elapsed_time=0
-    local model_ready=false
+    local server_ready=false
 
     while [ "$elapsed_time" -lt "$timeout" ]; do
-        if pct exec "$CTID" -- docker ps --filter "name=$EXPECTED_CONTAINER_NAME" --format "{{.Names}}" | grep -q "^$EXPECTED_CONTAINER_NAME$"; then
-            if pct exec "$CTID" -- docker logs "$EXPECTED_CONTAINER_NAME" 2>&1 | grep -q "Uvicorn running on"; then
-                log_info "Qwen3 Coder model/server appears to be ready."
-                model_ready=true
-                break
-            fi
+        if pct exec "$CTID" -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/v1/health | grep -q "200"; then
+            log_info "vLLM server appears to be ready."
+            server_ready=true
+            break
         fi
         sleep "$interval"
         elapsed_time=$((elapsed_time + interval))
     done
 
-    if [ "$model_ready" == "false" ]; then
-        log_error "FATAL: Qwen3 Coder model did not indicate readiness within ${timeout} seconds."
+    if [ "$server_ready" == "false" ]; then
+        log_error "FATAL: vLLM server did not indicate readiness within ${timeout} seconds."
         return 1
     fi
-    log_info "Qwen3 Coder model initialized."
+    log_info "vLLM server initialized and ready."
     return 0
 }
 
@@ -451,7 +364,7 @@ wait_for_qwen3_model_initialization() {
 # - `$1` (CTID): The Container ID where the vLLM service is running.
 #
 # ### Dependencies
-# - Global variables: `VLLM_MODEL`, `CONTAINER_IP`.
+# - Global variables: `VLLM_MODEL`.
 # - `curl`: Must be available inside the LXC container for making HTTP requests.
 # - `jq`: Must be available inside the LXC container for parsing JSON responses.
 #
@@ -495,14 +408,14 @@ verify_vllm_qwen3_coder_api_accessibility() {
     log_info "vLLM API response:"
     echo "$curl_output" | while IFS= read -r line; do log_info "$line"; done
 
-    local assistant_reply=$(echo "$curl_output" | jq -r '.choices.message.content // ""') # Corrected jq path
+    local assistant_reply=$(echo "$curl_output" | jq -r '.choices.message.content // ""')
     if echo "$assistant_reply" | grep -iq "Paris"; then
         log_info "vLLM Qwen3 Coder API verification successful: response contains 'Paris'."
     else
         log_error "WARNING: Model reply did not contain the expected word 'Paris'. Response content: '$assistant_reply'"
     fi
 
-    log_info "vLLM Qwen3 Coder API verified as accessible at http://$CONTAINER_IP:8000/v1/chat/completions."
+    log_info "vLLM Qwen3 Coder API verified as accessible at http://localhost:8000/v1/chat/completions."
     return 0
 }
 
@@ -519,18 +432,15 @@ verify_vllm_qwen3_coder_api_accessibility() {
 # 1.  **Argument Parsing:** Calls `parse_arguments` to retrieve the `CTID`.
 # 2.  **Input Validation:** Calls `validate_inputs` to ensure the `CTID` is valid.
 # 3.  **Container Existence Check:** Calls `check_container_exists` to confirm the LXC container is present.
-# 4.  **Idempotency Check:** Calls `check_if_vllm_qwen3_coder_already_running`. If the service
-#     is already active, the script exits successfully (`0`).
-# 5.  **Docker Verification:** Calls `verify_docker_is_functional_inside_container` to ensure Docker is ready.
-# 6.  **Configuration Retrieval:** Calls `parse_required_configuration_details` to load
+# 4.  **Configuration Retrieval:** Calls `parse_required_configuration_details` to load
 #     LXC and hypervisor configurations (IP, model, tensor size, HF token path).
-# 7.  **Container Deployment:** Calls `deploy_vllm_qwen3_coder_container_inside_container`
-#     to launch the vLLM Docker service.
-# 8.  **Model Initialization Wait:** Calls `wait_for_qwen3_model_initialization` to
+# 5.  **Container Deployment:** Calls `launch_vllm_server_inside_container`
+#     to launch the vLLM server.
+# 6.  **Model Initialization Wait:** Calls `wait_for_vllm_server_readiness` to
 #     await the full loading and readiness of the Qwen3 Coder model.
-# 9.  **API Accessibility Verification:** Calls `verify_vllm_qwen3_coder_api_accessibility`
+# 7.  **API Accessibility Verification:** Calls `verify_vllm_qwen3_coder_api_accessibility`
 #     to confirm the vLLM API is responsive.
-# 10. **Script Exit:** Calls `exit_script` with a success code (`0`) upon completion of all steps.
+# 8.  **Script Exit:** Calls `exit_script` with a success code (`0`) upon completion of all steps.
 #
 # ### Exit Codes
 # - `0`: All deployment and verification steps completed successfully.
@@ -543,12 +453,9 @@ main() {
     parse_arguments "$@"
     validate_inputs
     check_container_exists
-    check_if_vllm_qwen3_coder_already_running # Exits 0 if already running
-
-    verify_docker_is_functional_inside_container "$CTID"
     parse_required_configuration_details "$CTID"
-    deploy_vllm_qwen3_coder_container_inside_container "$CTID"
-    wait_for_qwen3_model_initialization "$CTID"
+    launch_vllm_server_inside_container "$CTID"
+    wait_for_vllm_server_readiness "$CTID"
     verify_vllm_qwen3_coder_api_accessibility "$CTID"
 
     exit_script 0
