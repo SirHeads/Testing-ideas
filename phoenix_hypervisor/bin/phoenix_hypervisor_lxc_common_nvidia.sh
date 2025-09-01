@@ -1,12 +1,9 @@
 #!/bin/bash
 set -x
-source "$(dirname "$0")/phoenix_hypervisor_lxc_common_loghelpers.sh"
-export LANG="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
-# Add a diagnostic log to confirm the settings
-echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_nvidia.sh: LANG is set to: $LANG" | tee -a "$MAIN_LOG_FILE"
-echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_nvidia.sh: LC_ALL is set to: $LC_ALL" | tee -a "$MAIN_LOG_FILE"
+log_debug "LANG is set to: $LANG"
+log_debug "LC_ALL is set to: $LC_ALL"
 
 #
 # File: phoenix_hypervisor_lxc_common_nvidia.sh
@@ -41,26 +38,18 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_hypervisor_lxc_common_nvidia.
 # *   **6:** Container restart operation failed.
 
 # --- Global Variables and Constants ---
+# Sourced from phoenix_hypervisor_common_utils.sh
 
 # --- Logging Functions ---
-# These functions are now sourced from phoenix_hypervisor_lxc_common_loghelpers.sh
+# Sourced from phoenix_hypervisor_common_utils.sh
 
 # --- Exit Function ---
-exit_script() {
-    local exit_code=$1
-    if [ "$exit_code" -eq 0 ]; then
-        log_info "Script completed successfully."
-    else
-        log_error "Script failed with exit code $exit_code."
-    fi
-    exit "$exit_code"
-}
+# Sourced from phoenix_hypervisor_common_utils.sh
 
 log_info "IMPORTANT: Ensure 'nvidia-persistenced' service is running on the Proxmox host for proper GPU device access within LXC containers."
 
 # --- Script Variables ---
 CTID=""
-LXC_CONFIG_JSON=""
 GPU_ASSIGNMENT=""
 NVIDIA_DRIVER_VERSION=""
 NVIDIA_REPO_URL=""
@@ -69,17 +58,21 @@ NVIDIA_RUNFILE_URL=""
 ### Function: parse_arguments
 # Purpose: Parses command-line arguments to extract the Container ID (CTID) and NVIDIA-related variables.
 # Content:
-# *   Checks if exactly one argument is provided.
+# *   Checks if exactly five arguments are provided.
 # *   If not, logs a usage error and exits with code 2.
-# *   Assigns the argument to the `CTID` variable.
+# *   Assigns the arguments to the respective variables.
 # *   Logs the successfully received arguments.
 parse_arguments() {
-    if [ "$#" -ne 1 ]; then
-        log_error "Usage: $0 <CTID>"
+    if [ "$#" -ne 5 ]; then
+        log_error "Usage: $0 <CTID> <GPU_ASSIGNMENT> <NVIDIA_DRIVER_VERSION> <NVIDIA_REPO_URL> <NVIDIA_RUNFILE_URL>"
         exit_script 2
     fi
     CTID="$1"
-    log_info "Received CTID: $CTID"
+    GPU_ASSIGNMENT="$2"
+    NVIDIA_DRIVER_VERSION="$3"
+    NVIDIA_REPO_URL="$4"
+    NVIDIA_RUNFILE_URL="$5"
+    log_info "Received CTID: $CTID, GPU_ASSIGNMENT: $GPU_ASSIGNMENT, NVIDIA_DRIVER_VERSION: $NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL: $NVIDIA_REPO_URL, NVIDIA_RUNFILE_URL: $NVIDIA_RUNFILE_URL"
 }
 
 ### Function: validate_inputs
@@ -93,57 +86,24 @@ validate_inputs() {
         log_error "FATAL: Invalid CTID '$CTID'. Must be a positive integer."
         exit_script 2
     fi
+    if [ -z "$GPU_ASSIGNMENT" ]; then
+        log_error "FATAL: GPU_ASSIGNMENT is not set."
+        exit_script 2
+    fi
+    if [ -z "$NVIDIA_DRIVER_VERSION" ]; then
+        log_error "FATAL: NVIDIA_DRIVER_VERSION is not set."
+        exit_script 2
+    fi
+    if [ -z "$NVIDIA_REPO_URL" ]; then
+        log_error "FATAL: NVIDIA_REPO_URL is not set."
+        exit_script 2
+    fi
+    if [ -z "$NVIDIA_RUNFILE_URL" ]; then
+        log_info "NVIDIA_RUNFILE_URL is not set. This is optional and may be used for runfile installations."
+    fi
     log_info "Input validation passed."
 }
 
-### Function: read_lxc_config_json
-# Purpose: Reads the phoenix_lxc_configs.json file and extracts GPU assignment, NVIDIA driver version,
-#          and NVIDIA repository URL for the target CTID.
-# Content:
-# *   Constructs the path to phoenix_lxc_configs.json.
-# *   Verifies the existence of the JSON file; exits if not found.
-# *   Uses `jq` to parse the JSON and extract the relevant values for the given CTID.
-# *   Assigns extracted values to global variables: `GPU_ASSIGNMENT`, `NVIDIA_DRIVER_VERSION`, `NVIDIA_REPO_URL`, `NVIDIA_RUNFILE_URL`.
-# *   Logs the extracted configuration details.
-read_lxc_config_json() {
-    log_info "Reading LXC configuration from JSON for CTID: $CTID"
-    LXC_CONFIG_JSON="/Users/michaelcabezas/@AI/git/Testing-ideas-1/phoenix_hypervisor/etc/phoenix_lxc_configs.json" # Hardcoded path for now
-
-    if [ ! -f "$LXC_CONFIG_JSON" ]; then
-        log_error "FATAL: LXC configuration JSON file not found at $LXC_CONFIG_JSON."
-        exit_script 2
-    fi
-
-    GPU_ASSIGNMENT=$(jq -r ".lxc_configs.\"$CTID\".gpu_assignment" "$LXC_CONFIG_JSON")
-    NVIDIA_DRIVER_VERSION=$(jq -r ".nvidia_driver_version" "$LXC_CONFIG_JSON")
-    NVIDIA_REPO_URL=$(jq -r ".nvidia_repo_url" "$LXC_CONFIG_JSON")
-    NVIDIA_RUNFILE_URL=$(jq -r ".nvidia_runfile_url" "$LXC_CONFIG_JSON")
-
-    if [ -z "$GPU_ASSIGNMENT" ] || [ "$GPU_ASSIGNMENT" == "null" ]; then
-        log_info "No specific GPU assignment found for CTID $CTID. Defaulting to 'none'."
-        GPU_ASSIGNMENT="none"
-    fi
-
-    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ "$NVIDIA_DRIVER_VERSION" == "null" ]; then
-        log_error "FATAL: NVIDIA_DRIVER_VERSION not found in $LXC_CONFIG_JSON."
-        exit_script 2
-    fi
-
-    if [ -z "$NVIDIA_REPO_URL" ] || [ "$NVIDIA_REPO_URL" == "null" ]; then
-        log_error "FATAL: NVIDIA_REPO_URL not found in $LXC_CONFIG_JSON."
-        exit_script 2
-    fi
-
-    if [ -z "$NVIDIA_RUNFILE_URL" ] || [ "$NVIDIA_RUNFILE_URL" == "null" ]; then
-        log_error "FATAL: NVIDIA_RUNFILE_URL not found in $LXC_CONFIG_JSON."
-        exit_script 2
-    fi
-
-    log_info "Extracted GPU_ASSIGNMENT: $GPU_ASSIGNMENT"
-    log_info "Extracted NVIDIA_DRIVER_VERSION: $NVIDIA_DRIVER_VERSION"
-    log_info "Extracted NVIDIA_REPO_URL: $NVIDIA_REPO_URL"
-    log_info "Extracted NVIDIA_RUNFILE_URL: $NVIDIA_RUNFILE_URL"
-}
 
 ### Function: check_container_exists
 # Purpose: Confirms the existence of the target LXC container on the Proxmox host.
@@ -377,16 +337,16 @@ verify_device_passthrough() {
     log_info "All required GPU device passthrough entries verified successfully."
 }
 
-### Function: install_nvidia_drivers_in_container
-# Purpose: Installs NVIDIA drivers and CUDA toolkit inside the LXC container.
+### Function: install_driver_from_runfile
+# Purpose: Downloads and installs the NVIDIA driver using the .run file inside the LXC container.
 # Content:
 # *   Ensures basic tools like curl are available inside the container.
-# *   Adds NVIDIA CUDA repository.
-# *   Installs NVIDIA drivers and CUDA toolkit.
-# *   Runs ldconfig to update shared library cache.
+# *   Downloads the .run file from NVIDIA_RUNFILE_URL.
+# *   Makes the .run file executable.
+# *   Executes the .run file with --silent --driver-only flags.
 # *   Includes an idempotency check to verify if the correct NVIDIA driver version is already installed.
-install_nvidia_drivers_in_container() {
-    log_info "Starting NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID"
+install_driver_from_runfile() {
+    log_info "Starting NVIDIA driver installation from .run file inside container CTID: $CTID"
 
     # Idempotency check: Verify if the correct NVIDIA driver version is already installed
     log_info "[CTID $CTID] Checking for existing NVIDIA driver version..."
@@ -394,14 +354,71 @@ install_nvidia_drivers_in_container() {
     installed_driver_version=$(pct exec "$CTID" -- bash -c "modinfo nvidia | grep -oP 'Version: \K.*' || true" 2>/dev/null)
 
     if [ -n "$installed_driver_version" ] && [[ "$installed_driver_version" == *"$NVIDIA_DRIVER_VERSION"* ]]; then
-        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION already installed. Skipping installation."
+        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION already installed. Skipping .run file installation."
         return 0
     else
-        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION not found or incorrect version ($installed_driver_version). Proceeding with installation."
+        log_info "[CTID $CTID] NVIDIA driver version $NVIDIA_DRIVER_VERSION not found or incorrect version ($installed_driver_version). Proceeding with .run file installation."
     fi
 
     # Ensure basic tools like curl are available inside the container
-    log_info "[CTID $CTID] Installing curl and other prerequisites..."
+    log_info "[CTID $CTID] Installing curl and other prerequisites for .run file download..."
+    if ! pct exec "$CTID" -- apt-get update; then
+        log_error "FATAL: [CTID $CTID] Failed to apt-get update inside container for .run file prerequisites."
+        exit_script 5
+    fi
+    if ! pct exec "$CTID" -- apt-get install -y curl wget; then
+        log_error "FATAL: [CTID $CTID] Failed to install curl or wget inside container for .run file download."
+        exit_script 5
+    fi
+
+    local runfile_name=$(basename "$NVIDIA_RUNFILE_URL")
+    local runfile_path="/tmp/$runfile_name"
+
+    log_info "[CTID $CTID] Downloading NVIDIA driver .run file from $NVIDIA_RUNFILE_URL to $runfile_path..."
+    if ! pct exec "$CTID" -- wget -q "$NVIDIA_RUNFILE_URL" -O "$runfile_path"; then
+        log_error "FATAL: [CTID $CTID] Failed to download NVIDIA driver .run file from $NVIDIA_RUNFILE_URL."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Making NVIDIA driver .run file executable..."
+    if ! pct exec "$CTID" -- chmod +x "$runfile_path"; then
+        log_error "FATAL: [CTID $CTID] Failed to make .run file executable."
+        exit_script 5
+    fi
+
+    log_info "[CTID $CTID] Executing NVIDIA driver .run file with --silent --driver-only..."
+    if ! pct exec "$CTID" -- "$runfile_path" --silent --driver-only --no-kernel-module-source; then
+        log_error "FATAL: [CTID $CTID] NVIDIA driver .run file installation failed."
+        exit_script 5
+    fi
+    
+    # Clean up the runfile
+    pct exec "$CTID" -- rm "$runfile_path"
+
+    log_info "NVIDIA driver installation from .run file inside container CTID: $CTID completed."
+}
+
+### Function: install_nvidia_drivers_in_container
+# Purpose: Installs NVIDIA drivers (via .run file) and CUDA toolkit (via apt) inside the LXC container.
+# Content:
+# *   Calls install_driver_from_runfile to install the NVIDIA driver.
+# *   Ensures basic tools like curl are available inside the container.
+# *   Adds NVIDIA CUDA repository.
+# *   Installs NVIDIA CUDA toolkit and related LLM packages.
+# *   Runs ldconfig to update shared library cache.
+install_nvidia_drivers_in_container() {
+    log_info "Starting hybrid NVIDIA driver (.run) and CUDA toolkit (apt) installation inside container CTID: $CTID"
+
+    # Install NVIDIA driver from .run file first
+    install_driver_from_runfile
+    local driver_install_status=$?
+    if [ "$driver_install_status" -ne 0 ]; then
+        log_error "FATAL: [CTID $CTID] NVIDIA driver installation from .run file failed with exit code $driver_install_status."
+        exit_script 5
+    fi
+
+    # Ensure basic tools for apt are available inside the container
+    log_info "[CTID $CTID] Installing apt prerequisites..."
     if ! pct exec "$CTID" -- apt-get update; then
         log_error "FATAL: [CTID $CTID] Failed to apt-get update inside container."
         exit_script 5
@@ -413,10 +430,19 @@ install_nvidia_drivers_in_container() {
 
     # Add NVIDIA CUDA repository
     log_info "[CTID $CTID] Adding NVIDIA CUDA repository from $NVIDIA_REPO_URL..."
-    if ! pct exec "$CTID" -- bash -c "curl -fsSL $NVIDIA_REPO_URL/cuda-keyring.pub | gpg --dearmor -o /usr/share/keyrings/cuda-archive-keyring.gpg"; then
-        log_error "FATAL: [CTID $CTID] Failed to fetch and install CUDA GPG key."
+    local CUDA_KEYRING_DEB="cuda-keyring_1.1-1_all.deb"
+    local CUDA_KEYRING_URL="$NVIDIA_REPO_URL/$CUDA_KEYRING_DEB"
+    log_info "[CTID $CTID] Downloading CUDA GPG keyring from $CUDA_KEYRING_URL..."
+    if ! pct exec "$CTID" -- wget -q "$CUDA_KEYRING_URL" -O "/tmp/$CUDA_KEYRING_DEB"; then
+        log_error "FATAL: [CTID $CTID] Failed to download CUDA GPG keyring package from $CUDA_KEYRING_URL."
         exit_script 5
     fi
+    log_info "[CTID $CTID] Installing CUDA GPG keyring package..."
+    if ! pct exec "$CTID" -- dpkg -i "/tmp/$CUDA_KEYRING_DEB"; then
+        log_error "FATAL: [CTID $CTID] Failed to install CUDA GPG keyring package."
+        exit_script 5
+    fi
+    pct exec "$CTID" -- rm "/tmp/$CUDA_KEYRING_DEB"
     if ! pct exec "$CTID" -- bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/usr/share/keyrings/cuda-archive-keyring.gpg] $NVIDIA_REPO_URL/ /\" | tee /etc/apt/sources.list.d/cuda-\$(lsb_release -cs).list"; then
         log_error "FATAL: [CTID $CTID] Failed to add CUDA repository to sources.list.d."
         exit_script 5
@@ -428,14 +454,13 @@ install_nvidia_drivers_in_container() {
         exit_script 5
     fi
 
-    # Install NVIDIA drivers and CUDA toolkit
-    local cuda_toolkit_version="12-5" # This might need to be dynamic based on NVIDIA_DRIVER_VERSION or another config
-    local driver_package="cuda-drivers" # Use the metapackage for simplicity
-    local cuda_toolkit_package="cuda-toolkit-${cuda_toolkit_version}"
+    # Install CUDA toolkit and related LLM packages
+    local cuda_toolkit_package="cuda-toolkit-12-8"
+    local llm_packages="libcudnn8 libnccl2" # Add other relevant LLM packages here
 
-    log_info "[CTID $CTID] Installing NVIDIA driver ($driver_package) and CUDA toolkit ($cuda_toolkit_package)..."
-    if ! pct exec "$CTID" -- apt-get install -y "$driver_package" "$cuda_toolkit_package"; then
-        log_error "FATAL: [CTID $CTID] Failed to install NVIDIA drivers and CUDA toolkit."
+    log_info "[CTID $CTID] Installing CUDA toolkit ($cuda_toolkit_package) and LLM packages ($llm_packages)..."
+    if ! pct exec "$CTID" -- apt-get install -y "$cuda_toolkit_package" "$llm_packages"; then
+        log_error "FATAL: [CTID $CTID] Failed to install CUDA toolkit and LLM packages."
         exit_script 5
     fi
 
@@ -444,7 +469,7 @@ install_nvidia_drivers_in_container() {
         log_warn "WARNING: [CTID $CTID] Failed to run ldconfig. This might affect library loading."
     fi
 
-    log_info "NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID completed."
+    log_info "Hybrid NVIDIA driver and CUDA toolkit installation inside container CTID: $CTID completed."
 }
 
 ### Function: main
@@ -459,7 +484,6 @@ install_nvidia_drivers_in_container() {
 main() {
     parse_arguments "$@"
     validate_inputs
-    read_lxc_config_json
     check_container_exists
 
     log_info "--- Host-side NVIDIA Driver and Kernel Module Status ---"

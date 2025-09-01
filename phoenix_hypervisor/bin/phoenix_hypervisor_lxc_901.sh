@@ -173,9 +173,11 @@ check_container_exists() {
 # =====================================================================================
 check_if_snapshot_exists() {
     log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'."
+    log_info "DEBUG: CTID before conversion: '$CTID'"
     local CTID_INT=$((CTID))
-    log_info "Executing: pct snapshot list '${CTID_INT}'"
-    if pct snapshot list "${CTID_INT}" | grep -q "$SNAPSHOT_NAME"; then
+    log_info "DEBUG: CTID_INT after conversion: '$CTID_INT'"
+    log_info "Executing: pct listsnapshot '${CTID_INT}'"
+    if pct listsnapshot "${CTID_INT}" | grep -q "$SNAPSHOT_NAME"; then
         log_info "Snapshot '$SNAPSHOT_NAME' already exists for container '$CTID'. Skipping setup."
         exit_script 0
     else

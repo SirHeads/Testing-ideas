@@ -186,7 +186,7 @@ verify_core_config_files() {
 # =====================================================================================
 
 install_required_packages() {
-    local packages=("jq" "curl" "nodejs" "npm" "nvidia-persistenced")
+    local packages=("jq" "curl" "nodejs" "npm") # Removed nvidia-persistenced from here
 
     log_info "Starting package installation check..."
 
@@ -211,6 +211,65 @@ install_required_packages() {
         fi
     done
 
+    # Ensure wget is installed for downloading CUDA keyring
+    log_info "Checking for package: wget"
+    if ! dpkg -l "wget" > /dev/null 2>&1; then
+        log_info "Package wget not found. Installing..."
+        if ! sudo apt-get install -y "wget"; then
+            log_error "FATAL: Failed to install package: wget."
+            exit_script 3
+        fi
+        log_info "Package wget installed successfully."
+    else
+        log_info "Package wget already present."
+    fi
+
+    # Add NVIDIA CUDA repository if not already present
+    if [ ! -f "/etc/apt/sources.list.d/cuda.list" ]; then
+        log_info "NVIDIA CUDA repository not found. Adding..."
+        if ! sudo wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb; then
+            log_error "FATAL: Failed to download cuda-keyring."
+            exit_script 3
+        fi
+        if ! sudo dpkg -i cuda-keyring_1.1-1_all.deb; then
+            log_error "FATAL: Failed to install cuda-keyring."
+            exit_script 3
+        fi
+        if ! sudo apt-get update; then
+            log_error "FATAL: Failed to update apt package list after adding CUDA repository."
+            exit_script 3
+        fi
+        log_info "NVIDIA CUDA repository added and apt package list updated."
+    else
+        log_info "NVIDIA CUDA repository already present."
+    fi
+
+    # Install nvidia-persistenced
+    log_info "Checking for package: nvidia-persistenced"
+    if ! dpkg -l "nvidia-persistenced" > /dev/null 2>&1; then
+        log_info "Package nvidia-persistenced not found. Installing..."
+        if ! sudo apt-get install -y "nvidia-persistenced"; then
+            log_error "FATAL: Failed to install package: nvidia-persistenced."
+            exit_script 3
+        fi
+        log_info "Package nvidia-persistenced installed successfully."
+    else
+        log_info "Package nvidia-persistenced already present."
+    fi
+
+    # Install CUDA Toolkit 12.8 for LLM inference
+    log_info "Checking for package: cuda-toolkit-12-8"
+    if ! dpkg -l "cuda-toolkit-12-8" > /dev/null 2>&1; then
+        log_info "Package cuda-toolkit-12-8 not found. Installing..."
+        if ! sudo apt-get install -y "cuda-toolkit-12-8"; then
+            log_error "FATAL: Failed to install package: cuda-toolkit-12-8."
+            exit_script 3
+        fi
+        log_info "Package cuda-toolkit-12-8 installed successfully."
+    else
+        log_info "Package cuda-toolkit-12-8 already present."
+    fi
+
     log_info "Ensuring nvidia-persistenced service is running and enabled..."
     if ! systemctl is-active --quiet nvidia-persistenced; then
         log_info "nvidia-persistenced is not active. Starting service..."
@@ -221,6 +280,17 @@ install_required_packages() {
         sudo systemctl enable nvidia-persistenced
     fi
     log_info "nvidia-persistenced service status ensured."
+
+    # Verify nvidia-persistenced is actually running and enabled
+    if ! systemctl is-active --quiet nvidia-persistenced; then
+        log_error "FATAL: nvidia-persistenced service is NOT active after attempting to start it."
+        exit_script 3
+    fi
+    if ! systemctl is-enabled --quiet nvidia-persistenced; then
+        log_error "FATAL: nvidia-persistenced service is NOT enabled after attempting to enable it."
+        exit_script 3
+    fi
+    log_info "nvidia-persistenced service verified as active and enabled."
 
     log_info "Checking for ajv-cli..."
     if ! command -v ajv > /dev/null 2>&1; then

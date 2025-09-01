@@ -104,6 +104,7 @@
             "mac_address": "52:54:00:AA:BB:D1",
             "gpu_assignment": "0,1",
             "unprivileged": true,
+            "portainer_role": "none",
             "is_template": true,
             "template_snapshot_name": "vllm-base-snapshot",
             "clone_from_template_ctid": "901",
@@ -127,6 +128,7 @@
             "mac_address": "52:54:00:67:89:B0",
             "gpu_assignment": "0,1",
             "unprivileged": true,
+            "portainer_role": "none",
             "clone_from_template_ctid": "920",
             "vllm_model": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-5bit",
             "vllm_tensor_parallel_size": 2

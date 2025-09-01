@@ -1,16 +1,15 @@
 #!/bin/bash
-export LANG="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
-# Add a diagnostic log to confirm the settings
 # --- Global Variables and Constants ---
-HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
-LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
-MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+# These are now sourced from phoenix_hypervisor_common_utils.sh
+# HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+# LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+# LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
+# MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
-echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_establish_hypervisor.sh: LANG is set to: $LANG" | tee -a "$MAIN_LOG_FILE"
-echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_establish_hypervisor.sh: LC_ALL is set to: $LC_ALL" | tee -a "$MAIN_LOG_FILE"
+log_debug "LANG is set to: $LANG"
+log_debug "LC_ALL is set to: $LC_ALL"
 
 #
 # File: phoenix_establish_hypervisor.sh
@@ -51,26 +50,8 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] phoenix_establish_hypervisor.sh: LC_A
 # Global variables for NVIDIA settings
 NVIDIA_DRIVER_VERSION=""
 NVIDIA_REPO_URL=""
+NVIDIA_RUNFILE_URL=""
 
-# --- Logging Functions ---
-log_info() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_establish_hypervisor.sh: $*" | tee -a "$MAIN_LOG_FILE"
-}
-
-log_error() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_establish_hypervisor.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-# --- Exit Function ---
-exit_script() {
-    local exit_code=$1
-    if [ "$exit_code" -eq 0 ]; then
-        log_info "Orchestrator completed successfully."
-    else
-        log_error "Orchestrator failed with exit code $exit_code."
-    fi
-    exit "$exit_code"
-}
 
 # =====================================================================================
 # load_and_validate_configs()
@@ -104,8 +85,7 @@ load_and_validate_configs() {
     log_info "'jq' command found."
 
     # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
-    export PATH="/usr/local/bin:$PATH"
-    log_info "PATH environment variable: $PATH"
+    log_info "PATH environment variable: $PATH" # PATH is now set in common_utils.sh
 
     # Pre-check for ajv
     if ! command -v ajv &> /dev/null; then
@@ -155,9 +135,10 @@ load_and_validate_configs() {
 
     NVIDIA_DRIVER_VERSION=$(jq -r '.nvidia_driver_version' "$LXC_CONFIG_FILE")
     NVIDIA_REPO_URL=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
+    NVIDIA_RUNFILE_URL=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE")
 
-    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ -z "$NVIDIA_REPO_URL" ]; then
-        log_error "WARNING: Global NVIDIA settings (driver version, repo URL) are incomplete in $LXC_CONFIG_FILE. NVIDIA setup might fail if required."
+    if [ -z "$NVIDIA_DRIVER_VERSION" ] || [ -z "$NVIDIA_REPO_URL" ] || [ -z "$NVIDIA_RUNFILE_URL" ]; then
+        log_error "WARNING: Global NVIDIA settings (driver version, repo URL, runfile URL) are incomplete in $LXC_CONFIG_FILE. NVIDIA setup might fail if required."
     else
         log_info "Global NVIDIA settings extracted."
     fi
@@ -180,11 +161,8 @@ load_and_validate_configs() {
 # =====================================================================================
 # =====================================================================================
 initialize_environment() {
-    # Initialize/Clear the main log file
-    > "$MAIN_LOG_FILE"
+    # The main log file is now initialized by phoenix_hypervisor_common_utils.sh when it's the main script.
     log_info "Orchestrator script started: phoenix_establish_hypervisor.sh (Version: 0.3.0)"
-    # No common library functions to source yet, as per clarification.
-    # Debug mode and rollback flags will be read from HYPERVISOR_CONFIG_FILE when needed.
     log_info "Environment initialized."
 }
 
@@ -253,6 +231,7 @@ process_lxc_containers() {
         local config_block=$(jq -r --arg ctid "$ctid" '.lxc_configs[$ctid | tostring]' "$LXC_CONFIG_FILE")
         local container_name=$(jq -r '.name' <<< "$config_block")
         log_info "Processing CTID: $ctid (Name: $container_name)"
+        log_debug "Config block for CTID $ctid: $config_block"
 
         if ! process_single_lxc "$ctid" "$config_block"; then
             local is_template=$(jq -r '.is_template // false' <<< "$config_block")
@@ -307,6 +286,14 @@ process_single_lxc() {
     log_info "Starting processing for CTID: $ctid (Name: $container_name, Is Template: $is_template)"
 
     # Check if container exists and has the 'configured-state' snapshot
+    if [ "$is_template" == "true" ]; then
+        local template_snapshot_name=$(jq -r --arg ctid "$ctid" '.lxc_configs[$ctid | tostring].template_snapshot_name // ""' "$LXC_CONFIG_FILE")
+        if [ -n "$template_snapshot_name" ] && pct status "$ctid" &>/dev/null && pct listsnapshot "$ctid" | grep -q "$template_snapshot_name"; then
+            log_info "Template container $ctid ($container_name) is already configured with snapshot '$template_snapshot_name'. Skipping."
+            return 0
+        fi
+    fi
+
     if pct status "$ctid" &>/dev/null && pct listsnapshot "$ctid" | grep -q "configured-state"; then
         log_info "Container $ctid ($container_name) is already configured with 'configured-state' snapshot. Skipping."
         return 0
@@ -333,16 +320,20 @@ process_single_lxc() {
 
     # Conditional Setups
     local gpu_assignment=$(jq -r '.gpu_assignment // "none"' <<< "$config_block")
+    log_debug "GPU assignment for CTID $ctid: $gpu_assignment"
     if [ "$gpu_assignment" != "none" ]; then
         log_info "Running NVIDIA setup for $ctid..."
+        log_debug "Calling setup_lxc_nvidia with CTID: $ctid, config_block: $config_block"
         if ! setup_lxc_nvidia "$ctid" "$config_block"; then
             log_error "WARNING: NVIDIA setup failed for $ctid. Continuing with next step."
         fi
     fi
 
     local features=$(jq -r '.features // ""' <<< "$config_block")
+    log_debug "Features for CTID $ctid: $features"
     if [[ "$features" == *"nesting=1"* ]]; then
         log_info "Running Docker setup for $ctid..."
+        log_debug "Calling setup_lxc_docker with CTID: $ctid, config_block: $config_block"
         if ! setup_lxc_docker "$ctid" "$config_block"; then
             log_error "WARNING: Docker setup failed for $ctid. Continuing with next step."
         fi
@@ -420,7 +411,9 @@ create_or_clone_template() {
             log_error "FATAL: Clone script not found or not executable: $clone_script"
             return 1
         fi
-        if ! "$clone_script" $clone_from_template_ctid "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
+        log_info "DEBUG: Attempting to execute clone command:"
+        log_info "DEBUG: Executing clone command: $clone_script $clone_from_template_ctid \"$source_snapshot_name\" \"$ctid\" \"$LXC_CONFIG_FILE\" \"$config_block\""
+        if ! "$clone_script" "$clone_from_template_ctid" "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
             log_error "Failed to clone template $ctid from $clone_from_template_ctid@$source_snapshot_name."
             return 1
         fi
@@ -488,9 +481,12 @@ clone_standard_container() {
     log_info "Cloning standard container CTID: $ctid"
 
     local explicit_clone_from=$(jq -r '.clone_from_template_ctid // ""' <<< "$config_block")
+    log_debug "Explicit clone from for CTID $ctid: $explicit_clone_from"
     if [ -n "$explicit_clone_from" ]; then
         source_ctid="$explicit_clone_from"
+        log_debug "Attempting to extract source_snapshot_name for CTID $source_ctid from $LXC_CONFIG_FILE"
         source_snapshot_name=$(jq -r --arg s_ctid "$source_ctid" '.lxc_configs[$s_ctid | tostring].template_snapshot_name // ""' "$LXC_CONFIG_FILE")
+        log_debug "Source snapshot name extracted: $source_snapshot_name"
         if [ -z "$source_snapshot_name" ]; then
             log_error "FATAL: Explicit source template snapshot name not found for CTID $source_ctid."
             return 1
@@ -501,6 +497,7 @@ clone_standard_container() {
         local needs_docker=$(jq -r '.features // ""' <<< "$config_block" | grep -q "nesting=1" && echo "true" || echo "false")
         local needs_gpu=$(jq -r '.gpu_assignment // "none"' <<< "$config_block" | grep -q "none" || echo "true")
         local needs_vllm=$(jq -r '.vllm_model // ""' <<< "$config_block" | grep -q "." && echo "true" || echo "false") # Check if vllm_model is not empty
+        log_debug "Needs Docker: $needs_docker, Needs GPU: $needs_gpu, Needs vLLM: $needs_vllm"
 
         if [ "$needs_docker" == "true" ] && [ "$needs_gpu" == "true" ] && [ "$needs_vllm" == "true" ]; then
             source_ctid="920" # Assuming 920 is Docker+GPU+vLLM template
@@ -514,7 +511,9 @@ clone_standard_container() {
             source_ctid="900" # Assuming 900 is Base OS template
         fi
 
+        log_debug "Attempting to extract source_snapshot_name for CTID $source_ctid from $LXC_CONFIG_FILE"
         source_snapshot_name=$(jq -r --arg s_ctid "$source_ctid" '.lxc_configs[$s_ctid | tostring].template_snapshot_name // ""' "$LXC_CONFIG_FILE")
+        log_debug "Source snapshot name extracted: $source_snapshot_name"
         if [ -z "$source_snapshot_name" ]; then
             log_error "FATAL: Automatically determined source template snapshot name not found for CTID $source_ctid."
             return 1
@@ -527,7 +526,8 @@ clone_standard_container() {
         log_error "FATAL: Clone script not found or not executable: $clone_script"
         return 1
     fi
-    if ! "$clone_script" $source_ctid "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
+    log_debug "Executing clone command: $clone_script $source_ctid \"$source_snapshot_name\" \"$ctid\" \"$LXC_CONFIG_FILE\" \"$config_block\""
+    if ! "$clone_script" "$source_ctid" "$source_snapshot_name" "$ctid" "$LXC_CONFIG_FILE" "$config_block"; then
         log_error "Failed to clone standard container $ctid from $source_ctid@$source_snapshot_name."
         return 0 # Non-critical failure for standard containers
     fi
@@ -662,9 +662,10 @@ setup_lxc_nvidia() {
         return 1 # Critical failure
     fi
     
+    log_info "DEBUG: Calling phoenix_hypervisor_lxc_common_nvidia.sh with arguments: CTID=$ctid"
     log_info "Executing NVIDIA setup for CTID $ctid..."
-    # Pass global NVIDIA settings as arguments
-    "$nvidia_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"
+    # The common NVIDIA script reads its own configuration from JSON, so only CTID is needed.
+    "$nvidia_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL" "$NVIDIA_RUNFILE_URL"
     local exit_status=$?
 
     if [ "$exit_status" -ne 0 ]; then
@@ -767,11 +768,13 @@ run_specific_setup_script() {
 
     log_info "Executing specific setup script for CTID $ctid: $specific_script"
     if [ "$gpu_assignment" != "none" ]; then
-        if ! "$specific_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL"; then
+        log_info "DEBUG: Calling phoenix_hypervisor_lxc_${ctid}.sh with arguments: CTID=$ctid, GPU_ASSIGNMENT=$gpu_assignment, NVIDIA_DRIVER_VERSION=$NVIDIA_DRIVER_VERSION, NVIDIA_REPO_URL=$NVIDIA_REPO_URL, NVIDIA_RUNFILE_URL=$NVIDIA_RUNFILE_URL"
+        if ! "$specific_script" "$ctid" "$gpu_assignment" "$NVIDIA_DRIVER_VERSION" "$NVIDIA_REPO_URL" "$NVIDIA_RUNFILE_URL"; then
             log_error "Specific setup script $specific_script failed for CTID $ctid."
             return 1 # Non-critical failure
         fi
     else
+        log_info "DEBUG: Calling phoenix_hypervisor_lxc_${ctid}.sh with arguments: CTID=$ctid"
         if ! "$specific_script" "$ctid"; then
             log_error "Specific setup script $specific_script failed for CTID $ctid."
             return 1 # Non-critical failure

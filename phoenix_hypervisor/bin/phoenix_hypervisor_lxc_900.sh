@@ -160,7 +160,10 @@ check_container_exists() {
 # =====================================================================================
 check_if_snapshot_exists() {
     log_info "Checking if snapshot '$SNAPSHOT_NAME' already exists for container $CTID."
-    if pct config "$CTID" | grep -q "snapname: $SNAPSHOT_NAME"; then
+    local pct_listsnapshot_output
+    pct_listsnapshot_output=$(pct listsnapshot "$CTID" 2>&1)
+    log_info "Output of 'pct listsnapshot $CTID': $pct_listsnapshot_output"
+    if echo "$pct_listsnapshot_output" | grep -q "^$SNAPSHOT_NAME$"; then
         log_info "Snapshot '$SNAPSHOT_NAME' already exists for container $CTID. Skipping entire setup."
         exit_script 0
     else

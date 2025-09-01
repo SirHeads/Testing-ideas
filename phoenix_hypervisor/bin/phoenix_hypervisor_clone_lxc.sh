@@ -1,4 +1,6 @@
 #!/bin/bash
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
+
 #
 # File: phoenix_hypervisor_clone_lxc.sh
 # Description: Clones an LXC container from a specified ZFS snapshot of a template container.
@@ -43,27 +45,13 @@
 #   5: Post-clone configuration adjustments failed
 
 # --- Global Variables and Constants ---
-MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+# MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log" # Sourced from phoenix_hypervisor_common_utils.sh
 
 # --- Logging Functions ---
-log_info() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] phoenix_hypervisor_clone_lxc.sh: $*" | tee -a "$MAIN_LOG_FILE"
-}
-
-log_error() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] phoenix_hypervisor_clone_lxc.sh: $*" | tee -a "$MAIN_LOG_FILE" >&2
-}
+# Sourced from phoenix_hypervisor_common_utils.sh
 
 # --- Exit Function ---
-exit_script() {
-    local exit_code=$1
-    if [ "$exit_code" -eq 0 ]; then
-        log_info "Script completed successfully."
-    else
-        log_error "Script failed with exit code $exit_code."
-    fi
-    exit "$exit_code"
-}
+# Sourced from phoenix_hypervisor_common_utils.sh
 
 # --- Script Variables ---
 SOURCE_CTID=""
@@ -203,7 +191,7 @@ construct_pct_clone_command() {
         --hostname "$hostname"
         --storage "$storage_pool"
     )
-    log_info "Constructed pct clone command: ${PCT_CLONE_CMD[*]}"
+    log_debug "Constructed pct clone command: ${PCT_CLONE_CMD[*]}"
 }
 
 # =====================================================================================
@@ -226,6 +214,7 @@ construct_pct_clone_command() {
 # =====================================================================================
 execute_pct_clone() {
     log_info "Executing pct clone command for TARGET_CTID: $TARGET_CTID"
+    log_debug "Full pct clone command: ${PCT_CLONE_CMD[*]}"
     if ! "${PCT_CLONE_CMD[@]}"; then
         log_error "FATAL: 'pct clone' command failed for TARGET_CTID $TARGET_CTID. Command: ${PCT_CLONE_CMD[*]}"
         exit_script 4
