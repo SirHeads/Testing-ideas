@@ -13,103 +13,11 @@ source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
-STATE_DIR="/var/lib/phoenix_hypervisor/state"
 DRY_RUN=false # Flag for dry-run mode
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 
-# =====================================================================================
-# Function: run_pct_command
-# Description: A robust wrapper for executing pct commands with error handling.
-#              In dry-run mode, it logs the command instead of executing it.
-# Arguments:
-#   $@ - The arguments to pass to the 'pct' command.
-# Returns:
-#   0 on success, 1 on failure.
-# =====================================================================================
-run_pct_command() {
-    local pct_args=("$@")
-    log_info "Executing: pct ${pct_args[*]}"
 
-    if [ "$DRY_RUN" = true ]; then
-        log_info "DRY-RUN: Would execute 'pct ${pct_args[*]}'"
-        return 0
-    fi
 
-    if ! pct "${pct_args[@]}"; then
-        log_error "'pct ${pct_args[*]}' command failed."
-        return 1
-    fi
-    log_info "'pct ${pct_args[*]}' command executed successfully."
-    return 0
-}
-
-# =====================================================================================
-# Function: jq_get_value
-# Description: A robust wrapper for jq to query the LXC config file.
-#              It retrieves a specific value from the JSON configuration for a given CTID.
-# Arguments:
-#   $1 (ctid) - The container ID.
-#   $2 (jq_query) - The jq query string to execute.
-# Returns:
-#   The queried value on success, and a non-zero status code on failure.
-# =====================================================================================
-jq_get_value() {
-    local ctid="$1"
-    local jq_query="$2"
-    local value
-
-    value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
-
-    if [ "$?" -ne 0 ]; then
-        log_error "jq command failed for CTID $ctid with query '${jq_query}'."
-        return 1
-    elif [ -z "$value" ] || [ "$value" == "null" ]; then
-        # This is not always an error, some fields are optional.
-        # The calling function should handle empty values if they are not expected.
-        return 1
-    fi
-
-    echo "$value"
-    return 0
-}
-
-# =====================================================================================
-# Function: get_container_state
-# Description: Retrieves the current state of the container from its state file.
-#              If the state file does not exist, it defaults to 'defined'.
-# Returns:
-#   The current state of the container as a string.
-# =====================================================================================
-get_container_state() {
-    local state_file="${STATE_DIR}/${CTID}.state"
-    if [ -f "$state_file" ]; then
-        cat "$state_file"
-    else
-        echo "defined"
-    fi
-}
-
-# =====================================================================================
-# Function: set_container_state
-# Description: Sets the state of the container by writing to its state file.
-#              In dry-run mode, it logs the action instead of performing it.
-# Arguments:
-#   $1 (new_state) - The new state to set for the container.
-# =====================================================================================
-set_container_state() {
-    local new_state="$1"
-    local state_file="${STATE_DIR}/${CTID}.state"
-    log_info "Setting state for CTID $CTID to: $new_state"
-
-    if [ "$DRY_RUN" = true ]; then
-        log_info "DRY-RUN: Would write '$new_state' to '$state_file'"
-        return 0
-    fi
-
-    if ! echo "$new_state" > "$state_file"; then
-        log_fatal "Failed to write state to $state_file."
-    fi
-}
 
 # =====================================================================================
 # Function: parse_arguments
@@ -173,23 +81,6 @@ validate_inputs() {
     log_info "Input validation passed."
 }
 
-# =====================================================================================
-# Function: ensure_state_directory_exists
-# Description: Ensures the state directory exists. If not, it creates it.
-#              In dry-run mode, it logs the creation action.
-# =====================================================================================
-ensure_state_directory_exists() {
-    if [ ! -d "$STATE_DIR" ]; then
-        log_info "State directory not found. Creating: $STATE_DIR"
-        if [ "$DRY_RUN" = true ]; then
-            log_info "DRY-RUN: Would create directory '$STATE_DIR'"
-            return 0
-        fi
-        if ! mkdir -p "$STATE_DIR"; then
-            log_fatal "Failed to create state directory at $STATE_DIR."
-        fi
-    fi
-}
 
 # =====================================================================================
 # Function: handle_defined_state
@@ -206,7 +97,6 @@ handle_defined_state() {
     else
         create_container_from_template
     fi
-    set_container_state "created"
 }
 
 # =====================================================================================
@@ -224,7 +114,7 @@ create_container_from_template() {
     local template=$(jq_get_value "$CTID" ".template")
     local storage_pool=$(jq_get_value "$CTID" ".storage_pool")
     local storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
-    local features=$(jq_get_value "$CTID" ".features" || echo "")
+    local features=$(jq_get_value "$CTID" ".features | join(\",\")" || echo "")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0")
@@ -248,10 +138,8 @@ create_container_from_template() {
         --unprivileged "$unprivileged_val"
     )
 
-    # --- Add optional features if they are defined ---
-    if [ -n "$features" ]; then
-        pct_create_cmd+=(--features "$features")
-    fi
+    # --- The --features flag is reserved for Proxmox's internal use. ---
+    # --- Custom features are handled by the state machine after creation. ---
 
     # --- Execute the command ---
     if ! run_pct_command "${pct_create_cmd[@]}"; then
@@ -303,7 +191,6 @@ clone_container() {
 handle_created_state() {
     log_info "Handling 'created' state for CTID: $CTID"
     apply_configurations
-    set_container_state "configured"
 }
 
 # =====================================================================================
@@ -317,14 +204,13 @@ apply_configurations() {
     # --- Retrieve configuration values ---
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
-    local features=$(jq_get_value "$CTID" ".features" || echo "")
+    local features=$(jq_get_value "$CTID" ".features | join(\",\")" || echo "")
 
     # --- Apply core settings ---
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
-    if [ -n "$features" ]; then
-        run_pct_command set "$CTID" --features "$features" || log_fatal "Failed to set features."
-    fi
+    # --- The --features flag is reserved for Proxmox's internal use. ---
+    # --- Custom features are handled by the state machine after creation. ---
 
     # --- Apply network settings ---
     local net0_name=$(jq_get_value "$CTID" ".network_config.name")
@@ -345,7 +231,6 @@ apply_configurations() {
 handle_configured_state() {
     log_info "Handling 'configured' state for CTID: $CTID"
     start_container
-    set_container_state "running"
 }
 
 # =====================================================================================
@@ -383,7 +268,6 @@ start_container() {
 handle_running_state() {
     log_info "Handling 'running' state for CTID: $CTID"
     apply_features
-    set_container_state "customizing"
 }
 
 # =====================================================================================
@@ -425,7 +309,6 @@ apply_features() {
 handle_customizing_state() {
     log_info "Container $CTID has been fully customized."
     run_application_script
-    set_container_state "completed"
 }
 
 # =====================================================================================
@@ -455,6 +338,33 @@ run_application_script() {
     fi
 
     log_info "Application script executed successfully for CTID $CTID."
+}
+
+# =====================================================================================
+# Function: create_template_snapshot
+# Description: Creates a snapshot of a container if it is designated as a template
+#              in the configuration file.
+# =====================================================================================
+create_template_snapshot() {
+    log_info "Checking for template snapshot for CTID: $CTID"
+    local snapshot_name
+    snapshot_name=$(jq_get_value "$CTID" ".template_snapshot_name" || echo "")
+
+    if [ -z "$snapshot_name" ]; then
+        log_info "No template snapshot defined for CTID $CTID. Skipping."
+        return 0
+    fi
+
+    if pct listsnapshot "$CTID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for CTID $CTID. Skipping."
+        return 0
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for template container $CTID..."
+    if ! run_pct_command snapshot "$CTID" "$snapshot_name"; then
+        log_fatal "Failed to create snapshot '$snapshot_name' for CTID $CTID."
+    fi
+    log_info "Snapshot '$snapshot_name' created successfully."
 }
 
 # =====================================================================================
@@ -492,43 +402,45 @@ main() {
 
     parse_arguments "$@"
     validate_inputs
-    ensure_state_directory_exists
+    # --- Stateless Orchestration Workflow ---
+    log_info "Starting stateless orchestration for CTID $CTID..."
 
-    # --- State Machine ---
-    local current_state
-    current_state=$(get_container_state)
-    log_info "Initial state for CTID $CTID is: $current_state"
+    # 1. Ensure Container Exists
+    if ! pct status "$CTID" > /dev/null 2>&1; then
+        log_info "Container $CTID does not exist. Proceeding with creation..."
+        handle_defined_state
+    else
+        log_info "Container $CTID already exists. Skipping creation."
+    fi
 
-    # The case statement uses fall-through (;&) to progress through the states
-    # until the container is running or an error occurs.
-    case "$current_state" in
-        "defined")
-            handle_defined_state
-            current_state=$(get_container_state)
-            ;&
-        "created")
-            handle_created_state
-            current_state=$(get_container_state)
-            ;&
-        "configured")
-            handle_configured_state
-            current_state=$(get_container_state)
-            ;&
-        "running")
-            handle_running_state
-            current_state=$(get_container_state)
-            ;&
-        "customizing")
-            handle_customizing_state
-            current_state=$(get_container_state)
-            ;&
-        "completed")
-            log_info "Container $CTID is in the 'completed' state. Orchestration finished."
-            ;;
-        *)
-            log_fatal "Unknown state '$current_state' for CTID $CTID."
-            ;;
-    esac
+    # 2. Ensure Container is Configured
+    # The apply_configurations function is idempotent and can be run safely.
+    log_info "Ensuring container $CTID is correctly configured..."
+    apply_configurations
+
+    # 3. Ensure Container is Running
+    if ! pct status "$CTID" | grep -q "running"; then
+        log_info "Container $CTID is not running. Attempting to start..."
+        start_container
+    else
+        log_info "Container $CTID is already running."
+    fi
+
+    # 4. Apply Features
+    # The feature scripts are designed to be idempotent.
+    log_info "Applying all features to container $CTID..."
+    apply_features
+
+    # 5. Run Application Script
+    # The application script should also be idempotent.
+    log_info "Executing application script for container $CTID..."
+    run_application_script
+
+    # 6. Create Template Snapshot
+    # If the container is a template, create a snapshot.
+    create_template_snapshot
+
+    log_info "Stateless orchestration for CTID $CTID completed."
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Finished"

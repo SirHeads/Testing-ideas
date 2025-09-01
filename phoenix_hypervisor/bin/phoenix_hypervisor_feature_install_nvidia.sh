@@ -7,8 +7,12 @@
 # Version: 1.0.0
 # Author: Roo (AI Engineer)
 
+# --- Shell Settings ---
+set -e # Exit immediately if a command exits with a non-zero status.
+set -o pipefail # Return the exit status of the last command in the pipe that failed.
+
 # --- Source common utilities ---
-source "$(dirname "$0")/../bin/phoenix_hypervisor_common_utils.sh"
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -84,6 +88,11 @@ configure_host_gpu_passthrough() {
     done
 
     log_info "Host GPU passthrough configuration complete for CTID $CTID."
+    # --- Restart the container to apply the new hardware settings ---
+    log_info "Restarting container CTID $CTID to apply GPU passthrough settings..."
+    run_pct_command stop "$CTID"
+    run_pct_command start "$CTID"
+    log_info "Container CTID $CTID restarted successfully."
 }
 
 # =====================================================================================
@@ -93,18 +102,16 @@ configure_host_gpu_passthrough() {
 install_drivers_in_container() {
     log_info "Starting NVIDIA driver and CUDA installation in CTID: $CTID"
 
-    # Idempotency Check: See if nvidia-smi is already working
-    if pct exec "$CTID" -- nvidia-smi &>/dev/null; then
-        log_info "NVIDIA drivers already appear to be installed and working in CTID $CTID. Skipping installation."
-        return 0
-    fi
+    # The NVIDIA runfile installer is idempotent and will handle cases where
+    # the driver is already installed. The final verification is done by the
+    # verify_installation function.
 
     local nvidia_runfile_url
-    nvidia_runfile_url=$(jq_get_value "$CTID" ".nvidia_runfile_url")
+    nvidia_runfile_url=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE")
 
     # Install prerequisites
-    pct_exec "$CTID" -- apt-get update
-    pct_exec "$CTID" -- apt-get install -y wget build-essential
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y wget build-essential
 
     # Download and install the runfile
     local runfile_name
@@ -112,20 +119,23 @@ install_drivers_in_container() {
     local runfile_path="/tmp/$runfile_name"
 
     log_info "Downloading NVIDIA driver runfile to $runfile_path in CTID $CTID..."
-    pct_exec "$CTID" -- wget -q "$nvidia_runfile_url" -O "$runfile_path"
+    pct_exec "$CTID" wget -q "$nvidia_runfile_url" -O "$runfile_path"
 
     log_info "Making runfile executable..."
-    pct_exec "$CTID" -- chmod +x "$runfile_path"
+    pct_exec "$CTID" chmod +x "$runfile_path"
 
     log_info "Executing NVIDIA driver runfile installation..."
-    pct_exec "$CTID" -- "$runfile_path" --silent --no-kernel-module-source
+    pct_exec "$CTID" "$runfile_path" --silent --no-kernel-module --no-x-check --no-nouveau-check
 
     # Clean up
-    pct_exec "$CTID" -- rm "$runfile_path"
+    pct_exec "$CTID" rm "$runfile_path"
 
-    # Install CUDA Toolkit
+    # --- Ensure NVIDIA CUDA Repository is configured ---
+    ensure_nvidia_repo_is_configured "$CTID"
+
+    # --- Install CUDA Toolkit ---
     log_info "Installing CUDA Toolkit in CTID $CTID..."
-    pct_exec "$CTID" -- apt-get install -y cuda-toolkit-12-8
+    pct_exec "$CTID" apt-get install -y cuda-toolkit-12-8
 
     log_info "NVIDIA driver and CUDA installation complete for CTID $CTID."
 }
@@ -136,7 +146,7 @@ install_drivers_in_container() {
 # =====================================================================================
 verify_installation() {
     log_info "Verifying NVIDIA installation in CTID: $CTID"
-    if ! pct_exec "$CTID" -- nvidia-smi; then
+    if ! pct_exec "$CTID" nvidia-smi; then
         log_fatal "NVIDIA verification failed. 'nvidia-smi' command failed in CTID $CTID."
     fi
     log_info "NVIDIA installation verified successfully in CTID $CTID."

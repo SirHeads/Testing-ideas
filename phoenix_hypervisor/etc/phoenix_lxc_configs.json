@@ -1,8 +1,8 @@
 {
     "$schema": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json",
-    "nvidia_driver_version": "580.76.06",
+    "nvidia_driver_version": "580.76.05",
     "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
-    "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.06/NVIDIA-Linux-x86_64-580.76.06.run",
+    "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
     "lxc_configs": {
         "900": {
             "name": "BaseTemplate",

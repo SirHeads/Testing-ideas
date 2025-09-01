@@ -7,8 +7,12 @@
 # Version: 1.0.0
 # Author: Roo (AI Engineer)
 
+# --- Shell Settings ---
+set -e # Exit immediately if a command exits with a non-zero status.
+set -o pipefail # Return the exit status of the last command in the pipe that failed.
+
 # --- Source common utilities ---
-source "$(dirname "$0")/../bin/phoenix_hypervisor_common_utils.sh"
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -34,25 +38,25 @@ install_and_test_vllm() {
     log_info "Starting vLLM installation and verification in CTID: $CTID"
 
     # Idempotency Check: See if vllm is already installed
-    if pct_exec "$CTID" -- pip3 show vllm &>/dev/null; then
+    if pct_exec "$CTID" pip3 show vllm &>/dev/null; then
         log_info "vLLM already appears to be installed in CTID $CTID. Skipping installation."
         return 0
     fi
 
     # Install Python and Pip
     log_info "Installing Python3 and Pip in CTID $CTID..."
-    pct_exec "$CTID" -- apt-get update
-    pct_exec "$CTID" -- apt-get install -y python3-pip
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y python3-pip
 
     # Install vLLM
     log_info "Installing vLLM via pip3 in CTID $CTID..."
-    pct_exec "$CTID" -- pip3 install vllm
+    pct_exec "$CTID" pip3 install vllm
 
     # Verification (Optional but recommended)
     # A simple verification could be to check the vllm command's help output.
     # A full test with a model is better but more resource-intensive.
     log_info "Verifying vLLM installation..."
-    if ! pct_exec "$CTID" -- python3 -m vllm.entrypoints.api_server --help &>/dev/null; then
+    if ! pct_exec "$CTID" python3 -m vllm.entrypoints.api_server --help &>/dev/null; then
         log_fatal "vLLM installation verification failed in CTID $CTID."
     fi
 
