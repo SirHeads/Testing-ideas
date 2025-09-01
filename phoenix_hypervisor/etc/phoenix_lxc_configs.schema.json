@@ -96,9 +96,17 @@
                             "additionalProperties": false
                         },
                         "features": {
-                            "type": "string",
-                            "pattern": "^[a-z]+=([0-1])(,[a-z]+=([0-1]))*$",
-                            "description": "LXC features enabled for the container (e.g., 'nesting=1,keyctl=1')"
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "base_setup",
+                                    "nvidia",
+                                    "docker",
+                                    "vllm"
+                                ]
+                            },
+                            "description": "An array of feature scripts to apply to the container."
                         },
                         "static_ip": {
                             "type": "string",
@@ -141,10 +149,6 @@
                             "maximum": 8,
                             "description": "Degree of tensor parallelism used by vLLM for the assigned model"
                         },
-                        "is_template": {
-                            "type": "boolean",
-                            "description": "Indicates if this container configuration is for creating a reusable template snapshot."
-                        },
                         "template_snapshot_name": {
                             "type": "string",
                             "minLength": 1,
@@ -154,6 +158,11 @@
                             "type": "string",
                             "pattern": "^[0-9]+$",
                             "description": "The Container ID of the template to clone from when creating this container."
+                        },
+                        "application_script": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Optional script to run after all features are applied to launch a persistent service."
                         }
                     },
                     "required": [

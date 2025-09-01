@@ -14,7 +14,6 @@ source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 # --- Script Variables ---
 CTID=""
 STATE_DIR="/var/lib/phoenix_hypervisor/state"
-FEATURES_DIR="/usr/local/phoenix_hypervisor/features"
 DRY_RUN=false # Flag for dry-run mode
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 
@@ -403,7 +402,7 @@ apply_features() {
     fi
 
     for feature in $features; do
-        local feature_script_path="/usr/local/phoenix_hypervisor/features/feature_install_${feature}.sh"
+        local feature_script_path="/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_feature_install_${feature}.sh"
         log_info "Executing feature: $feature ($feature_script_path)"
 
         if [ ! -f "$feature_script_path" ]; then
