@@ -93,8 +93,8 @@
         },
         "920": {
             "name": "BaseTemplateVLLM",
-            "memory_mb": 65000,
-            "cores": 8,
+            "memory_mb": 72000,
+            "cores": 12,
             "storage_pool": "lxc-disks",
             "storage_size_gb": 96,
             "network_config": {
@@ -115,8 +115,8 @@
         },
         "950": {
             "name": "vllmQwen3Coder",
-            "memory_mb": 40960,
-            "cores": 8,
+            "memory_mb": 72000,
+            "cores": 12,
             "storage_pool": "lxc-disks",
             "storage_size_gb": 100,
             "network_config": {
