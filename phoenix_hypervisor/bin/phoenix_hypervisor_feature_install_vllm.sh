@@ -90,10 +90,10 @@ EOF"
 
     # --- Two-Stage Package Installation ---
     log_info "Installing PyTorch and build dependencies in CTID $CTID..."
-    pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install torch==2.2.2 setuptools wheel ninja packaging --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
+    pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install --upgrade pip && pipenv run pip install torch==2.2.2 'setuptools<60' wheel ninja packaging --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
 
     log_info "Installing vLLM and related packages in CTID $CTID..."
-    pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install vllm==0.4.1 'flash-attn' transformers --no-build-isolation --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
+    pct_exec "$CTID" bash -c "cd $vllm_dir && export MAX_JOBS=2 && export TORCH_CUDA_ARCH_LIST='9.0' && pipenv run pip install vllm==0.4.1 'flash-attn' transformers --no-build-isolation --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
     pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install flashinfer-python --index-url https://wheels.vllm.ai --extra-index-url https://pypi.org/simple"
 
     # Verification
