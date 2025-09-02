@@ -46,8 +46,21 @@ log_fatal() {
     exit 1
 }
 
-# --- Exit Function ---
-exit_script() {
+# =====================================================================================
+# Function: log_plain_output
+# Description: Logs multi-line output from a variable or command, preserving formatting.
+#              Designed to be used with pipes.
+# =====================================================================================
+log_plain_output() {
+    # This function is designed to be used with pipes for multi-line output.
+    # Example: echo "Line 1\nLine 2" | log_plain_output
+    while IFS= read -r line; do
+        echo "    | $line" | tee -a "$MAIN_LOG_FILE"
+    done
+}
+ 
+ # --- Exit Function ---
+ exit_script() {
     local exit_code=$1
     if [ "$exit_code" -eq 0 ]; then
         log_info "Script completed successfully."

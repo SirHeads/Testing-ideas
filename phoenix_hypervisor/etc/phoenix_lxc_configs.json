@@ -96,7 +96,7 @@
             "memory_mb": 72000,
             "cores": 12,
             "storage_pool": "lxc-disks",
-            "storage_size_gb": 96,
+            "storage_size_gb": 128,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -133,7 +133,11 @@
             "features": [
                 "vllm"
             ],
-            "application_script": "phoenix_hypervisor_lxc_950.sh"
+            "application_script": "phoenix_hypervisor_lxc_950.sh",
+            "vllm_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+            "vllm_tensor_parallel_size": 2,
+            "vllm_gpu_memory_utilization": 0.9,
+            "vllm_max_model_len": 8192
         }
     }
 }

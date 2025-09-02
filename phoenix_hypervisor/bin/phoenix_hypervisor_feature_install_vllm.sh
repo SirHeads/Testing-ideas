@@ -44,8 +44,8 @@ install_and_test_vllm() {
     log_info "NVIDIA GPU access verified."
     local vllm_dir="/opt/vllm"
 
-    # Idempotency Check: See if the vLLM directory and virtual environment exist
-    if pct_exec "$CTID" [ -d "$vllm_dir" ] && pct_exec "$CTID" [ -f "${vllm_dir}/Pipfile" ]; then
+    # Idempotency Check: A robust check for the actual python executable in the virtual environment.
+    if pct_exec "$CTID" [ -f "${vllm_dir}/bin/python3" ]; then
         log_info "vLLM environment already exists in CTID $CTID. Skipping installation."
         return 0
     fi
