@@ -1,10 +1,14 @@
 #!/bin/bash
 #
-# File: feature_install_vllm.sh
+# File: phoenix_hypervisor_feature_install_vllm.sh
 # Description: This feature script automates the installation and verification of the vLLM
-#              inference server within a Proxmox LXC container. It is designed to be
-#              called by the main orchestrator and is fully idempotent.
-# Version: 1.0.0
+#              inference server from source within a Proxmox LXC container. It is
+#              designed to be called by the main orchestrator and is fully idempotent.
+#
+# Host System Requirements:
+# - NVIDIA Driver Version: 580+
+#
+# Version: 3.0.0
 # Author: Roo (AI Engineer)
 
 # --- Shell Settings ---
@@ -32,10 +36,11 @@ parse_arguments() {
 
 # =====================================================================================
 # Function: install_and_test_vllm
-# Description: Orchestrates the installation of vLLM and verifies its functionality.
+# Description: Orchestrates the installation of vLLM from source and verifies its
+#              functionality.
 # =====================================================================================
 install_and_test_vllm() {
-    log_info "Starting vLLM installation and verification in CTID: $CTID"
+    log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
     log_info "Verifying NVIDIA GPU access in CTID $CTID..."
     if ! pct_exec "$CTID" nvidia-smi; then
@@ -43,65 +48,58 @@ install_and_test_vllm() {
     fi
     log_info "NVIDIA GPU access verified."
     local vllm_dir="/opt/vllm"
+    local vllm_repo_dir="/opt/vllm_repo"
 
-    # Idempotency Check: A robust check for the actual python executable in the virtual environment.
-    if pct_exec "$CTID" [ -f "${vllm_dir}/bin/python3" ]; then
-        log_info "vLLM environment already exists in CTID $CTID. Skipping installation."
+    # Idempotency Check: Check if vLLM is installed in editable mode.
+    if pct_exec "$CTID" "${vllm_dir}/bin/pip" list | grep -q "vllm.*${vllm_repo_dir}"; then
+        log_info "vLLM appears to be installed from source in CTID $CTID. Skipping installation."
         return 0
     fi
 
-    # Install Python, Pip, Pipenv, and build tools
-    log_info "Installing Python3, Pip, Pipenv, and build tools in CTID $CTID..."
+    # Install Python, build tools, and git
+    log_info "Installing Python 3.11, build tools, and git in CTID $CTID..."
     pct_exec "$CTID" apt-get update
     pct_exec "$CTID" apt-get install -y software-properties-common
     pct_exec "$CTID" add-apt-repository -y ppa:deadsnakes/ppa
     pct_exec "$CTID" apt-get update
-    pct_exec "$CTID" apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip pipenv build-essential cmake
+    pct_exec "$CTID" apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git
 
-    # Create vLLM directory and Pipfile
-    log_info "Creating vLLM environment in CTID $CTID..."
+    # Create vLLM virtual environment
+    log_info "Creating vLLM virtual environment in ${vllm_dir} for CTID $CTID..."
     pct_exec "$CTID" mkdir -p "$vllm_dir"
-    pct_exec "$CTID" bash -c "cat <<'EOF' > ${vllm_dir}/Pipfile
-[[source]]
-url = \"https://pypi.org/simple\"
-verify_ssl = true
-name = \"pypi\"
+    pct_exec "$CTID" python3.11 -m venv "$vllm_dir"
 
-[[source]]
-url = \"https://download.pytorch.org/whl/cu128\"
-verify_ssl = true
-name = \"pytorch\"
+    # Upgrade pip
+    log_info "Upgrading pip in the new virtual environment..."
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --upgrade pip
 
-[[source]]
-url = \"https://wheels.vllm.ai\"
-verify_ssl = true
-name = \"vllm\"
+    # Install PyTorch Nightly
+    log_info "Installing PyTorch nightly for CUDA 12.8+..."
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
+    log_info "Cleaning pip cache after PyTorch installation..."
+    pct_exec "$CTID" rm -rf /root/.cache/pip
 
-[packages]
-torch = \"==2.2.2\"
-vllm = \"==0.4.1\"
-flash-attn = \"*\"
-transformers = \"*\"
-flashinfer-python = {version = \"*\", index = \"vllm\"}
-
-[requires]
-python_version = \"3.11\"
-EOF"
-
-    # --- Two-Stage Package Installation ---
-    log_info "Installing PyTorch and build dependencies in CTID $CTID..."
-    pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install --upgrade pip && pipenv run pip install torch==2.2.2 'setuptools<60' wheel ninja packaging --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
-
-    log_info "Installing vLLM and related packages in CTID $CTID..."
-    pct_exec "$CTID" bash -c "cd $vllm_dir && export MAX_JOBS=2 && export TORCH_CUDA_ARCH_LIST='9.0' && pipenv run pip install vllm==0.4.1 'flash-attn' transformers --no-build-isolation --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu128"
-    pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run pip install flashinfer-python --index-url https://wheels.vllm.ai --extra-index-url https://pypi.org/simple"
-
-    # Verification
-    log_info "Verifying vLLM installation..."
-    if ! pct_exec "$CTID" bash -c "cd $vllm_dir && pipenv run python -m vllm.entrypoints.api_server --help" &>/dev/null; then
-        log_fatal "vLLM installation verification failed in CTID $CTID."
+    # Clone vLLM Repository
+    log_info "Cloning vLLM repository..."
+    if pct_exec "$CTID" [ -d "${vllm_repo_dir}" ]; then
+        log_info "vLLM repository already exists. Pulling latest changes."
+        pct_exec "$CTID" git -C "${vllm_repo_dir}" pull
+    else
+        pct_exec "$CTID" git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
     fi
 
+    # Build and Install vLLM from Source
+    log_info "Building and installing vLLM from source (includes flash-attn)..."
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
+    log_info "Cleaning pip cache after vLLM installation..."
+    pct_exec "$CTID" rm -rf /root/.cache/pip
+
+    # Verification
+    log_info "Verifying vLLM source installation..."
+    if ! pct_exec "$CTID" "${vllm_dir}/bin/python" -c "import vllm; print(vllm.__version__)"; then
+        log_fatal "vLLM installation verification failed in CTID $CTID."
+    fi
+    
     log_info "vLLM installation and verification complete for CTID $CTID."
 }
 

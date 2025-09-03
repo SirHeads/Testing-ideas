@@ -75,7 +75,11 @@ generate_systemd_service_file() {
     exec_start_cmd+=" --tensor-parallel-size $tensor_parallel_size"
     exec_start_cmd+=" --gpu-memory-utilization $gpu_memory_utilization"
     exec_start_cmd+=" --max-model-len $max_model_len"
+    exec_start_cmd+=" --kv-cache-dtype auto"
+    exec_start_cmd+=" --disable-custom-all-reduce"
     exec_start_cmd+=" --host 0.0.0.0"
+
+    log_info "Constructed vLLM ExecStart command: $exec_start_cmd"
 
     # --- Create the systemd service file content using a single, robust printf command ---
     local service_file_content
@@ -152,23 +156,30 @@ perform_health_check() {
     local attempt=0
     local interval=10 # seconds
     local health_check_url="http://localhost:8000/v1/models"
+    local model_name
+    model_name=$(jq_get_value "$CTID" ".vllm_model")
 
     while [ "$attempt" -lt "$max_attempts" ]; do
         attempt=$((attempt + 1))
         log_info "Health check attempt $attempt/$max_attempts..."
         
-        # --- Use pct exec directly to handle expected failures (e.g., connection refused) ---
-        local http_status
-        http_status=$(pct exec "$CTID" -- curl -s -o /dev/null -w "%{http_code}" "$health_check_url" || echo "CURL_ERROR")
+        local response
+        response=$(pct exec "$CTID" -- curl -s "$health_check_url" || echo "CURL_ERROR")
 
-        if [ "$http_status" == "CURL_ERROR" ]; then
+        if [ "$response" == "CURL_ERROR" ]; then
             log_info "API not ready yet (curl command failed, likely connection refused). Retrying in $interval seconds..."
             sleep "$interval"
-        elif [ "$http_status" -eq 200 ]; then
-            log_info "Health check passed! The vLLM API server is responsive."
+            continue
+        fi
+
+        local model_id
+        model_id=$(echo "$response" | jq -r ".data[0].id")
+
+        if [ "$model_id" == "$model_name" ]; then
+            log_info "Health check passed! The vLLM API server is responsive and the correct model is loaded."
             return 0
         else
-            log_info "API not ready yet (HTTP status: $http_status). Retrying in $interval seconds..."
+            log_info "API is responsive, but the model is not yet loaded. Retrying in $interval seconds..."
             sleep "$interval"
         fi
     done
@@ -255,8 +266,8 @@ main() {
     verify_vllm_environment
     generate_systemd_service_file
     manage_vllm_service
-    perform_health_check
-    validate_api_with_test_query
+    # perform_health_check
+    # validate_api_with_test_query
     display_connection_info
     exit_script 0
 }

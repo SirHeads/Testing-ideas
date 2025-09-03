@@ -134,9 +134,9 @@
                 "vllm"
             ],
             "application_script": "phoenix_hypervisor_lxc_950.sh",
-            "vllm_model": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+            "vllm_model": "TheBloke/CodeLlama-34B-Instruct-AWQ",
             "vllm_tensor_parallel_size": 2,
-            "vllm_gpu_memory_utilization": 0.9,
+            "vllm_gpu_memory_utilization": 0.85,
             "vllm_max_model_len": 8192
         }
     }
