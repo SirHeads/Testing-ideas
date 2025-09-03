@@ -10,21 +10,18 @@ The `phoenix_hypervisor_config.json` file defines essential file paths, network 
 
 ## Key Responsibilities
 
-1.  **Define Core File Paths:**
+*   **Define Core File Paths:**
     *   Specifies the locations of other critical configuration files (`phoenix_lxc_configs.json`, its schema).
     *   Specifies the locations of token files (Hugging Face, Docker Hub) required for specific setups.
     *   Specifies the location of shared resources (Docker images/contexts).
     *   Defines directories for internal use (marker files, libraries).
-
-2.  **Set Network Defaults:**
+*   **Set Network Defaults:**
     *   Defines the external Docker registry URL (e.g., Docker Hub username/namespace).
     *   Specifies the IP address and ports for the Portainer Server and Agent communication, ensuring containers can connect correctly.
-
-3.  **Establish Proxmox Defaults:**
+*   **Establish Proxmox Defaults:**
     *   Provides default values for LXC container creation parameters (CPU cores, memory, network settings, features, security) that can be overridden by individual container configurations in `phoenix_lxc_configs.json`.
     *   Specifies the default ZFS storage pool for LXC disks.
-
-4.  **Control Script Behavior:**
+*   **Control Script Behavior:**
     *   Contains flags that influence the runtime behavior of the orchestrator and scripts (e.g., `rollback_on_failure`, `debug_mode`).
 
 ## Structure & Content
@@ -56,6 +53,9 @@ The file is a JSON object containing several top-level keys:
         *   `features`: Default LXC features string.
         *   `security`: Default security profile.
         *   `nesting`: Default nesting value (1 for enabled).
+*   `docker`: An object containing Docker-related settings.
+    *   `portainer_server_image`: Docker image for Portainer Server.
+    *   `portainer_agent_image`: Docker image for Portainer Agent.
 *   `behavior`: An object containing runtime behavior flags.
     *   `rollback_on_failure`: Boolean to enable/disable rollback on script failure.
     *   `debug_mode`: Boolean to enable/disable debug logging/skip validations.
