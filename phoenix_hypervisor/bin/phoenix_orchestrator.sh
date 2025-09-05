@@ -13,8 +13,17 @@ source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
+VM_NAME=""
+VM_ID=""
 DRY_RUN=false # Flag for dry-run mode
+SETUP_HYPERVISOR=false # Flag for hypervisor setup mode
+CREATE_VM=false
+START_VM=false
+STOP_VM=false
+DELETE_VM=false
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
+VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.schema.json"
 
 
 
@@ -28,28 +37,95 @@ LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 # =====================================================================================
 parse_arguments() {
     if [ "$#" -eq 0 ]; then
-        log_error "Usage: $0 <CTID> [--dry-run]"
+        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run]"
         exit_script 2
     fi
 
-    for arg in "$@"; do
-        case $arg in
+    local operation_mode_set=false
+
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
             --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-            *)
-            CTID="$arg"
-            ;;
+                DRY_RUN=true
+                shift
+                ;;
+            --setup-hypervisor)
+                SETUP_HYPERVISOR=true
+                operation_mode_set=true
+                shift
+                ;;
+            --create-vm)
+                CREATE_VM=true
+                VM_NAME="$2"
+                operation_mode_set=true
+                shift 2
+                ;;
+            --start-vm)
+                START_VM=true
+                VM_ID="$2"
+                operation_mode_set=true
+                shift 2
+                ;;
+            --stop-vm)
+                STOP_VM=true
+                VM_ID="$2"
+                operation_mode_set=true
+                shift 2
+                ;;
+            --delete-vm)
+                DELETE_VM=true
+                VM_ID="$2"
+                operation_mode_set=true
+                shift 2
+                ;;
+            -*) # Unknown flags
+                log_error "Unknown option: $1"
+                exit_script 2
+                ;;
+            *) # Positional argument (CTID)
+                if [ "$operation_mode_set" = true ]; then
+                    log_fatal "Cannot combine CTID with other operation modes (--create-vm, --start-vm, etc.)."
+                fi
+                CTID="$1"
+                operation_mode_set=true
+                shift
+                ;;
         esac
     done
 
-    if [ -z "$CTID" ]; then
-        log_error "Usage: $0 <CTID> [--dry-run]"
-        exit_script 2
+    if [ "$operation_mode_set" = false ]; then
+        log_fatal "Missing required arguments. Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run]"
     fi
 
-    log_info "Received CTID: $CTID"
+    if [ "$SETUP_HYPERVISOR" = true ]; then
+        log_info "Hypervisor setup mode enabled."
+    elif [ "$CREATE_VM" = true ]; then
+        if [ -z "$VM_NAME" ]; then
+            log_fatal "Missing VM name for --create-vm. Usage: $0 --create-vm <vm_name>"
+        fi
+        log_info "VM creation mode for VM: $VM_NAME"
+    elif [ "$START_VM" = true ]; then
+        if [ -z "$VM_ID" ]; then
+            log_fatal "Missing VM ID for --start-vm. Usage: $0 --start-vm <vm_id>"
+        fi
+        log_info "VM start mode for VM ID: $VM_ID"
+    elif [ "$STOP_VM" = true ]; then
+        if [ -z "$VM_ID" ]; then
+            log_fatal "Missing VM ID for --stop-vm. Usage: $0 --stop-vm <vm_id>"
+        fi
+        log_info "VM stop mode for VM ID: $VM_ID"
+    elif [ "$DELETE_VM" = true ]; then
+        if [ -z "$VM_ID" ]; then
+            log_fatal "Missing VM ID for --delete-vm. Usage: $0 --delete-vm <vm_id>"
+        fi
+        log_info "VM delete mode for VM ID: $VM_ID"
+    else
+        if [ -z "$CTID" ]; then
+            log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID> [--dry-run]"
+        fi
+        log_info "Container orchestration mode for CTID: $CTID"
+    fi
+
     if [ "$DRY_RUN" = true ]; then
         log_info "Dry-run mode enabled."
     fi
@@ -374,6 +450,246 @@ create_template_snapshot() {
 }
 
 # =====================================================================================
+# Function: run_qm_command
+# Description: Executes a qm command, logging the command and its output.
+# Arguments:
+#   $@ - The qm command and its arguments.
+# =====================================================================================
+run_qm_command() {
+    local cmd_description="qm $*"
+    log_info "Executing: $cmd_description"
+    if [ "$DRY_RUN" = true ]; then
+        log_info "Dry-run: Skipping actual command execution."
+        return 0
+    fi
+    if ! qm "$@"; then
+        log_error "Command failed: $cmd_description"
+        return 1
+    fi
+    return 0
+}
+
+# =====================================================================================
+# Function: create_vm
+# Description: Creates a new VM based on a definition in the configuration file.
+# Arguments:
+#   $1 - The name of the VM to create.
+# =====================================================================================
+create_vm() {
+    local vm_name="$1"
+    log_info "Attempting to create VM: $vm_name"
+
+    # 1. Parse Configuration
+    local vm_config
+    vm_config=$(jq ".vms[] | select(.name == \"$vm_name\")" "$VM_CONFIG_FILE")
+
+    if [ -z "$vm_config" ]; then
+        log_fatal "VM configuration for '$vm_name' not found in $VM_CONFIG_FILE."
+    fi
+
+    # 2. Apply Defaults
+    local vm_defaults
+    vm_defaults=$(jq ".vm_defaults" "$VM_CONFIG_FILE")
+
+    local template=$(echo "$vm_config" | jq -r ".template // \"$(echo "$vm_defaults" | jq -r ".template")\"")
+    local cores=$(echo "$vm_config" | jq -r ".cores // $(echo "$vm_defaults" | jq -r ".cores")")
+    local memory_mb=$(echo "$vm_config" | jq -r ".memory_mb // $(echo "$vm_defaults" | jq -r ".memory_mb")")
+    local disk_size_gb=$(echo "$vm_config" | jq -r ".disk_size_gb // $(echo "$vm_defaults" | jq -r ".disk_size_gb")")
+    local storage_pool=$(echo "$vm_config" | jq -r ".storage_pool // \"$(echo "$vm_defaults" | jq -r ".storage_pool")\"")
+    local network_bridge=$(echo "$vm_config" | jq -r ".network_bridge // \"$(echo "$vm_defaults" | jq -r ".network_bridge")\"")
+    local post_create_scripts=$(echo "$vm_config" | jq -c ".post_create_scripts // []")
+
+    # Generate a unique VM ID (e.g., starting from 9000 and finding the next available)
+    local vm_id=9000
+    while qm status "$vm_id" > /dev/null 2>&1; do
+        vm_id=$((vm_id + 1))
+    done
+    log_info "Assigned VM ID: $vm_id"
+
+    # 3. Create VM
+    log_info "Creating VM $vm_name (ID: $vm_id) from template $template..."
+    local qm_create_cmd=(
+        qm create "$vm_id"
+        --name "$vm_name"
+        --memory "$memory_mb"
+        --cores "$cores"
+        --net0 "virtio,bridge=${network_bridge}"
+        --ostype "l26" # Assuming Linux 2.6+ kernel
+        --scsi0 "${storage_pool}:${disk_size_gb},import-from=${template}"
+    )
+
+    if ! run_qm_command "${qm_create_cmd[@]}"; then
+        log_fatal "'qm create' command failed for VM $vm_name (ID: $vm_id)."
+    fi
+
+    # Set boot order
+    log_info "Setting boot order for VM $vm_id..."
+    if ! run_qm_command set "$vm_id" --boot "order=scsi0"; then
+        log_fatal "'qm set boot order' command failed for VM $vm_id."
+    fi
+
+    log_info "VM $vm_name (ID: $vm_id) created successfully."
+
+    # 4. Post-Creation Setup
+    if [ "$(echo "$post_create_scripts" | jq 'length')" -gt 0 ]; then
+        log_info "Executing post-creation scripts for VM $vm_name (ID: $vm_id)..."
+        # Start the VM to run post-creation scripts
+        start_vm "$vm_id"
+
+        # Wait for VM to boot and get an IP address (simplified, can be improved)
+        log_info "Waiting for VM $vm_id to boot and acquire an IP address..."
+        sleep 30 # Adjust as needed
+
+        for script in $(echo "$post_create_scripts" | jq -r '.[]'); do
+            local script_path="$(dirname "$0")/bin/${script}" # Assuming scripts are in this path
+            log_info "Executing post-create script: $script for VM $vm_id"
+            if [ ! -f "$script_path" ]; then
+                log_fatal "Post-create script not found at $script_path."
+            fi
+            # This assumes the script can be run remotely, e.g., via SSH or qm agent
+            # For simplicity, we'll just log its execution here.
+            # In a real scenario, you'd use `qm agent exec` or SSH.
+            log_info "Simulating execution of $script inside VM $vm_id."
+            # Example: qm agent "$vm_id" exec -- "$script_path"
+            if ! "$script_path" "$vm_id"; then # Passing VM_ID to the script
+                log_fatal "Post-create script '$script' failed for VM $vm_id."
+            fi
+        done
+        log_info "All post-creation scripts executed for VM $vm_name (ID: $vm_id)."
+    else
+        log_info "No post-creation scripts defined for VM $vm_name."
+    fi
+
+    log_info "VM $vm_name (ID: $vm_id) is ready."
+}
+
+# =====================================================================================
+# Function: start_vm
+# Description: Starts an existing VM.
+# Arguments:
+#   $1 - The ID of the VM to start.
+# =====================================================================================
+start_vm() {
+    local vm_id="$1"
+    log_info "Attempting to start VM ID: $vm_id"
+
+    if ! qm status "$vm_id" > /dev/null 2>&1; then
+        log_fatal "VM ID $vm_id does not exist."
+    fi
+
+    if qm status "$vm_id" | grep -q "running"; then
+        log_info "VM ID $vm_id is already running."
+        return 0
+    fi
+
+    if ! run_qm_command start "$vm_id"; then
+        log_fatal "'qm start' command failed for VM ID $vm_id."
+    fi
+    log_info "VM ID $vm_id started successfully."
+}
+
+# =====================================================================================
+# Function: stop_vm
+# Description: Stops an existing VM.
+# Arguments:
+#   $1 - The ID of the VM to stop.
+# =====================================================================================
+stop_vm() {
+    local vm_id="$1"
+    log_info "Attempting to stop VM ID: $vm_id"
+
+    if ! qm status "$vm_id" > /dev/null 2>&1; then
+        log_fatal "VM ID $vm_id does not exist."
+    fi
+
+    if qm status "$vm_id" | grep -q "stopped"; then
+        log_info "VM ID $vm_id is already stopped."
+        return 0
+    fi
+
+    if ! run_qm_command stop "$vm_id"; then
+        log_fatal "'qm stop' command failed for VM ID $vm_id."
+    fi
+    log_info "VM ID $vm_id stopped successfully."
+}
+
+# =====================================================================================
+# Function: delete_vm
+# Description: Deletes an existing VM.
+# Arguments:
+#   $1 - The ID of the VM to delete.
+# =====================================================================================
+delete_vm() {
+    local vm_id="$1"
+    log_info "Attempting to delete VM ID: $vm_id"
+
+    if ! qm status "$vm_id" > /dev/null 2>&1; then
+        log_info "VM ID $vm_id does not exist. Nothing to delete."
+        return 0
+    fi
+
+    # Ensure VM is stopped before deleting
+    if qm status "$vm_id" | grep -q "running"; then
+        log_info "VM ID $vm_id is running. Attempting to stop before deletion."
+        stop_vm "$vm_id"
+    fi
+
+    if ! run_qm_command destroy "$vm_id"; then
+        log_fatal "'qm destroy' command failed for VM ID $vm_id."
+    fi
+    log_info "VM ID $vm_id deleted successfully."
+}
+
+# =====================================================================================
+# Function: handle_hypervisor_setup_state
+# Description: Orchestrates the execution of hypervisor setup scripts.
+# =====================================================================================
+handle_hypervisor_setup_state() {
+    log_info "Starting hypervisor setup orchestration."
+
+    # 1. Read and validate hypervisor_config.json
+    log_info "Reading and validating hypervisor configuration from $HYPERVISOR_CONFIG_FILE..."
+    if [ ! -f "$HYPERVISOR_CONFIG_FILE" ]; then
+        log_fatal "Hypervisor configuration file not found at $HYPERVISOR_CONFIG_FILE."
+    fi
+    if [ ! -f "$HYPERVISOR_CONFIG_SCHEMA_FILE" ]; then
+        log_fatal "Hypervisor configuration schema file not found at $HYPERVISOR_CONFIG_SCHEMA_FILE."
+    fi
+
+    if ! ajv validate -s "$HYPERVISOR_CONFIG_SCHEMA_FILE" -d "$HYPERVISOR_CONFIG_FILE"; then
+        log_fatal "Hypervisor configuration validation failed. Please check $HYPERVISOR_CONFIG_FILE against $HYPERVISOR_CONFIG_SCHEMA_FILE."
+    fi
+    log_info "Hypervisor configuration validated successfully."
+
+    # 2. Execute hypervisor feature scripts in sequence
+    log_info "Executing hypervisor setup feature scripts..."
+
+    local hypervisor_scripts=(
+        "hypervisor_initial_setup.sh"
+        "hypervisor_feature_install_nvidia.sh"
+        "hypervisor_feature_create_admin_user.sh"
+        "hypervisor_feature_setup_zfs.sh"
+        "hypervisor_feature_setup_nfs.sh"
+        "hypervisor_feature_setup_samba.sh"
+    )
+
+    for script_name in "${hypervisor_scripts[@]}"; do
+        local script_path="$(dirname "$0")/hypervisor_setup/$script_name"
+        log_info "Executing hypervisor script: $script_name"
+
+        if [ ! -f "$script_path" ]; then
+            log_fatal "Hypervisor setup script not found at $script_path."
+        fi
+
+        if ! "$script_path"; then
+            log_fatal "Hypervisor setup script '$script_name' failed."
+        fi
+    done
+
+    log_info "All hypervisor setup scripts executed successfully."
+}
+
+# =====================================================================================
 # Function: setup_logging
 # Description: Sets up the logging by creating the log directory and file.
 # =====================================================================================
@@ -407,46 +723,59 @@ main() {
     log_info "============================================================"
 
     parse_arguments "$@"
-    validate_inputs
-    # --- Stateless Orchestration Workflow ---
-    log_info "Starting stateless orchestration for CTID $CTID..."
 
-    # 1. Ensure Container Exists
-    if ! pct status "$CTID" > /dev/null 2>&1; then
-        log_info "Container $CTID does not exist. Proceeding with creation..."
-        handle_defined_state
+    if [ "$SETUP_HYPERVISOR" = true ]; then
+        handle_hypervisor_setup_state
+    elif [ "$CREATE_VM" = true ]; then
+        create_vm "$VM_NAME"
+    elif [ "$START_VM" = true ]; then
+        start_vm "$VM_ID"
+    elif [ "$STOP_VM" = true ]; then
+        stop_vm "$VM_ID"
+    elif [ "$DELETE_VM" = true ]; then
+        delete_vm "$VM_ID"
     else
-        log_info "Container $CTID already exists. Skipping creation."
+        validate_inputs
+        # --- Stateless Orchestration Workflow for LXC Containers ---
+        log_info "Starting stateless orchestration for CTID $CTID..."
+
+        # 1. Ensure Container Exists
+        if ! pct status "$CTID" > /dev/null 2>&1; then
+            log_info "Container $CTID does not exist. Proceeding with creation..."
+            handle_defined_state
+        else
+            log_info "Container $CTID already exists. Skipping creation."
+        fi
+
+        # 2. Ensure Container is Configured
+        # The apply_configurations function is idempotent and can be run safely.
+        log_info "Ensuring container $CTID is correctly configured..."
+        apply_configurations
+
+        # 3. Ensure Container is Running
+        if ! pct status "$CTID" | grep -q "running"; then
+            log_info "Container $CTID is not running. Attempting to start..."
+            start_container
+        else
+            log_info "Container $CTID is already running."
+        fi
+
+        # 4. Apply Features
+        # The feature scripts are designed to be idempotent.
+        log_info "Applying all features to container $CTID..."
+        apply_features
+
+        # 5. Run Application Script
+        # The application script should also be idempotent.
+        log_info "Executing application script for container $CTID..."
+        run_application_script
+
+        # 6. Create Template Snapshot
+        # If the container is a template, create a snapshot.
+        create_template_snapshot
+
+        log_info "Stateless orchestration for CTID $CTID completed."
     fi
-
-    # 2. Ensure Container is Configured
-    # The apply_configurations function is idempotent and can be run safely.
-    log_info "Ensuring container $CTID is correctly configured..."
-    apply_configurations
-
-    # 3. Ensure Container is Running
-    if ! pct status "$CTID" | grep -q "running"; then
-        log_info "Container $CTID is not running. Attempting to start..."
-        start_container
-    else
-        log_info "Container $CTID is already running."
-    fi
-
-    # 4. Apply Features
-    # The feature scripts are designed to be idempotent.
-    log_info "Applying all features to container $CTID..."
-    apply_features
-
-    # 5. Run Application Script
-    # The application script should also be idempotent.
-    log_info "Executing application script for container $CTID..."
-    run_application_script
-
-    # 6. Create Template Snapshot
-    # If the container is a template, create a snapshot.
-    create_template_snapshot
-
-    log_info "Stateless orchestration for CTID $CTID completed."
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Finished"

@@ -18,6 +18,15 @@ The orchestrator is built around a state machine and a feature-based customizati
 -   **Logging:** Comprehensive logging provides a clear audit trail of the script's execution.
 -   **Dry-Run Mode:** A `--dry-run` flag allows for safe validation of the configuration and script logic without making any actual changes to the system.
 
+## Dual-Mode Operation
+
+The orchestrator now operates in two primary modes:
+
+-   **Hypervisor Setup (`--setup-hypervisor`)**: This mode is responsible for the initial configuration of the Proxmox host itself. It reads its configuration from `hypervisor_config.json` and executes a series of modular scripts to set up storage, networking, users, and other system-level features.
+-   **LXC Provisioning**: This is the original mode of operation, which focuses on creating and configuring LXC containers based on definitions in `phoenix_lxc_configs.json`.
+
+This unified approach allows the `phoenix_orchestrator.sh` script to be the single entry point for the entire lifecycle of the hypervisor and its containers.
+
 ## The State Machine
 
 The state of each container is stored in `/var/lib/phoenix_hypervisor/state/<CTID>.state`. The script transitions the container through the following states:
@@ -55,7 +64,15 @@ The orchestrator relies on the `phoenix_lxc_configs.json` file for all container
 
 ## How to Use the Script
 
-### Basic Usage
+### Hypervisor Setup
+
+To perform the initial, idempotent setup of the hypervisor, use the `--setup-hypervisor` flag. The script will read its configuration from `etc/hypervisor_config.json` and apply all system-level settings.
+
+```bash
+./phoenix_orchestrator.sh --setup-hypervisor
+```
+
+### LXC Container Provisioning
 
 To provision a container, simply run the script with the container's ID (CTID) as an argument:
 

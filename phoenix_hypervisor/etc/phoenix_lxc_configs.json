@@ -138,6 +138,153 @@
             "vllm_tensor_parallel_size": 2,
             "vllm_gpu_memory_utilization": 0.85,
             "vllm_max_model_len": 8192
+        },
+        "951": {
+            "name": "vllm-Qwen8-embed",
+            "memory_mb": 72000,
+            "cores": 12,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.151/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B1",
+            "gpu_assignment": "0,1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "920",
+            "features": [
+                "vllm"
+            ]
+        },
+        "952": {
+            "name": "qdrant-lxc",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.152/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B2",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "953": {
+            "name": "gpu-services-lxc",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.153/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B3",
+            "gpu_assignment": "0,1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "901",
+            "features": [
+                "nvidia"
+            ]
+        },
+        "954": {
+            "name": "n8n-lxc",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.154/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B4",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "955": {
+            "name": "ollamaBase",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.155/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B5",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "956": {
+            "name": "openWebUIBase",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.156/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B6",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "957": {
+            "name": "llamacppBase",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.157/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B7",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
         }
     }
 }

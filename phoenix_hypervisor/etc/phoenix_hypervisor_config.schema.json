@@ -171,6 +171,95 @@
             ],
             "additionalProperties": false
         },
+        "vm_defaults": {
+            "type": "object",
+            "description": "Default settings for VM creation, overridable by individual VM configs.",
+            "properties": {
+                "template": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Default VM template to use."
+                },
+                "cores": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Default CPU cores for VMs."
+                },
+                "memory_mb": {
+                    "type": "integer",
+                    "minimum": 512,
+                    "description": "Default memory (RAM) in MB for VMs."
+                },
+                "disk_size_gb": {
+                    "type": "integer",
+                    "minimum": 10,
+                    "description": "Default disk size in GB for VMs."
+                },
+                "storage_pool": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Default storage pool for VM disks."
+                },
+                "network_bridge": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Default network bridge for VMs."
+                }
+            },
+            "required": [
+                "template",
+                "cores",
+                "memory_mb",
+                "disk_size_gb",
+                "storage_pool",
+                "network_bridge"
+            ],
+            "additionalProperties": false
+        },
+        "vms": {
+            "type": "array",
+            "description": "Array of VM configurations.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Name of the VM."
+                    },
+                    "cores": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "CPU cores for the VM."
+                    },
+                    "memory_mb": {
+                        "type": "integer",
+                        "minimum": 512,
+                        "description": "Memory (RAM) in MB for the VM."
+                    },
+                    "disk_size_gb": {
+                        "type": "integer",
+                        "minimum": 10,
+                        "description": "Disk size in GB for the VM."
+                    },
+                    "post_create_scripts": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "description": "List of scripts to execute inside the VM after creation."
+                    }
+                },
+                "required": [
+                    "name",
+                    "cores",
+                    "memory_mb",
+                    "disk_size_gb"
+                ],
+                "additionalProperties": false
+            }
+        },
         "behavior": {
             "type": "object",
             "description": "Runtime behavior flags for the scripts.",
@@ -198,6 +287,8 @@
         "core_paths",
         "network",
         "proxmox_defaults",
+        "vm_defaults",
+        "vms",
         "behavior"
     ],
     "additionalProperties": false

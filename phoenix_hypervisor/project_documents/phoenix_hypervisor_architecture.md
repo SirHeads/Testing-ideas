@@ -63,17 +63,44 @@ graph TD
     F --> H[Stop Execution];
 ```
 
+### Hypervisor Setup Workflow
+
+```mermaid
+graph TD
+    A[Start: phoenix_orchestrator.sh --setup-hypervisor] --> B{Load hypervisor_config.json};
+    B --> C[Execute hypervisor_initial_setup.sh];
+    C --> D[Iterate through enabled features];
+    D --> E{Feature Script Exists?};
+    E -- Yes --> F[Execute Feature Script e.g., setup_zfs.sh];
+    E -- No --> G[Log Fatal Error];
+    F --> D;
+    G --> H[Stop Execution];
+    D -- All features processed --> I[End];
+```
+
 ## 4. Script Roles
 
 ### `/bin` Directory
 
-*   **`phoenix_orchestrator.sh`**: The main entry point for the system. It orchestrates the entire container provisioning process, from creation to final customization.
+*   **`phoenix_orchestrator.sh`**: The unified main entry point for the system. It now orchestrates both the initial hypervisor setup and the entire container provisioning process.
 *   **`phoenix_hypervisor_common_utils.sh`**: A library of shared functions for logging, error handling, and interacting with Proxmox (`pct`) and `jq`. It is sourced by all other scripts to ensure a consistent execution environment.
-*   **`phoenix_hypervisor_feature_install_base_setup.sh`**: A feature script that performs the initial OS configuration, including installing essential packages and setting the system locale.
-*   **`phoenix_hypervisor_feature_install_docker.sh`**: A feature script that installs and configures Docker Engine, the NVIDIA Container Toolkit (if a GPU is assigned), and the Portainer agent or server.
-*   **`phoenix_hypervisor_feature_install_nvidia.sh`**: A feature script that configures GPU passthrough on the Proxmox host and installs the NVIDIA driver and CUDA toolkit inside the container.
-*   **`phoenix_hypervisor_feature_install_vllm.sh`**: A feature script that installs the vLLM inference server from source, including all necessary dependencies such as Python and PyTorch.
-*   **`phoenix_hypervisor_lxc_950.sh`**: An application script that creates and manages a systemd service for the vLLM API server, ensuring it is robust and persistent.
+
+### `/bin/hypervisor_setup` Directory
+
+*   **`hypervisor_initial_setup.sh`**: Performs the first-time setup of the hypervisor, including system updates and package installation.
+*   **`hypervisor_feature_create_admin_user.sh`**: Creates a new administrative user with sudo privileges.
+*   **`hypervisor_feature_install_nvidia.sh`**: Installs the NVIDIA driver on the Proxmox host.
+*   **`hypervisor_feature_setup_nfs.sh`**: Configures NFS shares.
+*   **`hypervisor_feature_setup_samba.sh`**: Configures Samba shares.
+*   **`hypervisor_feature_setup_zfs.sh`**: Creates and configures ZFS pools and datasets.
+
+### `/bin/lxc_setup` Directory
+
+*   **`phoenix_hypervisor_feature_install_base_setup.sh`**: A feature script that performs the initial OS configuration for an LXC container.
+*   **`phoenix_hypervisor_feature_install_docker.sh`**: A feature script that installs and configures Docker Engine within a container.
+*   **`phoenix_hypervisor_feature_install_nvidia.sh`**: A feature script that configures GPU passthrough and installs the NVIDIA driver inside a container.
+*   **`phoenix_hypervisor_feature_install_vllm.sh`**: A feature script that installs the vLLM inference server from source.
+*   **`phoenix_hypervisor_lxc_950.sh`**: An application script that creates and manages a systemd service for the vLLM API server.
 
 ## 5. Observations and Recommendations
 
