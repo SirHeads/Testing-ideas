@@ -1,11 +1,25 @@
 ---
-title: "LXC Container 953: api-gateway-lxc - Architecture and Implementation Plan"
-tags: ["LXC Container", "API Gateway", "Nginx", "Reverse Proxy", "Architecture", "Implementation Plan", "Phoenix Hypervisor"]
-summary: "This document outlines the architectural plan for the creation and configuration of LXC container `953`, named `api-gateway-lxc`. This container will function as a high-performance, CPU-only reverse proxy and API gateway, serving as the central, secure entry point for all backend services."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: 'LXC Container 953: api-gateway-lxc - Architecture and Implementation Plan'
+summary: This document outlines the architectural plan for the creation and configuration
+  of LXC container `953`, named `api-gateway-lxc`. This container will function as
+  a high-performance, CPU-only reverse proxy and API gateway, serving as the central,
+  secure entry point for all backend services.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- API Gateway
+- Nginx
+- Reverse Proxy
+- Architecture
+- Implementation Plan
+- Phoenix Hypervisor
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architectural plan for the creation and configuration of LXC container `953`, which is being re-scoped and renamed to `api-gateway-lxc`. This container will function as a high-performance, CPU-only reverse proxy and API gateway. It will serve as the central, secure entry point for all backend services, such as the vLLM containers, aligning with a scalable and manageable microservice architecture.
 
 The setup will be fully automated through a dedicated application script and managed via the central `phoenix_lxc_configs.json` file, ensuring consistency with the platform's standards.

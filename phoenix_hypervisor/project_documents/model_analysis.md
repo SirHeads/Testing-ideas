@@ -1,11 +1,26 @@
 ---
-title: "Architectural Analysis of phoenix_hypervisor for phoenix-scripts Refactoring"
-tags: ["Architectural Analysis", "Phoenix Hypervisor", "Refactoring", "phoenix-scripts", "Project Structure", "Configuration Management", "Modularity", "Orchestration Strategy"]
-summary: "This document presents an architectural analysis of the `phoenix_hypervisor` project, identifying key design patterns and structural improvements for refactoring the `phoenix-scripts` project, focusing on project structure, configuration management, modularity, and orchestration strategy."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Architectural Analysis of phoenix_hypervisor for phoenix-scripts Refactoring
+summary: This document presents an architectural analysis of the `phoenix_hypervisor`
+  project, identifying key design patterns and structural improvements for refactoring
+  the `phoenix-scripts` project, focusing on project structure, configuration management,
+  modularity, and orchestration strategy.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Architectural Analysis
+- Phoenix Hypervisor
+- Refactoring
+- phoenix-scripts
+- Project Structure
+- Configuration Management
+- Modularity
+- Orchestration Strategy
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document presents an architectural analysis of the `phoenix_hypervisor` project. The goal is to identify key design patterns and structural improvements that can serve as a model for the refactoring of the `phoenix-scripts` project. The analysis focuses on four key areas: project structure, configuration management, modularity, and orchestration strategy.
 
 ## Introduction

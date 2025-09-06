@@ -1,11 +1,29 @@
 ---
-title: "Project Goals for AI/ML Desktop Environment"
-tags: ["AI/ML", "Desktop Environment", "LXC", "Proxmox", "GPU Utilization", "Remote Access", "RustDesk", "NVIDIA GPU Passthrough", "Scalability", "Security", "Tooling"]
-summary: "This document outlines the primary goals for the AI/ML Desktop Environment project, focusing on efficient resource utilization, high-performance remote access, robust GPU passthrough, scalability, security, and comprehensive tooling within an LXC container on Proxmox."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Project Goals for AI/ML Desktop Environment
+summary: This document outlines the primary goals for the AI/ML Desktop Environment
+  project, focusing on efficient resource utilization, high-performance remote access,
+  robust GPU passthrough, scalability, security, and comprehensive tooling within
+  an LXC container on Proxmox.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- AI/ML
+- Desktop Environment
+- LXC
+- Proxmox
+- GPU Utilization
+- Remote Access
+- RustDesk
+- NVIDIA GPU Passthrough
+- Scalability
+- Security
+- Tooling
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the primary goals for the AI/ML Desktop Environment project.
 
 - **Efficient Resource Utilization:** Leverage LXC containers to minimize overhead and maximize resource allocation for AI/ML workloads, ensuring that the dual NVIDIA 5060 Ti GPUs are used effectively.

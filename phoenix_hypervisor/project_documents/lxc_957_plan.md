@@ -1,11 +1,25 @@
 ---
-title: "LXC Container 957: llamacppBase - Architecture and Implementation Plan"
-tags: ["LXC Container", "llama.cpp", "GPU", "Architecture", "Implementation Plan", "Phoenix Hypervisor", "AI", "Machine Learning"]
-summary: "This document outlines the architectural plan for the creation and configuration of LXC container `957`, designated `llamacppBase`. This container will serve as a standardized, GPU-accelerated base for compiling and running models with `llama.cpp`."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: 'LXC Container 957: llamacppBase - Architecture and Implementation Plan'
+summary: This document outlines the architectural plan for the creation and configuration
+  of LXC container `957`, designated `llamacppBase`. This container will serve as
+  a standardized, GPU-accelerated base for compiling and running models with `llama.cpp`.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- llama.cpp
+- GPU
+- Architecture
+- Implementation Plan
+- Phoenix Hypervisor
+- AI
+- Machine Learning
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architectural plan for the creation and configuration of LXC container `957`, designated `llamacppBase`. This container will serve as a standardized, GPU-accelerated base for compiling and running models with `llama.cpp`. The plan ensures alignment with the platform's existing standards for GPU passthrough, driver installation, and automated setup, drawing from the established architecture of `BaseTemplateGPU` (CTID `901`) and `ollamaBase` (CTID `955`).
 
 The setup will be fully automated through a dedicated application script, `phoenix_hypervisor_lxc_957.sh`, and managed via the central `phoenix_lxc_configs.json` file.

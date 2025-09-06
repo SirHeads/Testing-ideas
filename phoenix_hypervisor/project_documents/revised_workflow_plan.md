@@ -1,11 +1,27 @@
 ---
-title: "Revised Workflow Plan for LXC Container Creation"
-tags: ["LXC Container", "Workflow Plan", "Phoenix Hypervisor", "Refactoring", "Orchestrator", "Modularity", "Container Creation", "Cloning", "Provisioning"]
-summary: "This document outlines a revised architectural workflow for the LXC container creation process within the Phoenix Hypervisor system, focusing on refactoring existing logic to delegate responsibilities to specialized helper scripts for improved modularity and maintainability."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Revised Workflow Plan for LXC Container Creation
+summary: This document outlines a revised architectural workflow for the LXC container
+  creation process within the Phoenix Hypervisor system, focusing on refactoring existing
+  logic to delegate responsibilities to specialized helper scripts for improved modularity
+  and maintainability.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- Workflow Plan
+- Phoenix Hypervisor
+- Refactoring
+- Orchestrator
+- Modularity
+- Container Creation
+- Cloning
+- Provisioning
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines a revised architectural workflow for the LXC container creation process within the Phoenix Hypervisor system. The primary goal is to refactor the existing logic to address a critical segmentation fault in `phoenix_establish_hypervisor.sh` by delegating responsibilities to specialized helper scripts. This new design simplifies the main orchestrator, improves modularity, and enhances maintainability.
 
 ## 1. Introduction

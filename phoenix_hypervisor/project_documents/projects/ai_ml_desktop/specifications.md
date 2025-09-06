@@ -1,11 +1,30 @@
 ---
-title: "Technical Specifications for AI/ML Desktop Environment"
-tags: ["AI/ML", "Desktop Environment", "LXC", "Proxmox", "Technical Specifications", "GPU Passthrough", "NVIDIA", "XFCE", "RustDesk", "CUDA", "TensorFlow", "PyTorch", "Jupyter"]
-summary: "This document provides detailed technical specifications for the setup and configuration of the AI/ML Desktop Environment, including LXC container configuration, GPU passthrough settings, software installation commands, and performance optimizations."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Technical Specifications for AI/ML Desktop Environment
+summary: This document provides detailed technical specifications for the setup and
+  configuration of the AI/ML Desktop Environment, including LXC container configuration,
+  GPU passthrough settings, software installation commands, and performance optimizations.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- AI/ML
+- Desktop Environment
+- LXC
+- Proxmox
+- Technical Specifications
+- GPU Passthrough
+- NVIDIA
+- XFCE
+- RustDesk
+- CUDA
+- TensorFlow
+- PyTorch
+- Jupyter
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document provides detailed technical specifications for the setup and configuration of the AI/ML Desktop Environment.
 
 ## LXC Container Configuration

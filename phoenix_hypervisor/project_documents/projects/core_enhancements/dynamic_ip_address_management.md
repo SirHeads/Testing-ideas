@@ -1,8 +1,21 @@
+---
+title: Document Title
+summary: A brief, one-to-two-sentence summary of the document's purpose and content.
+document_type: Strategy | Technical | Business Case | Report
+status: "Draft"
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Author Name
+owner: Team/Individual Name
+tags: []
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
 # Dynamic IP Address Management
 
 ## 1. Introduction
 
-This document outlines a proposal for integrating dynamic IP address management into the Phoenix Hypervisor system. The current IP address assignment is static and requires manual configuration, which can be inefficient and prone to error. This enhancement will automate the allocation and management of IP addresses for newly provisioned LXC containers.
+This document outlines a proposal for integrating dynamic IP address management into the Phoenix Hypervisor system. The current IP address assignment is static and requires manual configuration, which can be inefficient and prone to error. This enhancement will automate the allocation and management of IP addresses for newly provisioned LXC containers and Virtual Machines.
 
 ## 2. Problem Statement
 

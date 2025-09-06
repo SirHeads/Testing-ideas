@@ -1,11 +1,25 @@
 ---
-title: "LXC Container 956: openWebUIBase - Architecture and Implementation Plan"
-tags: ["LXC Container", "Open WebUI", "Ollama", "Architecture", "Implementation Plan", "Phoenix Hypervisor", "Web Interface"]
-summary: "This document outlines the architectural plan for the creation and configuration of LXC container `956`, designated `openWebUIBase`. This container will provide a web-based user interface for interacting with the Ollama API, which is hosted in the `ollamaBase` container (CTID `955`)."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: 'LXC Container 956: openWebUIBase - Architecture and Implementation Plan'
+summary: This document outlines the architectural plan for the creation and configuration
+  of LXC container `956`, designated `openWebUIBase`. This container will provide
+  a web-based user interface for interacting with the Ollama API, which is hosted
+  in the `ollamaBase` container (CTID `955`).
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- Open WebUI
+- Ollama
+- Architecture
+- Implementation Plan
+- Phoenix Hypervisor
+- Web Interface
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architectural plan for the creation and configuration of LXC container `956`, designated `openWebUIBase`. This container will provide a web-based user interface for interacting with the Ollama API, which is hosted in the `ollamaBase` container (CTID `955`).
 
 The plan ensures that the container is configured for seamless network communication with the Ollama container, provides persistent storage for user data and configurations, and is deployed in a fully automated and repeatable manner. The setup will be managed through the central `phoenix_lxc_configs.json` file and automated by a dedicated application script, `phoenix_hypervisor_lxc_956.sh`.

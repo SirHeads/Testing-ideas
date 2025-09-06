@@ -1,11 +1,28 @@
 ---
-title: "LXC Container 955: ollamaBase - Architecture and Implementation Plan"
-tags: ["LXC Container", "Ollama", "Architecture", "Implementation Plan", "Phoenix Hypervisor", "GPU", "AI", "Machine Learning"]
-summary: "This document outlines the architectural plan for the creation and configuration of LXC container `955`, designated `ollamaBase`. This container will serve as a standardized, GPU-accelerated base for running Ollama models. The plan ensures alignment with the platform's existing standards for GPU passthrough, driver installation, and automated setup, drawing from the established architecture of `BaseTemplateGPU` (CTID `901`)."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: 'LXC Container 955: ollamaBase - Architecture and Implementation Plan'
+summary: This document outlines the architectural plan for the creation and configuration
+  of LXC container `955`, designated `ollamaBase`. This container will serve as a
+  standardized, GPU-accelerated base for running Ollama models. The plan ensures alignment
+  with the platform's existing standards for GPU passthrough, driver installation,
+  and automated setup, drawing from the established architecture of `BaseTemplateGPU`
+  (CTID `901`).
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- Ollama
+- Architecture
+- Implementation Plan
+- Phoenix Hypervisor
+- GPU
+- AI
+- Machine Learning
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architectural plan for the creation and configuration of LXC container `955`, designated `ollamaBase`. This container will serve as a standardized, GPU-accelerated base for running Ollama models. The plan ensures alignment with the platform's existing standards for GPU passthrough, driver installation, and automated setup, drawing from the established architecture of `BaseTemplateGPU` (CTID `901`).
 
 The setup will be fully automated through a dedicated application script, `phoenix_hypervisor_lxc_955.sh`, and managed via the central `phoenix_lxc_configs.json` file.

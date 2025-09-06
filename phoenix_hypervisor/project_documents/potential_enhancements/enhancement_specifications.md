@@ -1,11 +1,27 @@
 ---
-title: "Phoenix Hypervisor Enhancement Specifications"
-tags: ["Phoenix Hypervisor", "Enhancements", "Specifications", "Dynamic IP Address Management", "Secret Management", "Advanced Configuration Validation", "Expanded Feature Library", "Proxmox SDN", "AWS Secrets Manager", "Bash Scripting"]
-summary: "This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project, including dynamic IP address management, secret management, advanced configuration validation, and an expanded feature library."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Phoenix Hypervisor Enhancement Specifications
+summary: This document outlines the specifications for proposed enhancements to the
+  Phoenix Hypervisor project, including dynamic IP address management, secret management,
+  advanced configuration validation, and an expanded feature library.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Phoenix Hypervisor
+- Enhancements
+- Specifications
+- Dynamic IP Address Management
+- Secret Management
+- Advanced Configuration Validation
+- Expanded Feature Library
+- Proxmox SDN
+- AWS Secrets Manager
+- Bash Scripting
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project, based on recent investigation reports.
 
 ---
@@ -13,7 +29,7 @@ This document outlines the specifications for proposed enhancements to the Phoen
 ## 1. Dynamic IP Address Management
 
 ### Summary
-This enhancement proposes leveraging Proxmox VE's built-in Software-Defined Networking (SDN) capabilities to manage IP addresses for LXC containers dynamically. This approach eliminates the need for manual static IP assignment, streamlining container provisioning and reducing configuration overhead.
+This enhancement proposes leveraging Proxmox VE's built-in Software-Defined Networking (SDN) capabilities to manage IP addresses for LXC containers and Virtual Machines dynamically. This approach eliminates the need for manual static IP assignment, streamlining container and VM provisioning and reducing configuration overhead.
 
 ### Recommended Solution
 Utilize Proxmox VE's integrated SDN with IPAM (IP Address Management) and DHCP services. This is a native solution that minimizes complexity and avoids reliance on external tools.
@@ -65,7 +81,7 @@ Use **AWS Secrets Manager**. As a fully managed service, it reduces the operatio
 ## 3. Advanced Configuration Validation
 
 ### Summary
-This enhancement proposes adding a robust validation layer to check for logical errors in the LXC configuration files (`phoenix_lxc_configs.json`) before provisioning begins. This will prevent common misconfigurations and provide immediate, actionable feedback.
+This enhancement proposes adding a robust validation layer to check for logical errors in the LXC and VM configuration files before provisioning begins. This will prevent common misconfigurations and provide immediate, actionable feedback.
 
 ### Recommended Solution
 Implement a new Bash function, `validate_lxc_config_logic`, within the existing `phoenix_orchestrator.sh` script. This leverages the current infrastructure (Bash, `jq`, logging) and avoids introducing new dependencies.
@@ -92,7 +108,7 @@ Implement a new Bash function, `validate_lxc_config_logic`, within the existing 
 ## 4. Expanded Feature Library
 
 ### Summary
-This enhancement proposes creating a formal, extensible feature library to standardize the process of adding new capabilities (e.g., databases, web servers) to LXC containers.
+This enhancement proposes creating a formal, extensible feature library to standardize the process of adding new capabilities (e.g., databases, web servers) to LXC containers and Virtual Machines.
 
 ### Recommended Solution
 Adopt a phased approach, starting with the creation of a dedicated directory structure and migrating existing features. This will be followed by the gradual addition of new, high-value features, supported by a documented contribution workflow.

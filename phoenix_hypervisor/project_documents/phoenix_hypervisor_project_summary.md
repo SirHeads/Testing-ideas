@@ -1,16 +1,33 @@
 ---
-title: "Phoenix Hypervisor Project Summary"
-tags: ["Phoenix Hypervisor", "Project Summary", "LXC", "Container Orchestration", "AI Workloads", "Machine Learning", "Proxmox", "Declarative Configuration", "State Machine", "Feature-Based Customization"]
-summary: "This document provides a summary of the Phoenix Hypervisor project, outlining its goals, capabilities, and core architectural concepts for orchestrating LXC containers tailored for AI and machine learning workloads on Proxmox."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Phoenix Hypervisor Project Summary
+summary: This document provides a summary of the Phoenix Hypervisor project, outlining
+  its goals, capabilities, and core architectural concepts for orchestrating LXC containers and Virtual Machines (VMs)
+  tailored for AI and machine learning workloads on Proxmox.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Phoenix Hypervisor
+- Project Summary
+- LXC
+- VMs
+- Container Orchestration
+- AI Workloads
+- Machine Learning
+- Proxmox
+- Declarative Configuration
+- State Machine
+- Feature-Based Customization
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document provides a summary of the Phoenix Hypervisor project's goals, capabilities, and a post-implementation review of issues and suggested improvements from the initial build phase.
 
 ## Overview
 
-The Phoenix Hypervisor project provides a robust, declarative, and feature-based system for orchestrating the creation and configuration of LXC containers, specifically tailored for AI and machine learning workloads on Proxmox.
+The Phoenix Hypervisor project provides a robust, declarative, and feature-based system for orchestrating the creation and configuration of LXC containers and Virtual Machines (VMs), specifically tailored for AI and machine learning workloads on Proxmox.
 
 The core of the project is the `phoenix_orchestrator.sh` script, a single, idempotent orchestrator that manages the entire lifecycle of a container based on a central JSON configuration file.
 
@@ -28,4 +45,4 @@ The core of the project is the `phoenix_orchestrator.sh` script, a single, idemp
 -   **Feature Scripts (`phoenix_hypervisor_feature_*.sh`):** Modular scripts that provide specific functionalities.
 -   **Application Runners (`phoenix_hypervisor_lxc_*.sh`):** Optional scripts for launching persistent services.
 
-This architecture provides a powerful, flexible, and maintainable platform for managing complex AI-focused LXC environments.
+This architecture provides a powerful, flexible, and maintainable platform for managing complex AI-focused LXC and VM environments.

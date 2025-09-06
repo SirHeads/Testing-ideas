@@ -1,11 +1,30 @@
 ---
-title: "LXC Embedding Setup with Qdrant and vLLM for Roocode"
-tags: ["LXC", "Embedding Setup", "Qdrant", "vLLM", "Roocode", "Semantic Search", "Markdown", "Codebases", "Proxmox", "GPU", "AI", "Machine Learning"]
-summary: "This document outlines the setup for semantic search over markdown documentation and well-commented codebases using high-quality embeddings, involving vLLM for embedding generation and Qdrant for storage and retrieval, all within an LXC container environment on Proxmox."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: LXC Embedding Setup with Qdrant and vLLM for Roocode
+summary: This document outlines the setup for semantic search over markdown documentation
+  and well-commented codebases using high-quality embeddings, involving vLLM for embedding
+  generation and Qdrant for storage and retrieval, all within an LXC container environment
+  on Proxmox.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC
+- Embedding Setup
+- Qdrant
+- vLLM
+- Roocode
+- Semantic Search
+- Markdown
+- Codebases
+- Proxmox
+- GPU
+- AI
+- Machine Learning
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the setup for semantic search over markdown documentation and well-commented codebases (including library docs) using high-quality embeddings. The setup involves:
 - **vLLM**: Serves the `Qwen/Qwen3-Embedding-8B-GGUF:Q8_0` model in an LXC container on a Proxmox server to generate 1024-dim embeddings for text and code chunks.
 - **Qdrant**: Runs in a separate LXC container on the same Proxmox server to store and retrieve embeddings for semantic search.

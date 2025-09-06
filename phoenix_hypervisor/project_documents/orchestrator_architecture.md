@@ -1,16 +1,29 @@
 ---
-title: "Phoenix Orchestrator Architecture"
-tags: ["Phoenix Orchestrator", "Architecture", "LXC", "Container Provisioning", "State Machine", "Configuration Management", "Shell Script"]
-summary: "This document outlines the architecture, state machine, configuration, and usage of the `phoenix_orchestrator.sh` script, the cornerstone of the Phoenix Hypervisor project's container provisioning system."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: Phoenix Orchestrator Architecture
+summary: This document outlines the architecture, state machine, configuration, and
+  usage of the `phoenix_orchestrator.sh` script, the cornerstone of the Phoenix Hypervisor
+  project's container provisioning system.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Phoenix Orchestrator
+- Architecture
+- LXC
+- Container Provisioning
+- State Machine
+- Configuration Management
+- Shell Script
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architecture, state machine, configuration, and usage of the `phoenix_orchestrator.sh` script, the cornerstone of the Phoenix Hypervisor project's container provisioning system.
 
 ## Overview
 
-The `phoenix_orchestrator.sh` script is the cornerstone of the Phoenix Hypervisor project's container provisioning system. It is designed to be a robust, idempotent, and user-friendly tool for creating and configuring LXC containers based on a declarative JSON configuration. This document outlines its architecture, state machine, configuration, and usage.
+The `phoenix_orchestrator.sh` script is the cornerstone of the Phoenix Hypervisor project's virtualization provisioning system. It is designed to be a robust, idempotent, and user-friendly tool for creating and configuring both LXC containers and Virtual Machines (VMs) based on declarative JSON configurations. This document outlines its architecture, state machine, configuration, and usage.
 
 ## Core Architecture
 
@@ -31,7 +44,7 @@ The orchestrator is built around a state machine and a feature-based customizati
 The orchestrator now operates in two primary modes:
 
 -   **Hypervisor Setup (`--setup-hypervisor`)**: This mode is responsible for the initial configuration of the Proxmox host itself. It reads its configuration from `hypervisor_config.json` and executes a series of modular scripts to set up storage, networking, users, and other system-level features.
--   **LXC Provisioning**: This is the original mode of operation, which focuses on creating and configuring LXC containers based on definitions in `phoenix_lxc_configs.json`.
+-   **LXC/VM Provisioning**: This mode of operation focuses on creating and configuring both LXC containers and Virtual Machines based on definitions in `phoenix_lxc_configs.json` and `phoenix_hypervisor_config.json` respectively.
 
 This unified approach allows the `phoenix_orchestrator.sh` script to be the single entry point for the entire lifecycle of the hypervisor and its containers.
 
@@ -80,7 +93,7 @@ To perform the initial, idempotent setup of the hypervisor, use the `--setup-hyp
 ./phoenix_orchestrator.sh --setup-hypervisor
 ```
 
-### LXC Container Provisioning
+### LXC Container and Virtual Machine Provisioning
 
 To provision a container, simply run the script with the container's ID (CTID) as an argument:
 

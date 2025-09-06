@@ -1,11 +1,28 @@
 ---
-title: "LXC Container 951: vllm-granite-embed - Architecture and Implementation Plan"
-tags: ["LXC Container", "vLLM", "granite-embed", "Architecture", "Implementation Plan", "Phoenix Hypervisor", "AI", "Machine Learning", "Embeddings"]
-summary: "This document outlines the architectural plan for the creation and configuration of LXC container `951`, now named `vllm-granite-embed`. This container will host a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model. Its setup will be based on a clone of container `920` and will adapt the configuration of container `950` to support an embedding model."
-version: "1.0.0"
-author: "Phoenix Hypervisor Team"
+title: 'LXC Container 951: vllm-granite-embed - Architecture and Implementation Plan'
+summary: This document outlines the architectural plan for the creation and configuration
+  of LXC container `951`, now named `vllm-granite-embed`. This container will host
+  a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model. Its
+  setup will be based on a clone of container `920` and will adapt the configuration
+  of container `950` to support an embedding model.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- LXC Container
+- vLLM
+- granite-embed
+- Architecture
+- Implementation Plan
+- Phoenix Hypervisor
+- AI
+- Machine Learning
+- Embeddings
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
 ---
-
 This document outlines the architectural plan for the creation and configuration of LXC container `951`, now named `vllm-granite-embed`. This container will host a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model. Its setup will be based on a clone of container `920` and will adapt the configuration of container `950` to support an embedding model.
 
 ## 2. High-Level Plan
