@@ -1,11 +1,12 @@
-# Feature: vLLM
-
-## Summary
+---
+title: "Feature: vLLM"
+tags: ["vLLM", "LLM inference", "AI", "machine learning", "model serving", "Python"]
+summary: "The `vllm` feature automates the installation of the vLLM library, a high-throughput engine for LLM inference. This script prepares a container to serve large language models efficiently."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
 The `vllm` feature automates the installation of the vLLM library, a high-throughput engine for LLM inference. This script prepares a container to serve large language models efficiently.
-
-### RAG Keywords
-vLLM, LLM inference, AI, machine learning, model serving, Python
 
 ## Key Actions
 

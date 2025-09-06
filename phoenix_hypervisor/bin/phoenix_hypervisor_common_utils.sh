@@ -1,11 +1,18 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_common_utils.sh
-# Description: Centralized environment and logging functions for all Phoenix Hypervisor scripts.
-#              This script should be sourced by all other scripts to ensure a consistent
-#              execution environment and standardized logging.
+# Description: Provides centralized environment setup, logging utilities, and common functions
+#              for all Phoenix Hypervisor shell scripts. This script is designed to be sourced
+#              by other scripts to ensure a consistent execution environment and standardized
+#              logging practices across the hypervisor management system.
+# Dependencies: jq, pct, dpkg-query, ping, ip, zfs, zpool, usermod, exportfs, wget, curl, gpg, apt-get
+# Inputs: PHOENIX_DEBUG (environment variable for debug logging), DRY_RUN (environment variable for dry-run mode),
+#         Various function arguments (e.g., CTID, package names, hostnames, subnets, ZFS pool/dataset names,
+#         mount points, usernames, groups, commands, properties, options).
+# Outputs: Log messages to stdout and MAIN_LOG_FILE, queried values from JSON (jq_get_value),
+#          exit codes indicating success or failure.
 # Version: 1.0.0
-# Author: Roo (AI Architect)
+# Author: Phoenix Hypervisor Team
 
 # --- Shell Settings ---
 set -e # Exit immediately if a command exits with a non-zero status.
@@ -23,26 +30,73 @@ export LC_ALL="en_US.UTF-8"
 export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
 
 # --- Logging Functions ---
+# =====================================================================================
+# Function: log_debug
+# Description: Logs a debug message to stdout and the main log file if PHOENIX_DEBUG is true.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   None.
+# =====================================================================================
 log_debug() {
+    # Check if debug mode is enabled
     if [ "$PHOENIX_DEBUG" == "true" ]; then
+        # Log the debug message with timestamp and script name
         echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE"
     fi
 }
 
+# =====================================================================================
+# Function: log_info
+# Description: Logs an informational message to stdout and the main log file.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   None.
+# =====================================================================================
 log_info() {
+    # Log the informational message with timestamp and script name
     echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE"
 }
 
+# =====================================================================================
+# Function: log_warn
+# Description: Logs a warning message to stderr and the main log file.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   None.
+# =====================================================================================
 log_warn() {
+    # Log the warning message with timestamp and script name to stderr
     echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
+# =====================================================================================
+# Function: log_error
+# Description: Logs an error message to stderr and the main log file.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   None.
+# =====================================================================================
 log_error() {
+    # Log the error message with timestamp and script name to stderr
     echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
+# =====================================================================================
+# Function: log_fatal
+# Description: Logs a fatal error message to stderr and the main log file, then exits the script with status 1.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   Exits the script with status 1.
+# =====================================================================================
 log_fatal() {
+    # Log the fatal message with timestamp and script name to stderr
     echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    # Exit the script due to a fatal error
     exit 1
 }
 
@@ -106,14 +160,17 @@ jq_get_value() {
     local jq_query="$2"
     local value
 
+    # Execute jq to query the LXC config file for the specified CTID and query
     value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
 
+    # Check if jq command failed
     if [ "$?" -ne 0 ]; then
         log_error "jq command failed for CTID $ctid with query '${jq_query}'."
         return 1
+    # Check if the value is empty or "null"
     elif [ -z "$value" ] || [ "$value" == "null" ]; then
-        # This is not always an error, some fields are optional.
-        # The calling function should handle empty values if they are not expected.
+        # Note: This is not always an error, as some fields are optional.
+        # The calling function is responsible for handling empty values if they are not expected.
         return 1
     fi
 
@@ -134,11 +191,13 @@ run_pct_command() {
     local pct_args=("$@")
     log_info "Executing: pct ${pct_args[*]}"
 
+    # If DRY_RUN mode is enabled, log the command without executing it
     if [ "$DRY_RUN" = true ]; then
         log_info "DRY-RUN: Would execute 'pct ${pct_args[*]}'"
         return 0
     fi
 
+    # Execute the pct command
     if ! pct "${pct_args[@]}"; then
         log_error "'pct ${pct_args[*]}' command failed."
         return 1
@@ -158,19 +217,25 @@ ensure_nvidia_repo_is_configured() {
     local ctid="$1"
     log_info "Ensuring NVIDIA CUDA repository is configured in CTID $ctid..."
 
+    # Check if the NVIDIA CUDA repository is already configured
     if pct_exec "$ctid" [ -f /etc/apt/sources.list.d/cuda.list ]; then
         log_info "NVIDIA CUDA repository already configured. Skipping."
         return 0
     fi
 
+    # Retrieve NVIDIA repository URL from LXC config file
     local nvidia_repo_url=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu2404.pin"
-    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub"
-    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg"
+    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu2404.pin" # Construct CUDA pin URL
+    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub" # Construct CUDA key URL
+    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg" # Define keyring path
 
+    # Download and install CUDA repository pin
     pct_exec "$ctid" wget -qO /etc/apt/preferences.d/cuda-repository-pin-600 "$cuda_pin_url"
+    # Download and install CUDA public key
     pct_exec "$ctid" curl -fsSL "$cuda_key_url" | pct_exec "$ctid" gpg --dearmor -o "$cuda_keyring_path"
+    # Add CUDA repository to sources list
     pct_exec "$ctid" bash -c "echo \"deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /\" > /etc/apt/sources.list.d/cuda.list"
+    # Update apt package list
     pct_exec "$ctid" apt-get update
 }
 
@@ -178,55 +243,70 @@ ensure_nvidia_repo_is_configured() {
 # This block ensures that the environment is initialized only when the script is run directly,
 # not when sourced by other scripts.
 if [[ "${BASH_SOURCE}" == "${0}" ]]; then
-    # Initialize/Clear the main log file only if this is the main script execution
+    # Initialize/Clear the main log file only if this is the main script execution, not when sourced.
     > "$MAIN_LOG_FILE"
     log_info "Environment script initialized."
 fi
 
 # --- Common Utility Functions from phoenix-scripts/common.sh ---
 
-# check_root: Ensures script runs as root
-# Args: None
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.2", "keywords": ["root", "auth"], "comment_type": "block"}
+# =====================================================================================
+# Function: check_root
+# Description: Ensures that the script is being run with root privileges.
+# Arguments:
+#   None.
+# Returns:
+#   Exits with a fatal error if the script is not run as root.
+# =====================================================================================
 check_root() {
+  # Check if the effective user ID is not 0 (root)
   if [[ $EUID -ne 0 ]]; then
     log_fatal "This script must be run as root"
   fi
 }
 
-# check_package: Verifies if a package is installed
-# Args: package (string)
-# Returns: 0 if installed, 1 if not
-# Metadata: {"chunk_id": "common-1.3", "keywords": ["package", "dpkg"], "comment_type": "block"}
+# =====================================================================================
+# Function: check_package
+# Description: Verifies if a specified Debian package is installed on the system.
+# Arguments:
+#   $1 (package) - The name of the package to check.
+# Returns:
+#   0 if the package is installed, 1 otherwise.
+# =====================================================================================
 check_package() {
-  local package="$1"
+  local package="$1" # Capture the package name
+  # Query dpkg for the package status and check if it's "install ok installed"
   dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"
 }
 
 # Algorithm: Network connectivity check
 # Pings host with retries to verify reachability
 # Keywords: [network, ping]
-# check_network_connectivity: Verifies network connectivity to a host
-# Args: host (string)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.4", "keywords": ["network", "connectivity"], "comment_type": "block"}
-# TODO: Add support for alternative connectivity checks (e.g., curl)
+# =====================================================================================
+# Function: check_network_connectivity
+# Description: Verifies network connectivity to a specified host by pinging it with retries.
+# Arguments:
+#   $1 (host) - The hostname or IP address to ping.
+# Returns:
+#   0 on successful connectivity, exits with a fatal error on failure after retries.
+# =====================================================================================
 check_network_connectivity() {
-  local host="$1"
-  local max_attempts=3
-  local attempt=0
-  local timeout=5
+  local host="$1" # Host to check connectivity against
+  local max_attempts=3 # Maximum number of ping attempts
+  local attempt=0 # Current attempt counter
+  local timeout=5 # Ping timeout in seconds
 
+  # Validate that a host was provided
   if [[ -z "$host" ]]; then
     log_fatal "No host provided for connectivity check."
   fi
 
+  # Loop until ping is successful or max attempts are reached
   until ping -c 1 -W "$timeout" "$host" >/dev/null 2>&1; do
     if ((attempt < max_attempts)); then
       log_warn "Failed to reach $host, retrying ($((attempt + 1))/$max_attempts)"
-      ((attempt++))
-      sleep 5
+      ((attempt++)) # Increment attempt counter
+      sleep 5 # Wait before retrying
     else
       log_fatal "Cannot reach $host after $max_attempts attempts. Check network configuration."
     fi
@@ -237,22 +317,26 @@ check_network_connectivity() {
 # Algorithm: Internet connectivity check
 # Pings DNS server with retries to verify internet access
 # Keywords: [internet, ping]
-# check_internet_connectivity: Verifies internet connectivity via DNS server
-# Args: None
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.5", "keywords": ["internet", "connectivity"], "comment_type": "block"}
-# TODO: Add fallback DNS servers
+# =====================================================================================
+# Function: check_internet_connectivity
+# Description: Verifies general internet connectivity by pinging a well-known DNS server (8.8.8.8) with retries.
+# Arguments:
+#   None.
+# Returns:
+#   0 on successful internet connectivity, 1 on failure after retries.
+# =====================================================================================
 check_internet_connectivity() {
-  local dns_server="8.8.8.8"
-  local max_attempts=3
-  local attempt=0
-  local timeout=5
+  local dns_server="8.8.8.8" # Google's public DNS server
+  local max_attempts=3 # Maximum number of ping attempts
+  local attempt=0 # Current attempt counter
+  local timeout=5 # Ping timeout in seconds
 
+  # Loop until ping is successful or max attempts are reached
   until ping -c 1 -W "$timeout" "$dns_server" >/dev/null 2>&1; do
     if ((attempt < max_attempts)); then
       log_warn "Failed to reach $dns_server, retrying ($((attempt + 1))/$max_attempts)"
-      ((attempt++))
-      sleep 5
+      ((attempt++)) # Increment attempt counter
+      sleep 5 # Wait before retrying
     else
       log_warn "No internet connectivity to $dns_server after $max_attempts attempts. Some operations may fail."
       return 1
@@ -261,31 +345,39 @@ check_internet_connectivity() {
   log_info "Internet connectivity to $dns_server verified"
 }
 
-# check_interface_in_subnet: Verifies if an interface exists in a subnet
-# Args: subnet (string)
-# Returns: 0 if found, 1 if not
-# Metadata: {"chunk_id": "common-1.6", "keywords": ["network", "subnet"], "comment_type": "block"}
-# TODO: Add validation for IPv6 subnets
+# =====================================================================================
+# Function: check_interface_in_subnet
+# Description: Checks if any network interface on the system is configured within a given IPv4 subnet.
+# Arguments:
+#   $1 (subnet) - The IPv4 subnet in CIDR notation (e.g., "192.168.1.0/24").
+# Returns:
+#   0 if an interface is found in the subnet, 1 otherwise. Exits with a fatal error for invalid subnet format.
+# =====================================================================================
 check_interface_in_subnet() {
-  local subnet="$1"
-  local found=0
+  local subnet="$1" # The subnet to check against
+  local found=0 # Flag to indicate if an interface is found
 
+  # Validate subnet format using regex
   if ! [[ "$subnet" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/[0-9]{1,2}$ ]]; then
     log_fatal "Invalid subnet format: $subnet"
   fi
 
+  # Extract the network prefix from the provided subnet
   local subnet_prefix=$(echo "$subnet" | cut -d'/' -f1 | sed 's/\.[0-9]*$/\./')
+  # Iterate through network interfaces to find an IP in the specified subnet
   while IFS= read -r line; do
+    # Use regex to find IPv4 addresses with their masks
     if [[ "$line" =~ inet\ (10\.0\.0\.[0-9]+/[0-9]+) ]]; then
-      ip_with_mask="${BASH_REMATCH}"
-      ip=$(echo "$ip_with_mask" | cut -d'/' -f1)
+      ip_with_mask="${BASH_REMATCH}" # Capture the matched IP with mask
+      ip=$(echo "$ip_with_mask" | cut -d'/' -f1) # Extract just the IP address
+      # Check if the IP address matches the subnet prefix
       if [[ "$ip" =~ ^$subnet_prefix ]]; then
-        found=1
+        found=1 # Set flag to true
         log_info "Found network interface with IP $ip_with_mask in subnet $subnet"
-        break
+        break # Exit loop once found
       fi
     fi
-  done < <(ip addr show | grep inet)
+  done < <(ip addr show | grep inet) # Pipe output of 'ip addr show' to the while loop
 
   if [[ $found -eq 0 ]]; then
     log_warn "No network interface found in subnet $subnet. NFS may not function correctly."
@@ -294,33 +386,48 @@ check_interface_in_subnet() {
   return 0
 }
 
-# create_zfs_dataset: Creates a ZFS dataset with specified mountpoint
-# Args: pool (string), dataset (string), mountpoint (string), additional properties (optional)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.7", "keywords": ["zfs", "dataset"], "comment_type": "block"}
+# =====================================================================================
+# Function: create_zfs_dataset
+# Description: Creates a ZFS dataset with a specified mountpoint and optional additional properties.
+# Arguments:
+#   $1 (pool) - The name of the ZFS pool.
+#   $2 (dataset) - The name of the dataset to create within the pool.
+#   $3 (mountpoint) - The desired mountpoint for the new dataset.
+#   $@ (additional properties) - Optional additional ZFS properties to set (e.g., "compression=lz4").
+# Returns:
+#   Exits with a fatal error if dataset creation or verification fails.
+# =====================================================================================
 create_zfs_dataset() {
-  local pool="$1"
-  local dataset="$2"
-  local mountpoint="$3"
-  shift 3
+  local pool="$1" # ZFS pool name
+  local dataset="$2" # ZFS dataset name
+  local mountpoint="$3" # Mountpoint for the dataset
+  shift 3 # Shift arguments to get additional properties
+  # Create the ZFS dataset with the specified mountpoint and any additional properties
   zfs create -o mountpoint="$mountpoint" "$@" "$pool/$dataset" || {
     log_fatal "Failed to create ZFS dataset $pool/$dataset with mountpoint $mountpoint"
   }
+  # Verify that the ZFS dataset was created successfully
   if ! zfs list -H -o name | grep -q "^$pool/$dataset$"; then
     log_fatal "Failed to verify ZFS dataset creation for $pool/$dataset"
   fi
   log_info "Successfully created ZFS dataset: $pool/$dataset with mountpoint $mountpoint"
 }
 
-# set_zfs_properties: Sets properties on a ZFS dataset
-# Args: dataset (string), properties (array)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.8", "keywords": ["zfs", "properties"], "comment_type": "block"}
+# =====================================================================================
+# Function: set_zfs_properties
+# Description: Sets one or more properties on a specified ZFS dataset.
+# Arguments:
+#   $1 (dataset) - The full name of the ZFS dataset (e.g., "pool/dataset").
+#   $@ (properties) - A list of properties to set (e.g., "compression=lz4", "sharenfs=on").
+# Returns:
+#   Exits with a fatal error if any property fails to be set.
+# =====================================================================================
 set_zfs_properties() {
-  local dataset="$1"
-  shift
-  local properties=("$@")
+  local dataset="$1" # ZFS dataset name
+  shift # Remove dataset from arguments
+  local properties=("$@") # Remaining arguments are properties
 
+  # Iterate through each property and set it on the dataset
   for prop in "${properties[@]}"; do
     zfs set "$prop" "$dataset" || {
       log_fatal "Failed to set property $prop on $dataset"
@@ -329,19 +436,29 @@ set_zfs_properties() {
   done
 }
 
-# configure_nfs_export: Configures an NFS export for a dataset
-# Args: dataset (string), mountpoint (string), subnet (string), options (string)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.9", "keywords": ["nfs", "export"], "comment_type": "block"}
+# =====================================================================================
+# Function: configure_nfs_export
+# Description: Configures an NFS export for a given dataset by adding an entry to /etc/exports
+#              and refreshing the NFS export list.
+# Arguments:
+#   $1 (dataset) - The name of the ZFS dataset being exported (for logging purposes).
+#   $2 (mountpoint) - The mountpoint of the dataset to be exported.
+#   $3 (subnet) - The network subnet allowed to access the export (e.g., "192.168.1.0/24").
+#   $4 (options) - NFS export options (e.g., "rw,sync,no_subtree_check").
+# Returns:
+#   Exits with a fatal error if adding the export or refreshing fails.
+# =====================================================================================
 configure_nfs_export() {
-  local dataset="$1"
-  local mountpoint="$2"
-  local subnet="$3"
-  local options="$4"
+  local dataset="$1" # ZFS dataset name
+  local mountpoint="$2" # Mountpoint to export
+  local subnet="$3" # Subnet allowed to access
+  local options="$4" # NFS export options
 
+  # Add the NFS export entry to /etc/exports
   echo "$mountpoint $subnet($options)" >> /etc/exports || {
     log_fatal "Failed to add NFS export for $mountpoint"
   }
+  # Refresh the NFS export list to apply changes
   exportfs -ra || {
     log_fatal "Failed to refresh NFS exports"
   }
@@ -351,21 +468,26 @@ configure_nfs_export() {
 # Algorithm: Command retry
 # Executes command with retries on failure
 # Keywords: [retry, error_handling]
-# retry_command: Retries a command up to max attempts
-# Args: cmd (string)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.10", "keywords": ["retry", "error_handling"], "comment_type": "block"}
-# TODO: Add input validation for cmd
+# =====================================================================================
+# Function: retry_command
+# Description: Executes a given command, retrying it up to a maximum number of attempts
+#              if it fails.
+# Arguments:
+#   $1 (cmd) - The command string to execute.
+# Returns:
+#   0 on successful command execution, 1 if the command fails after all retries.
+# =====================================================================================
 retry_command() {
-  local cmd="$1"
-  local max_attempts=3
-  local attempt=0
+  local cmd="$1" # Command to be retried
+  local max_attempts=3 # Maximum number of attempts
+  local attempt=0 # Current attempt counter
 
+  # Loop until the command succeeds or max attempts are reached
   until bash -c "$cmd"; do
     if ((attempt < max_attempts)); then
       log_warn "Command failed, retrying ($((attempt + 1))/${max_attempts}): $cmd"
-      ((attempt++))
-      sleep 5
+      ((attempt++)) # Increment attempt counter
+      sleep 5 # Wait before retrying
     else
       log_error "Command failed after ${max_attempts} attempts: $cmd"
       return 1
@@ -375,15 +497,22 @@ retry_command() {
   return 0
 }
 
-# add_user_to_group: Adds a user to a group
-# Args: username (string), group (string)
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.11", "keywords": ["user", "group"], "comment_type": "block"}
+# =====================================================================================
+# Function: add_user_to_group
+# Description: Adds a specified user to a specified group if the user is not already a member.
+# Arguments:
+#   $1 (username) - The username to add to the group.
+#   $2 (group) - The name of the group.
+# Returns:
+#   Exits with a fatal error if adding the user to the group fails.
+# =====================================================================================
 add_user_to_group() {
-  local username="$1"
-  local group="$2"
+  local username="$1" # Username to add
+  local group="$2" # Group to add the user to
 
+  # Check if the user is already a member of the group
   if ! id -nG "$username" | grep -qw "$group"; then
+    # Add the user to the group
     usermod -aG "$group" "$username" || {
       log_fatal "Failed to add user $username to group $group"
     }
@@ -391,37 +520,52 @@ add_user_to_group() {
   log_info "Added user $username to group $group"
 }
 
-# verify_nfs_exports: Verifies NFS export configuration
-# Args: None
-# Returns: 0 on success, 1 on failure
-# Metadata: {"chunk_id": "common-1.12", "keywords": ["nfs", "export"], "comment_type": "block"}
+# =====================================================================================
+# Function: verify_nfs_exports
+# Description: Verifies the current NFS export configuration by attempting to list them.
+# Arguments:
+#   None.
+# Returns:
+#   Exits with a fatal error if NFS exports cannot be verified.
+# =====================================================================================
 verify_nfs_exports() {
+  # Attempt to list NFS exports verbosely; redirect output to null
   if ! exportfs -v >/dev/null 2>&1; then
     log_fatal "Failed to verify NFS exports"
   fi
   log_info "NFS exports verified"
 }
 
-# zfs_pool_exists: Checks if a ZFS pool exists
-# Args: pool (string)
-# Returns: 0 if exists, 1 if not
-# Metadata: {"chunk_id": "common-1.13", "keywords": ["zfs", "pool"], "comment_type": "block"}
+# =====================================================================================
+# Function: zfs_pool_exists
+# Description: Checks if a ZFS pool with the given name exists on the system.
+# Arguments:
+#   $1 (pool) - The name of the ZFS pool to check.
+# Returns:
+#   0 if the ZFS pool exists, 1 otherwise.
+# =====================================================================================
 zfs_pool_exists() {
-  local pool="$1"
+  local pool="$1" # ZFS pool name to check
+  # List ZFS pools and check if the specified pool name exists
   if zpool list -H -o name | grep -q "^$pool$"; then
-    return 0
+    return 0 # Pool exists
   fi
-  return 1
+  return 1 # Pool does not exist
 }
 
-# zfs_dataset_exists: Checks if a ZFS dataset exists
-# Args: dataset (string)
-# Returns: 0 if exists, 1 if not
-# Metadata: {"chunk_id": "common-1.14", "keywords": ["zfs", "dataset"], "comment_type": "block"}
+# =====================================================================================
+# Function: zfs_dataset_exists
+# Description: Checks if a ZFS dataset with the given name exists on the system.
+# Arguments:
+#   $1 (dataset) - The full name of the ZFS dataset to check (e.g., "pool/dataset").
+# Returns:
+#   0 if the ZFS dataset exists, 1 otherwise.
+# =====================================================================================
 zfs_dataset_exists() {
-  local dataset="$1"
+  local dataset="$1" # ZFS dataset name to check
+  # List ZFS datasets and check if the specified dataset name exists
   if zfs list -H -o name | grep -q "^$dataset$"; then
-    return 0
+    return 0 # Dataset exists
   fi
-  return 1
+  return 1 # Dataset does not exist
 }

@@ -1,6 +1,11 @@
-# LXC Desktop Requirements for Proxmox AI/ML Setup
+---
+title: "LXC Desktop Requirements for Proxmox AI/ML Setup"
+tags: ["LXC", "Desktop", "Proxmox", "AI/ML", "GPU Passthrough", "RustDesk", "Remote Access", "NVIDIA", "XFCE", "Ubuntu"]
+summary: "This document outlines the requirements and setup for creating a functional Linux desktop environment inside an LXC container on Proxmox 9, optimized for AI/ML workloads, learning, and remote access via RustDesk."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
-## Overview
 This document outlines the requirements and setup for creating a functional Linux desktop environment inside an LXC container on Proxmox 9, optimized for AI/ML workloads, learning, and remote access via RustDesk. The setup leverages two NVIDIA 5060 Ti 16GB GPUs for acceleration, uses lightweight components for efficiency, and integrates with Proxmox tools. LXC containers are preferred over VMs for lower overhead while sharing the host kernel. Key goals: Isolation, GPU passthrough, smooth remote desktop performance, and scalability for multiple containers.
 
 High-level benefits:
@@ -62,7 +67,7 @@ Assumptions: Proxmox 9 host with NVIDIA drivers installed, familiarity with `/de
 
 ### RustDesk Setup
 - Install Client: 
-  ```
+  ```bash
   wget https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
   dpkg -i rustdesk-1.2.3-x86_64.deb
   apt install -f

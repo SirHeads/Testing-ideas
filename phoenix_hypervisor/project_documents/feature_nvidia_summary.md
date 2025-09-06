@@ -1,11 +1,12 @@
-# Feature: NVIDIA
-
-## Summary
+---
+title: "Feature: NVIDIA"
+tags: ["NVIDIA", "GPU", "CUDA", "driver installation", "passthrough", "LXC", "AI", "machine learning"]
+summary: "The `nvidia` feature automates the entire process of enabling NVIDIA GPU access for an LXC container. It handles both the host-side configuration for device passthrough and the installation of the necessary drivers and toolkits inside the container."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
 The `nvidia` feature automates the entire process of enabling NVIDIA GPU access for an LXC container. It handles both the host-side configuration for device passthrough and the installation of the necessary drivers and toolkits inside the container.
-
-### RAG Keywords
-NVIDIA, GPU, CUDA, driver installation, passthrough, LXC, AI, machine learning
 
 ## Key Actions
 

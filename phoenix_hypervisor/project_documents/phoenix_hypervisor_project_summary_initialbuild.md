@@ -1,4 +1,12 @@
-# `Phoenix Hypervisor` - Project Summary (Initial Build)
+---
+title: "Phoenix Hypervisor - Project Summary (Initial Build)"
+tags: ["Phoenix Hypervisor", "Project Summary", "Initial Build", "LXC", "Proxmox", "Automation", "Configuration Management", "NVIDIA GPU Passthrough", "Docker Integration", "Idempotency"]
+summary: "This document provides a summary of the Phoenix Hypervisor project's goals, capabilities, and a post-implementation review of issues and suggested improvements from the initial build phase."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
+
+This document provides a summary of the Phoenix Hypervisor project's goals, capabilities, and a post-implementation review of issues and suggested improvements from the initial build phase.
 
 ## Overview
 

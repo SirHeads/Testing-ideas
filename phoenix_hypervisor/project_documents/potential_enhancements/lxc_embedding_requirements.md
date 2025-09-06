@@ -1,7 +1,12 @@
-# LXC Embedding Setup with Qdrant and vLLM for Roocode
+---
+title: "LXC Embedding Setup with Qdrant and vLLM for Roocode"
+tags: ["LXC", "Embedding Setup", "Qdrant", "vLLM", "Roocode", "Semantic Search", "Markdown", "Codebases", "Proxmox", "GPU", "AI", "Machine Learning"]
+summary: "This document outlines the setup for semantic search over markdown documentation and well-commented codebases using high-quality embeddings, involving vLLM for embedding generation and Qdrant for storage and retrieval, all within an LXC container environment on Proxmox."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
-## Overview
-The goal is to enable semantic search over markdown documentation and well-commented codebases (including library docs) using high-quality embeddings. The setup involves:
+This document outlines the setup for semantic search over markdown documentation and well-commented codebases (including library docs) using high-quality embeddings. The setup involves:
 - **vLLM**: Serves the `Qwen/Qwen3-Embedding-8B-GGUF:Q8_0` model in an LXC container on a Proxmox server to generate 1024-dim embeddings for text and code chunks.
 - **Qdrant**: Runs in a separate LXC container on the same Proxmox server to store and retrieve embeddings for semantic search.
 - **Roocode**: A Python-based application (assumed) in the vLLM LXC that processes documents, generates embeddings via vLLM, and interacts with Qdrant for storage and search.
@@ -51,7 +56,7 @@ vllm serve Qwen/Qwen3-Embedding-8B-GGUF:Q8_0 \
 ```
 
 #### Key Settings
-- **VRAM Usage**: ~8-9GB for Q8_0 model, leaving ~4-5GB headroom on a 16GB GPU.
+- **VRAM Usage**: ~8-9GB for Q8_0 model, ~4-5GB headroom on a 16GB GPU.
 - **Context Length**: 2048 tokens supports most markdown/code chunks; chunk longer documents to 512-1024 tokens.
 - **Batching**: 16 chunks per batch balances throughput and memory.
 - **Prefixes**: Use `"passage: <chunk>"` for documents and `"query: <search>"` to boost embedding quality.
@@ -119,8 +124,7 @@ echo "Qdrant setup complete. Access dashboard at http://192.168.1.100:6333/dashb
 pip install qdrant-client requests numpy langchain
 ```
 
-#### Integration Script
-```python
+#### Integration Script```python
 import requests
 import numpy as np
 from qdrant_client import QdrantClient

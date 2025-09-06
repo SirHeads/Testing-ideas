@@ -1,4 +1,12 @@
-# Project Summary: AI/ML Desktop Environment
+---
+title: "Project Summary: AI/ML Desktop Environment"
+tags: ["AI/ML", "Desktop Environment", "LXC", "Proxmox", "GPU Acceleration", "Remote Access", "RustDesk", "NVIDIA", "Project Summary"]
+summary: "This project aims to create a functional and efficient Linux desktop environment within an LXC container on a Proxmox 9 host, optimized for AI/ML workloads, learning, and remote access, leveraging NVIDIA GPUs and lightweight desktop components."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
+
+This project aims to create a functional and efficient Linux desktop environment within an LXC container on a Proxmox 9 host. The environment will be optimized for AI/ML workloads, learning, and remote access. It will leverage two NVIDIA 5060 Ti 16GB GPUs for hardware acceleration and utilize lightweight desktop components to minimize overhead.
 
 ## Overview
 This project aims to create a functional and efficient Linux desktop environment within an LXC container on a Proxmox 9 host. The environment will be optimized for AI/ML workloads, learning, and remote access. It will leverage two NVIDIA 5060 Ti 16GB GPUs for hardware acceleration and utilize lightweight desktop components to minimize overhead.

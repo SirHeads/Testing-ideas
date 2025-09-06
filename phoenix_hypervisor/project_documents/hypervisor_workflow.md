@@ -1,4 +1,12 @@
-# Phoenix Hypervisor Orchestration Workflow
+---
+title: "Phoenix Hypervisor Orchestration Workflow"
+tags: ["Phoenix Hypervisor", "Orchestration", "Workflow", "LXC", "VM Management", "Hypervisor Setup"]
+summary: "This document outlines the orchestration workflow for the Phoenix Hypervisor, detailing hypervisor setup, LXC orchestration, and VM management flows."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
+
+This document outlines the orchestration workflow for the Phoenix Hypervisor, detailing hypervisor setup, LXC orchestration, and VM management flows.
 
 ```mermaid
 graph TD

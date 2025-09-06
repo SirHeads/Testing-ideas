@@ -1,6 +1,12 @@
-# Project Requirements
+---
+title: "Project Requirements for AI/ML Desktop Environment"
+tags: ["AI/ML", "Desktop Environment", "LXC", "Proxmox", "Hardware Requirements", "Software Requirements", "Network Requirements", "NVIDIA GPU", "RustDesk", "CUDA", "TensorFlow", "PyTorch", "Jupyter"]
+summary: "This document details the hardware, software, and configuration requirements for the AI/ML Desktop Environment project, including host system specifications, necessary software, and network configurations."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
-This document details the hardware, software, and configuration requirements for the AI/ML Desktop Environment.
+This document details the hardware, software, and configuration requirements for the AI/ML Desktop Environment project.
 
 ## Hardware Prerequisites
 - **Host System:** A server running Proxmox 9.

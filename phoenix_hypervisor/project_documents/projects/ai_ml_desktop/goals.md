@@ -1,4 +1,10 @@
-# Project Goals
+---
+title: "Project Goals for AI/ML Desktop Environment"
+tags: ["AI/ML", "Desktop Environment", "LXC", "Proxmox", "GPU Utilization", "Remote Access", "RustDesk", "NVIDIA GPU Passthrough", "Scalability", "Security", "Tooling"]
+summary: "This document outlines the primary goals for the AI/ML Desktop Environment project, focusing on efficient resource utilization, high-performance remote access, robust GPU passthrough, scalability, security, and comprehensive tooling within an LXC container on Proxmox."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
 This document outlines the primary goals for the AI/ML Desktop Environment project.
 

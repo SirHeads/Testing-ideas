@@ -1,8 +1,13 @@
-# Detailed Implementation Plan for Hypervisor Setup Refactoring
-
-## 1. Introduction
+---
+title: "Detailed Implementation Plan for Hypervisor Setup Refactoring"
+tags: ["Implementation Plan", "Hypervisor Setup", "Refactoring", "Phoenix Hypervisor", "Project Unification", "Configuration Migration", "Script Modularization", "Orchestrator Unification"]
+summary: "This document provides a detailed, step-by-step implementation plan for refactoring the hypervisor setup scripts, focusing on project unification, configuration migration, script modularization, and orchestrator unification."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
 This document provides a detailed, step-by-step implementation plan for refactoring the hypervisor setup scripts. This plan is based on the revised high-level strategy outlined in `phoenix-scripts/project_documents/refactoring_plan.md` and adheres to the critical constraint that all functionality must be a **direct, one-to-one port** of the original `phoenix-scripts`. No changes to package versions, logic, or configurations are permitted without explicit user approval.
+
 
 ## 2. Phase 1: Project Unification
 

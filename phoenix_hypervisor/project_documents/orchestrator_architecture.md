@@ -1,4 +1,12 @@
-# Phoenix Orchestrator Architecture
+---
+title: "Phoenix Orchestrator Architecture"
+tags: ["Phoenix Orchestrator", "Architecture", "LXC", "Container Provisioning", "State Machine", "Configuration Management", "Shell Script"]
+summary: "This document outlines the architecture, state machine, configuration, and usage of the `phoenix_orchestrator.sh` script, the cornerstone of the Phoenix Hypervisor project's container provisioning system."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
+
+This document outlines the architecture, state machine, configuration, and usage of the `phoenix_orchestrator.sh` script, the cornerstone of the Phoenix Hypervisor project's container provisioning system.
 
 ## Overview
 

@@ -1,7 +1,12 @@
-# ThinkHeadsAI Environment Requirements
+---
+title: "ThinkHeadsAI Environment Requirements"
+tags: ["ThinkHeadsAI", "Environment Requirements", "AI", "Machine Learning", "Web Development", "Docker", "Proxmox", "LXC", "VMs", "Portainer", "Nginx", "Cloudflare", "PostgreSQL", "Redis", "n8n", "VLLM", "GPU Optimization"]
+summary: "This document outlines the high-level strategy and detailed requirements for the ThinkHeadsAI environment, designed to support AI-driven web-based technology development, testing, and showcasing, leveraging a hybrid architecture with local GPU-intensive tasks and a hosted frontend."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
 
-## High-Level Strategy
-The ThinkHeadsAI environment is designed to support AI-driven web-based technology development, testing, and showcasing. The core strategy emphasizes:
+This document outlines the high-level strategy and detailed requirements for the ThinkHeadsAI environment, designed to support AI-driven web-based technology development, testing, and showcasing. The core strategy emphasizes:
 - **Modularity and Portability**: Leverage Docker for all web-facing services to ensure consistency across development, testing, production, and live environments. This allows seamless replication and reduces deployment errors.
 - **Resource Optimization**: Offload GPU-intensive AI tasks (e.g., LLM inference, model training) to a powerful local server (Phoenix), while using a lightweight, reliable hosted server (Rumple) for public web access. This minimizes costs and maximizes performance for low-volume usage.
 - **Mirrored Environments**: Maintain three virtual machines (VMs) on Phoenix that mimic the hosted Rumple server (rumpledev for dynamic development, rumpletest for stable testing, rumpleprod for production mirroring). This enables local iteration without risking the live site.

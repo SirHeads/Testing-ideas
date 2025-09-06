@@ -1,4 +1,12 @@
-# Phoenix Hypervisor Architectural Summary
+---
+title: "Phoenix Hypervisor Architectural Summary"
+tags: ["Phoenix Hypervisor", "Architecture", "LXC", "Container Provisioning", "Shell Scripts", "JSON Configuration", "Idempotency", "Templating"]
+summary: "This document provides an architectural summary of the Phoenix Hypervisor project, a sophisticated, automated system for provisioning Proxmox LXC containers using shell scripts and JSON configuration files."
+version: "1.0.0"
+author: "Phoenix Hypervisor Team"
+---
+
+This document provides an architectural summary of the Phoenix Hypervisor project, a sophisticated, automated system for provisioning Proxmox LXC containers. It leverages a combination of shell scripts and JSON configuration files to create a stateless, idempotent, and highly customizable container deployment pipeline.
 
 ## 1. Architecture Analysis and Explanation
 
@@ -38,7 +46,6 @@ graph TD
     C -- template defined --> E[Create from Template];
     D --> F[Apply Configurations];
     E --> F;
-    G --> F;
     F --> H{Container Running?};
     H -- No --> I[Start Container];
     H -- Yes --> J[Skip Start];
