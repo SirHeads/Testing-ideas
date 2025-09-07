@@ -1,4 +1,26 @@
-# `phoenix_hypervisor_config.json` - Summary
+---
+title: phoenix_hypervisor_config.json - Summary
+summary: This document summarizes the purpose, structure, and role of the `phoenix_hypervisor_config.json`
+  file, which serves as the central configuration point for system-wide settings and
+  default values within the Phoenix Hypervisor system.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Configuration
+- Hypervisor
+- Phoenix Hypervisor
+- System Settings
+- File Paths
+- Network Defaults
+- Proxmox Defaults
+- Script Behavior
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
+This document summarizes the purpose, structure, and role of the `phoenix_hypervisor_config.json` file within the Phoenix Hypervisor system. This file serves as the central configuration point for system-wide settings and default values used by the orchestrator and its associated scripts.
 
 ## Overview
 
@@ -6,7 +28,7 @@ This document summarizes the purpose, structure, and role of the `phoenix_hyperv
 
 ## Purpose
 
-The `phoenix_hypervisor_config.json` file defines essential file paths, network defaults, Proxmox resource defaults, and behavioral flags for the Phoenix Hypervisor scripts. It acts as a single source of truth for the environment in which the LXC containers are created and managed. Unlike the `phoenix_lxc_configs.json` which defines *what* containers to create, this file defines the *environment* in which they are created and how the toolset itself behaves.
+The `phoenix_hypervisor_config.json` file defines essential file paths, network defaults, Proxmox resource defaults, and behavioral flags for the Phoenix Hypervisor scripts. It acts as a single source of truth for the environment in which both LXC containers and Virtual Machines are created and managed. Unlike the `phoenix_lxc_configs.json` which primarily defines *what* LXC containers to create, this file defines the *environment* in which they are created and how the toolset itself behaves, including defaults for VMs.
 
 ## Key Responsibilities
 
@@ -19,7 +41,7 @@ The `phoenix_hypervisor_config.json` file defines essential file paths, network 
     *   Defines the external Docker registry URL (e.g., Docker Hub username/namespace).
     *   Specifies the IP address and ports for the Portainer Server and Agent communication, ensuring containers can connect correctly.
 *   **Establish Proxmox Defaults:**
-    *   Provides default values for LXC container creation parameters (CPU cores, memory, network settings, features, security) that can be overridden by individual container configurations in `phoenix_lxc_configs.json`.
+    *   Provides default values for LXC container and Virtual Machine creation parameters (CPU cores, memory, network settings, features, security) that can be overridden by individual container or VM configurations.
     *   Specifies the default ZFS storage pool for LXC disks.
 *   **Control Script Behavior:**
     *   Contains flags that influence the runtime behavior of the orchestrator and scripts (e.g., `rollback_on_failure`, `debug_mode`).

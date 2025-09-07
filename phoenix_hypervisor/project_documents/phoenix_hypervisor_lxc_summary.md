@@ -1,4 +1,25 @@
-# `Phoenix Hypervisor` - LXC Container Summary
+---
+title: Phoenix Hypervisor - LXC Container Summary
+summary: This document provides a high-level summary of the LXC containers and templates
+  defined in `phoenix_lxc_configs.json` for the Phoenix Hypervisor system, outlining
+  their roles within the snapshot-based template hierarchy and their primary functions.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Phoenix Hypervisor
+- LXC
+- Container Summary
+- Templates
+- ZFS Snapshots
+- Container Hierarchy
+- Proxmox
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
+This document provides a high-level summary of the LXC containers and templates defined in `phoenix_lxc_configs.json` for the Phoenix Hypervisor system. It outlines their roles within the snapshot-based template hierarchy and their primary functions.
 
 ## Overview
 

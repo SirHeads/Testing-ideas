@@ -1,11 +1,24 @@
-# Feature: Docker
-
-## Summary
-
+---
+title: 'Feature: Docker'
+summary: The `docker` feature automates the complete installation and configuration
+  of a containerization environment within an LXC container. It installs Docker Engine,
+  the NVIDIA Container Toolkit, and can deploy Portainer for management.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- docker
+- containerization
+- nvidia-docker
+- portainer
+- GPU
+- container runtime
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
 The `docker` feature automates the complete installation and configuration of a containerization environment within an LXC container. It installs Docker Engine, the NVIDIA Container Toolkit, and can deploy Portainer for management.
-
-### RAG Keywords
-docker, containerization, nvidia-docker, portainer, GPU, container runtime
 
 ## Key Actions
 

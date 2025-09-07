@@ -1,4 +1,28 @@
-# `Phoenix Hypervisor` - Project Summary (Initial Build)
+---
+title: Phoenix Hypervisor - Project Summary (Initial Build)
+summary: This document provides a summary of the Phoenix Hypervisor project's goals,
+  capabilities, and a post-implementation review of issues and suggested improvements
+  from the initial build phase.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- Phoenix Hypervisor
+- Project Summary
+- Initial Build
+- LXC
+- Proxmox
+- Automation
+- Configuration Management
+- NVIDIA GPU Passthrough
+- Docker Integration
+- Idempotency
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
+This document provides a summary of the Phoenix Hypervisor project's goals, capabilities, and a post-implementation review of issues and suggested improvements from the initial build phase.
 
 ## Overview
 
@@ -6,14 +30,14 @@ This document provides a summary of the Phoenix Hypervisor project's goals, capa
 
 ## Project Goals
 
-The primary goal of the Phoenix Hypervisor project is to establish a robust, efficient, and easily manageable virtualization environment using Proxmox and LXC containers. This involves automating the setup and configuration of the hypervisor and various LXC instances, ensuring consistency, scalability, and adherence to best practices for different use cases (e.g., Docker, NVIDIA GPU passthrough).
+The primary goal of the Phoenix Hypervisor project is to establish a robust, efficient, and easily manageable virtualization environment using Proxmox, supporting both LXC containers and Virtual Machines (VMs). This involves automating the setup and configuration of the hypervisor and various LXC and VM instances, ensuring consistency, scalability, and adherence to best practices for different use cases (e.g., Docker, NVIDIA GPU passthrough).
 
 ## Capabilities
 
 The Phoenix Hypervisor project provides the following capabilities:
 
 *   **Automated Proxmox Hypervisor Setup:** Scripts to initialize and configure a Proxmox VE host, including network settings, storage, and essential packages.
-*   **LXC Container Creation and Configuration:** Tools to create new LXC containers with predefined templates and apply specific configurations based on their intended roles.
+*   **LXC Container and Virtual Machine Creation and Configuration:** Tools to create new LXC containers and Virtual Machines with predefined templates and apply specific configurations based on their intended roles.
 *   **Specialized LXC Configurations:**
     *   **Docker-ready LXCs:** Scripts to configure LXC containers for seamless Docker integration, including necessary kernel modules and user permissions.
     *   **NVIDIA GPU Passthrough LXCs:** Scripts to set up LXC containers with NVIDIA GPU passthrough capabilities, enabling high-performance computing within containers.

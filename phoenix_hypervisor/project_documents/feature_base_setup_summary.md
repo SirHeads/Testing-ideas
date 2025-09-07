@@ -1,11 +1,23 @@
-# Feature: Base Setup
-
-## Summary
-
+---
+title: 'Feature: Base Setup'
+summary: The `base_setup` feature is the foundational customization script for all
+  new LXC containers. It ensures that every container starts with a consistent set
+  of essential packages and a correctly configured operating system environment.
+document_type: Strategy | Technical | Business Case | Report
+status: Draft | In Review | Approved | Archived
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Team/Individual Name
+tags:
+- base setup
+- os configuration
+- package installation
+- LXC template
+- container initialization
+review_cadence: Annual | Quarterly | Monthly | None
+last_reviewed: YYYY-MM-DD
+---
 The `base_setup` feature is the foundational customization script for all new LXC containers. It ensures that every container starts with a consistent set of essential packages and a correctly configured operating system environment.
-
-### RAG Keywords
-base setup, os configuration, package installation, LXC template, container initialization
 
 ## Key Actions
 

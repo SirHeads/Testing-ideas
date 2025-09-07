@@ -32,6 +32,25 @@
             "nesting": 1
         }
     },
+    "vm_defaults": {
+        "template": "ubuntu-24.04-standard",
+        "cores": 4,
+        "memory_mb": 8192,
+        "disk_size_gb": 100,
+        "storage_pool": "local-lvm",
+        "network_bridge": "vmbr0"
+    },
+    "vms": [
+        {
+            "name": "webserver-vm",
+            "cores": 4,
+            "memory_mb": 8192,
+            "disk_size_gb": 100,
+            "post_create_scripts": [
+                "install_webserver.sh"
+            ]
+        }
+    ],
     "behavior": {
         "rollback_on_failure": false,
         "debug_mode": true
