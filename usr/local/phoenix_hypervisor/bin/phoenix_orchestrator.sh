@@ -24,6 +24,7 @@
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
 # --- Determine script's absolute directory ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
 
 # --- Source common utilities ---
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
@@ -40,8 +41,8 @@ START_VM=false
 STOP_VM=false
 DELETE_VM=false
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
-VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.schema.json"
+VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
+VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.json"
 
 
 
@@ -512,7 +513,7 @@ apply_features() {
 
     # Loop through each feature and execute its corresponding script
     for feature in $features; do
-        local feature_script_path="/usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_feature_install_${feature}.sh" # Construct script path
+        local feature_script_path="${PHOENIX_BASE_DIR}/bin/lxc_setup/phoenix_hypervisor_feature_install_${feature}.sh" # Construct script path
         log_info "Executing feature: $feature ($feature_script_path)"
 
         # Check if the feature script exists
@@ -574,7 +575,7 @@ run_application_script() {
         return 0
     fi
 
-    local app_script_path="/usr/local/phoenix_hypervisor/bin/${app_script_name}" # Construct full script path
+    local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path
     log_info "Executing application script: $app_script_name ($app_script_path)"
 
     # Check if the application script exists
@@ -905,19 +906,6 @@ delete_vm() {
 handle_hypervisor_setup_state() {
     log_info "Starting hypervisor setup orchestration."
 
-    # 1. Synchronize configuration files
-    log_info "Synchronizing local configuration files to system path..."
-    local local_config_dir="${SCRIPT_DIR}/../etc"
-    local system_config_dir="/usr/local/phoenix_hypervisor/etc"
-    
-    if [ -d "$local_config_dir" ]; then
-        cp -f "${local_config_dir}/phoenix_hypervisor_config.json" "${system_config_dir}/" || log_fatal "Failed to copy phoenix_hypervisor_config.json"
-        cp -f "${local_config_dir}/phoenix_hypervisor_config.schema.json" "${system_config_dir}/" || log_fatal "Failed to copy phoenix_hypervisor_config.schema.json"
-        log_info "Configuration files synchronized successfully."
-    else
-        log_warn "Local etc directory not found at ${local_config_dir}. Assuming system configuration is up-to-date."
-    fi
-
     # 1. Read and validate hypervisor_config.json
     # Read and validate hypervisor_config.json against its schema
     log_info "Reading and validating hypervisor configuration from $VM_CONFIG_FILE..."
@@ -934,20 +922,14 @@ handle_hypervisor_setup_state() {
     fi
     log_info "Hypervisor configuration validated successfully."
 
-    # 2. Validate ZFS pool configuration
-    if [ "$(jq '.zfs.pools | length' "$VM_CONFIG_FILE")" -eq 0 ]; then
-        log_warn "No ZFS pools are defined in the configuration file. ZFS setup will be skipped."
-    fi
-
-    # 2. Execute hypervisor feature scripts in sequence
     # Execute hypervisor feature scripts in a predefined sequence
     log_info "Executing hypervisor setup feature scripts..."
 
     local hypervisor_scripts=(
         "hypervisor_initial_setup.sh"
+        "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_install_nvidia.sh"
         "hypervisor_feature_create_admin_user.sh"
-        "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_setup_nfs.sh"
         "hypervisor_feature_setup_samba.sh"
     )
@@ -962,8 +944,14 @@ handle_hypervisor_setup_state() {
         fi
 
         # Execute the hypervisor setup script
-        if ! "$script_path" "$VM_CONFIG_FILE"; then
-            log_fatal "Hypervisor setup script '$script_name' failed."
+        if [[ "$script_name" == "hypervisor_feature_setup_zfs.sh" ]]; then
+            if ! "$script_path"; then
+                log_fatal "Hypervisor setup script '$script_name' failed."
+            fi
+        else
+            if ! "$script_path" "$VM_CONFIG_FILE"; then
+                log_fatal "Hypervisor setup script '$script_name' failed."
+            fi
         fi
     done
 

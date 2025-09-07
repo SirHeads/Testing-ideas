@@ -42,7 +42,6 @@ The `phoenix_hypervisor_config.json` file defines essential file paths, network 
     *   Specifies the IP address and ports for the Portainer Server and Agent communication, ensuring containers can connect correctly.
 *   **Establish Proxmox Defaults:**
     *   Provides default values for LXC container and Virtual Machine creation parameters (CPU cores, memory, network settings, features, security) that can be overridden by individual container or VM configurations.
-    *   Specifies the default ZFS storage pool for LXC disks.
 *   **Control Script Behavior:**
     *   Contains flags that influence the runtime behavior of the orchestrator and scripts (e.g., `rollback_on_failure`, `debug_mode`).
 
@@ -67,7 +66,6 @@ The file is a JSON object containing several top-level keys:
     *   `portainer_server_port`: Port for the Portainer web UI.
     *   `portainer_agent_port`: Port for Portainer Agent communication.
 *   `proxmox_defaults`: An object containing default settings for Proxmox LXC creation.
-    *   `zfs_lxc_pool`: Default ZFS pool name.
     *   `lxc`: An object with default LXC parameters.
         *   `cores`: Default number of CPU cores.
         *   `memory_mb`: Default memory in MB.

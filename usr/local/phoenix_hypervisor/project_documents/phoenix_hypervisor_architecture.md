@@ -94,7 +94,7 @@ graph TD
     B --> C[Execute hypervisor_initial_setup.sh];
     C --> D[Iterate through enabled features];
     D --> E{Feature Script Exists?};
-    E -- Yes --> F[Execute Feature Script e.g., setup_zfs.sh];
+    E -- Yes --> F[Execute Feature Script e.g., setup_zfs.sh (no config passed)];
     E -- No --> G[Log Fatal Error];
     F --> D;
     G --> H[Stop Execution];

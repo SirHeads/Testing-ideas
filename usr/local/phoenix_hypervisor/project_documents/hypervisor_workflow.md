@@ -30,7 +30,7 @@ graph TD
         C1 --> C2[Execute hypervisor_initial_setup.sh];
         C2 --> C3[Execute hypervisor_feature_install_nvidia.sh];
         C3 --> C4[Execute hypervisor_feature_create_admin_user.sh];
-        C4 --> C5[Execute hypervisor_feature_setup_zfs.sh];
+        C4 --> C5[Execute hypervisor_feature_setup_zfs.sh (no config passed)];
         C5 --> C6[Execute hypervisor_feature_setup_nfs.sh];
         C6 --> C7[Execute hypervisor_feature_setup_samba.sh];
         C7 --> C_END[Hypervisor Setup Complete];

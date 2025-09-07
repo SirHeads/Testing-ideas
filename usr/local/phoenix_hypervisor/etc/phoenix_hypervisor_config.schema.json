@@ -171,70 +171,6 @@
             ],
             "additionalProperties": false
         },
-        "zfs": {
-            "type": "object",
-            "description": "ZFS configuration for pools and datasets.",
-            "properties": {
-                "pools": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string"
-                            },
-                            "raid_level": {
-                                "type": "string"
-                            },
-                            "disks": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string"
-                                }
-                            }
-                        },
-                        "required": [
-                            "name",
-                            "raid_level",
-                            "disks"
-                        ]
-                    }
-                },
-                "datasets": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string"
-                            },
-                            "pool": {
-                                "type": "string"
-                            },
-                            "mountpoint": {
-                                "type": "string"
-                            },
-                            "properties": {
-                                "type": "object"
-                            }
-                        },
-                        "required": [
-                            "name",
-                            "pool",
-                            "mountpoint"
-                        ]
-                    }
-                },
-                "arc_max": {
-                    "type": "string"
-                }
-            },
-            "required": [
-                "pools",
-                "datasets",
-                "arc_max"
-            ]
-        },
         "nfs": {
             "type": "object",
             "description": "NFS configuration for exports.",
@@ -525,7 +461,6 @@
         "core_paths",
         "network",
         "docker",
-        "zfs",
         "nfs",
         "samba",
         "proxmox_defaults",

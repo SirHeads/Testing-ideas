@@ -73,7 +73,7 @@ Based on this analysis, the following recommendations should be adopted for the 
 
 1.  **Adopt the Directory Structure**: Reorganize the project into `bin/`, `etc/`, and `docs/` directories to separate logic, configuration, and documentation.
 2.  **Implement Centralized JSON Configuration**: Replace the `phoenix_config.sh` file with a set of schema-validated JSON files to manage all configurations for both hypervisor and container setup.
-3.  **Decompose Scripts into Modules**: Break down the large, monolithic scripts from `phoenix-scripts` into smaller, single-responsibility feature scripts (e.g., `feature_setup_zfs.sh`, `feature_install_nvidia_driver.sh`) that can be called by the orchestrator.
+3.  **Decompose Scripts into Modules**: Break down the large, monolithic scripts from `phoenix-scripts` into smaller, single-responsibility feature scripts (e.g., `feature_setup_zfs.sh` with hardcoded config, `feature_install_nvidia_driver.sh`) that can be called by the orchestrator.
 4.  **Enhance the Orchestrator for Hypervisor Management**: Instead of creating a new orchestrator, extend `phoenix_orchestrator.sh` to manage hypervisor-level tasks. This could be achieved by adding a new command-line flag or mode (e.g., `phoenix_orchestrator.sh --setup-hypervisor` vs. `phoenix_orchestrator.sh <CTID>`). This creates a single, unified tool for managing the entire Phoenix environment, from the host to the containers.
 
 By adopting these architectural patterns from `phoenix_hypervisor`, the `phoenix-scripts` project can be transformed into a more robust, maintainable, and scalable system.

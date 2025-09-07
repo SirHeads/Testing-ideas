@@ -79,7 +79,7 @@ This document provides a detailed, step-by-step implementation plan for refactor
 *   **Step 3.5: Create `hypervisor_feature_setup_zfs.sh`**
     *   Create the script at `phoenix_hypervisor/bin/hypervisor_setup/hypervisor_feature_setup_zfs.sh`.
     *   Merge and port the functionality from `phoenix_setup_zfs_pools.sh`, `phoenix_setup_zfs_datasets.sh`, and `phoenix_create_storage.sh`.
-    *   **Constraint:** This is a direct port. ZFS properties, pool layouts, and storage configurations must be identical.
+    *   **Constraint:** This is a direct port. Pool layouts and storage configurations must be identical. ZFS properties are now hardcoded in the script.
 
 *   **Step 3.6: Create `hypervisor_feature_setup_nfs.sh`**
     *   Create the script at `phoenix_hypervisor/bin/hypervisor_setup/hypervisor_feature_setup_nfs.sh`.

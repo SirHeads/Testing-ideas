@@ -6,11 +6,10 @@
 #              them as storage within Proxmox. This script reads ZFS configurations
 #              from `hypervisor_config.json`, performs drive checks, creates pools
 #              and datasets with specified properties, and adds them to Proxmox VE.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, lsblk, zpool,
+# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), lsblk, zpool,
 #               zfs, smartctl (optional), free, awk, wipefs, pvesm, grep, sed.
 # Inputs:
-#   Configuration values from HYPERVISOR_CONFIG_FILE: .zfs.pools[] (name, raid_level, disks[]),
-#   .zfs.datasets[] (name, pool, mountpoint, properties{}), .zfs.arc_max.
+#   Hardcoded ZFS configuration within this script.
 # Outputs:
 #   ZFS pool and dataset creation logs, drive wear statistics, Proxmox storage
 #   additions, log messages to stdout and MAIN_LOG_FILE, exit codes indicating
@@ -30,11 +29,30 @@ check_root # Ensure the script is run with root privileges
 
 log_info "Starting ZFS pools, datasets, and Proxmox storage setup."
 
-# Get the configuration file path from the first argument
-if [ -z "$1" ]; then
-    log_fatal "Configuration file path not provided."
-fi
-HYPERVISOR_CONFIG_FILE="$1"
+# --- ZFS Configuration ---
+
+# ZFS ARC Max Value
+ZFS_ARC_MAX="32212254720"
+
+# ZFS Pools Configuration
+# Each element is a string with pool_name, raid_level, and disks separated by semicolons.
+ZFS_POOLS=(
+    "quickOS;mirror;/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y320880M /dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y310536X"
+    "fastData;single;/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_4TB_S7U8NJ0Y402334Y"
+)
+
+# ZFS Datasets Configuration
+# Each element is a string with dataset_name, pool_name, properties, and proxmox settings separated by semicolons.
+ZFS_DATASETS=(
+    "vm-disks;quickOS;recordsize=128K,compression=lz4,sync=standard,quota=800G;zfspool;images"
+    "lxc-disks;quickOS;recordsize=16K,compression=lz4,sync=standard,quota=600G;zfspool;rootdir"
+    "shared-prod-data;quickOS;recordsize=128K,compression=lz4,sync=standard,quota=400G;dir;images"
+    "shared-prod-data-sync;quickOS;recordsize=16K,compression=lz4,sync=always,quota=100G;dir;images"
+    "shared-test-data;fastData;recordsize=128K,compression=lz4,sync=standard,quota=500G;dir;images"
+    "shared-backups;fastData;recordsize=1M,compression=zstd,sync=standard,quota=2T;dir;backup"
+    "shared-iso;fastData;recordsize=1M,compression=lz4,sync=standard,quota=100G;dir;iso,vztmpl"
+    "shared-bulk-data;fastData;recordsize=1M,compression=lz4,sync=standard,quota=1.4T;dir;images"
+)
 
 # --- ZFS Pool Creation Functions (adapted from phoenix_setup_zfs_pools.sh) ---
 
@@ -91,12 +109,19 @@ monitor_nvme_wear() {
 
     # Check if smartctl is installed
     if command -v smartctl >/dev/null 2>&1; then
-        for drive_path in $drive_paths; do # Iterate through each drive path
+        for drive_path in "$@"; do # Iterate through each drive path
             # Check if the drive is an NVMe device
-            if lsblk -d -o NAME,TRAN "$drive_path" | tail -n +2 | grep -q "nvme$"; then
-                canonical_name=$(basename "$drive_path") # Get the canonical device name
-                smartctl -a "/dev/$canonical_name" | grep -E "Wear_Leveling|Media_Wearout" | log_plain_output # Log wear statistics
-                log_info "NVMe wear stats for $drive_path ($canonical_name) logged"
+            if lsblk -d -o NAME,TRAN "$drive_path" | tail -n +2 | grep -q "nvme"; then
+                # Run smartctl and capture output to avoid script exit on grep's no-match
+                local smart_output
+                smart_output=$(smartctl -a "$drive_path" | grep -E "Wear_Leveling|Media_Wearout" || true)
+                
+                if [ -n "$smart_output" ]; then
+                    echo "$smart_output" | log_plain_output # Log wear statistics
+                    log_info "NVMe wear stats for $drive_path logged"
+                else
+                    log_info "No NVMe wear stats found for $drive_path"
+                fi
             fi
         done
     else
@@ -118,18 +143,17 @@ monitor_nvme_wear() {
 #   0 on success, exits with a fatal error if `zfs_arc_max` cannot be set.
 # =====================================================================================
 check_system_ram() {
-    local zfs_arc_max=$(jq -r '.zfs.arc_max // "32212254720"' "$HYPERVISOR_CONFIG_FILE") # Retrieve ZFS ARC max from config (default to 30GB)
-    local required_ram=$((zfs_arc_max * 2)) # Recommended RAM is twice ARC max
+    local required_ram=$(($ZFS_ARC_MAX * 2)) # Recommended RAM is twice ARC max
     local total_ram=$(free -b | awk '/Mem:/ {print $2}') # Total system RAM in bytes
 
     # Warn if system RAM is less than twice the ZFS ARC max
     if [[ $total_ram -lt $required_ram ]]; then
-        log_warn "System RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is less than twice ZFS_ARC_MAX ($((zfs_arc_max / 1024 / 1024 / 1024)) GB). This may cause memory issues."
+        log_warn "System RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is less than twice ZFS_ARC_MAX ($((ZFS_ARC_MAX / 1024 / 1024 / 1024)) GB). This may cause memory issues."
         # Note: In an automated script, this might be a hard exit depending on policy.
     fi
     log_info "Verified system RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is sufficient for ZFS_ARC_MAX"
-    echo "$zfs_arc_max" > /sys/module/zfs/parameters/zfs_arc_max || log_fatal "Failed to set zfs_arc_max to $zfs_arc_max" # Attempt to set zfs_arc_max
-    log_info "Set zfs_arc_max to $zfs_arc_max bytes"
+    echo "$ZFS_ARC_MAX" > /sys/module/zfs/parameters/zfs_arc_max || log_fatal "Failed to set zfs_arc_max to $ZFS_ARC_MAX" # Attempt to set zfs_arc_max
+    log_info "Set zfs_arc_max to $ZFS_ARC_MAX bytes"
 }
 
 # create_zfs_pools: Creates ZFS pools based on configuration
@@ -146,54 +170,49 @@ check_system_ram() {
 # =====================================================================================
 create_zfs_pools() {
     log_info "Creating ZFS pools..."
-    local pools_config # Variable to store ZFS pools configuration
-    pools_config=$(jq -c '.zfs.pools[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve ZFS pools array from config
 
-    # Iterate through each ZFS pool definition
-    for pool_json in $pools_config; do
-        local pool_name=$(echo "$pool_json" | jq -r '.name') # Pool name
-        local raid_level=$(echo "$pool_json" | jq -r '.raid_level') # RAID level (e.g., mirror, RAIDZ1)
-        local disks_array=($(echo "$pool_json" | jq -r '.disks[]')) # Array of disks for the pool
+    if [ ${#ZFS_POOLS[@]} -eq 0 ]; then
+        log_warn "No ZFS pools configured in the script. Skipping pool creation."
+        return
+    fi
 
-        # Skip pool creation if the pool already exists
+    local all_drives=()
+    for pool_config in "${ZFS_POOLS[@]}"; do
+        IFS=';' read -r pool_name raid_level disks_str <<< "$pool_config"
+        read -r -a disks_array <<< "$disks_str"
+
+        all_drives+=("${disks_array[@]}")
+
         if zfs_pool_exists "$pool_name"; then
             log_info "Pool $pool_name already exists, skipping creation."
             continue
         fi
 
         log_info "Checking drives for pool $pool_name..."
-        for drive in "${disks_array[@]}"; do # Check each drive in the pool
-            check_available_drives "$drive" # Call function to verify drive availability
+        for drive in "${disks_array[@]}"; do
+            check_available_drives "$drive"
         done
 
         log_info "Wiping partitions on drives for pool $pool_name..."
-        for drive in "${disks_array[@]}"; do # Wipe partitions on each drive
-            retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive" # Wipe existing file system signatures
+        for drive in "${disks_array[@]}"; do
+            retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive"
             log_info "Wiped partitions on $drive"
         done
 
-        local create_cmd="zpool create -f -o autotrim=on -O compression=lz4 -O atime=off $pool_name" # Base command for zpool create
-        # Append RAID level to the command if specified
+        local create_cmd="zpool create -f -o autotrim=on -O compression=lz4 -O atime=off $pool_name"
         if [[ "$raid_level" == "mirror" ]]; then
             create_cmd="$create_cmd mirror"
         elif [[ "$raid_level" == "RAIDZ1" ]]; then
             create_cmd="$create_cmd raidz1"
         fi
-        create_cmd="$create_cmd ${disks_array[*]}" # Add disks to the create command
+        create_cmd="$create_cmd ${disks_array[*]}"
 
-        retry_command "$create_cmd" || log_fatal "Failed to create $pool_name pool" # Execute zpool create command
+        retry_command "$create_cmd" || log_fatal "Failed to create $pool_name pool"
         log_info "Created ZFS pool $pool_name on ${disks_array[*]}"
     done
 
-    # Monitor NVMe wear for all configured drives
-    # Collect all configured drives for NVMe wear monitoring
-    local all_drives=()
-    while IFS= read -r line; do
-        all_drives+=("$line")
-    done < <(jq -r '.zfs.pools[].disks[]' "$HYPERVISOR_CONFIG_FILE") # Extract all disk paths from config
-    monitor_nvme_wear "${all_drives[@]}" # Call function to monitor NVMe wear
-
-    check_system_ram # Check and configure system RAM for ZFS ARC
+    monitor_nvme_wear "${all_drives[@]}"
+    check_system_ram
 }
 
 # --- ZFS Dataset Creation Functions (adapted from phoenix_setup_zfs_datasets.sh) ---
@@ -211,45 +230,36 @@ create_zfs_pools() {
 # =====================================================================================
 create_zfs_datasets() {
     log_info "Creating ZFS datasets..."
-    local datasets_config # Variable to store ZFS datasets configuration
-    datasets_config=$(jq -c '.zfs.datasets[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve ZFS datasets array from config
 
-    # Iterate through each ZFS dataset definition
-    for dataset_json in $datasets_config; do
-        local dataset_name=$(echo "$dataset_json" | jq -r '.name') # Dataset name
-        local pool_name=$(echo "$dataset_json" | jq -r '.pool') # Parent pool name
-        local mountpoint=$(echo "$dataset_json" | jq -r '.mountpoint') # Mountpoint for the dataset
-        local properties_json=$(echo "$dataset_json" | jq -c '.properties') # JSON object of properties
+    if [ ${#ZFS_DATASETS[@]} -eq 0 ]; then
+        log_warn "No ZFS datasets configured in the script. Skipping dataset creation."
+        return
+    fi
 
-        local full_dataset_path="$pool_name/$dataset_name" # Full path of the dataset
+    for dataset_config in "${ZFS_DATASETS[@]}"; do
+        IFS=';' read -r dataset_name pool_name properties_str proxmox_storage_type proxmox_content_type <<< "$dataset_config"
+        
+        local full_dataset_path="$pool_name/$dataset_name"
+        local mountpoint="/$full_dataset_path" # Standard mountpoint
 
-        # Check if the parent ZFS pool exists
         if ! zfs_pool_exists "$pool_name"; then
             log_fatal "Pool $pool_name for dataset $full_dataset_path does not exist."
         fi
 
-        local zfs_create_props=() # Array to hold ZFS creation properties
-        # Convert JSON properties to `-o key=value` format for `zfs create`
-        if [[ "$properties_json" != "null" ]]; then
-            while IFS='=' read -r key value; do
-                zfs_create_props+=("-o" "$key=$value")
-            done < <(echo "$properties_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"')
-        fi
+        local zfs_create_props=()
+        IFS=',' read -r -a props_array <<< "$properties_str"
+        for prop in "${props_array[@]}"; do
+            zfs_create_props+=("-o" "$prop")
+        done
 
-        # Create dataset if it doesn't exist, otherwise update its properties
         if ! zfs_dataset_exists "$full_dataset_path"; then
             create_zfs_dataset "$pool_name" "$dataset_name" "$mountpoint" "${zfs_create_props[@]}" || log_fatal "Failed to create ZFS dataset $full_dataset_path"
             log_info "Created ZFS dataset: $full_dataset_path with mountpoint $mountpoint"
         else
             log_info "Dataset $full_dataset_path already exists. Updating properties."
-            local properties_array=() # Array to hold ZFS properties for updating
-            # Convert JSON properties to `key=value` format for `zfs set`
-            if [[ "$properties_json" != "null" ]]; then
-                while IFS='=' read -r key value; do
-                    properties_array+=("$key=$value")
-                done < <(echo "$properties_json" | jq -r 'to_entries[] | "\(.key)=\(.value)"')
-            fi
-            set_zfs_properties "$full_dataset_path" "${properties_array[@]}" || log_fatal "Failed to set properties for $full_dataset_path"
+            local properties_array=()
+            IFS=',' read -r -a props_array <<< "$properties_str"
+            set_zfs_properties "$full_dataset_path" "${props_array[@]}" || log_fatal "Failed to set properties for $full_dataset_path"
             log_info "Updated properties for ZFS dataset: $full_dataset_path"
         fi
     done
@@ -290,48 +300,31 @@ check_pvesm() {
 # =====================================================================================
 add_proxmox_storage() {
     log_info "Adding Proxmox storage entries..."
-    check_pvesm # Ensure pvesm command is available
+    check_pvesm
 
-    local datasets_config # Variable to store ZFS datasets configuration
-    datasets_config=$(jq -c '.zfs.datasets[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve ZFS datasets array from config
+    for dataset_config in "${ZFS_DATASETS[@]}"; do
+        IFS=';' read -r dataset_name pool_name properties_str proxmox_storage_type proxmox_content_type <<< "$dataset_config"
 
-    # Iterate through each ZFS dataset defined in the configuration
-    for dataset_json in $datasets_config; do
-        local dataset_name=$(echo "$dataset_json" | jq -r '.name') # Dataset name
-        local pool_name=$(echo "$dataset_json" | jq -r '.pool') # Parent pool name
-        local mountpoint=$(echo "$dataset_json" | jq -r '.mountpoint') # Mountpoint (not directly used for zfspool type)
-        local full_dataset_path="$pool_name/$dataset_name" # Full path of the dataset
+        local full_dataset_path="$pool_name/$dataset_name"
+        local storage_id="${pool_name}-${dataset_name}"
+        local mountpoint="/$full_dataset_path"
 
-        local storage_id="${pool_name}-${dataset_name}" # Derive a unique storage ID for Proxmox
-
-        # Determine storage type and content from config (or default)
-        local storage_type="zfspool" # For direct ZFS integration, type is 'zfspool'
-        local content_type="images" # Default content type for ZFS storage in Proxmox
-
-        # Check if this storage ID already exists
-        # Check if Proxmox storage with this ID already exists
         if pvesm status | grep -q "^$storage_id"; then
             log_info "Proxmox storage $storage_id already exists, skipping creation."
             continue
         fi
 
-        log_info "Processing dataset $full_dataset_path for Proxmox storage (ID: $storage_id, Type: $storage_type, Content: $content_type)"
+        log_info "Processing dataset $full_dataset_path for Proxmox storage (ID: $storage_id, Type: $proxmox_storage_type, Content: $proxmox_content_type)"
 
-        case "$storage_type" in
-            "zfspool")
-                retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $content_type" || log_fatal "Failed to add ZFS storage $storage_id" # Add ZFS storage to Proxmox
-                log_info "Added Proxmox ZFS storage: $storage_id for $full_dataset_path with content $content_type"
-                ;;
-            "dir")
-                # This case is for directory storage, which is not directly from ZFS pools in this context.
-                # For ZFS datasets, we primarily use "zfspool" type. If a dataset needs to be exposed
-                # as a "dir" type, it would typically be a separate entry in the configuration.
-                log_warn "Skipping 'dir' type storage for ZFS dataset $full_dataset_path. Only 'zfspool' is supported for direct ZFS integration."
-                ;;
-            *)
-                log_warn "Unsupported storage type '$storage_type' for dataset $full_dataset_path. Skipping."
-                ;;
-        esac
+        if [[ "$proxmox_storage_type" == "zfspool" ]]; then
+            retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $proxmox_content_type" || log_fatal "Failed to add ZFS storage $storage_id"
+            log_info "Added Proxmox ZFS storage: $storage_id for $full_dataset_path with content $proxmox_content_type"
+        elif [[ "$proxmox_storage_type" == "dir" ]]; then
+            retry_command "pvesm add dir $storage_id -path $mountpoint -content $proxmox_content_type" || log_fatal "Failed to add directory storage $storage_id"
+            log_info "Added Proxmox directory storage: $storage_id for path $mountpoint with content $proxmox_content_type"
+        else
+            log_warn "Unsupported proxmox_storage_type '$proxmox_storage_type' for dataset $full_dataset_path. Skipping."
+        fi
     done
 }
 
@@ -347,15 +340,12 @@ add_proxmox_storage() {
 #   Exits with status 0 on successful completion.
 # =====================================================================================
 main() {
-  create_zfs_pools # Create ZFS pools
-  create_zfs_datasets # Create ZFS datasets
-  add_proxmox_storage # Add ZFS storage to Proxmox
+  create_zfs_pools
+  create_zfs_datasets
+  add_proxmox_storage
   
   log_info "Successfully completed hypervisor_feature_setup_zfs.sh"
   exit 0
 }
 
-main "$@" # Call the main function to execute the script
-
-log_info "Successfully completed hypervisor_feature_setup_zfs.sh"
-exit 0
+main

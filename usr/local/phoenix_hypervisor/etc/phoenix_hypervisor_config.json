@@ -1,6 +1,6 @@
 {
-    "version": "0.01.01",
-    "author": "Heads, Qwen3-coder",
+    "version": "0.01.02",
+    "author": "Heads, Qwen3-coder, Roo",
     "users": {
         "username": "heads",
         "password_hash": "NOT_SET",
@@ -26,120 +26,78 @@
             "address": "10.0.0.13/24",
             "gateway": "10.0.0.1",
             "dns_nameservers": "8.8.8.8"
-        }
+        },
+        "nfs_server": "10.0.0.13",
+        "default_subnet": "10.0.0.0/24"
     },
     "docker": {
         "portainer_server_image": "portainer/portainer-ce:latest",
         "portainer_agent_image": "portainer/agent:latest"
     },
-    "zfs": {
-        "pools": [
-            {
-                "name": "quickOS",
-                "raid_level": "mirror",
-                "disks": [
-                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y320880M",
-                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y310536X"
-                ]
-            },
-            {
-                "name": "fastData",
-                "raid_level": "single",
-                "disks": [
-                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_4TB_S7U8NJ0Y402334Y"
-                ]
-            }
-        ],
-        "datasets": [
-            {
-                "name": "vm-disks",
-                "pool": "quickOS",
-                "properties": {
-                    "recordsize": "128K",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "800G"
-                }
-            },
-            {
-                "name": "lxc-disks",
-                "pool": "quickOS",
-                "properties": {
-                    "recordsize": "16K",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "600G"
-                }
-            },
-            {
-                "name": "shared-prod-data",
-                "pool": "quickOS",
-                "properties": {
-                    "recordsize": "128K",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "400G"
-                }
-            },
-            {
-                "name": "shared-prod-data-sync",
-                "pool": "quickOS",
-                "properties": {
-                    "recordsize": "16K",
-                    "compression": "lz4",
-                    "sync": "always",
-                    "quota": "100G"
-                }
-            },
-            {
-                "name": "shared-test-data",
-                "pool": "fastData",
-                "properties": {
-                    "recordsize": "128K",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "500G"
-                }
-            },
-            {
-                "name": "shared-backups",
-                "pool": "fastData",
-                "properties": {
-                    "recordsize": "1M",
-                    "compression": "zstd",
-                    "sync": "standard",
-                    "quota": "2T"
-                }
-            },
-            {
-                "name": "shared-iso",
-                "pool": "fastData",
-                "properties": {
-                    "recordsize": "1M",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "100G"
-                }
-            },
-            {
-                "name": "shared-bulk-data",
-                "pool": "fastData",
-                "properties": {
-                    "recordsize": "1M",
-                    "compression": "lz4",
-                    "sync": "standard",
-                    "quota": "1.4T"
-                }
-            }
-        ],
-        "arc_max": "32212254720"
-    },
     "nfs": {
-        "exports": []
+        "shares": [
+            {
+                "path": "quickOS/shared-prod-data",
+                "options": "rw,async,no_subtree_check,noatime"
+            },
+            {
+                "path": "quickOS/shared-prod-data-sync",
+                "options": "rw,sync,no_subtree_check,noatime"
+            },
+            {
+                "path": "fastData/shared-test-data",
+                "options": "rw,async,no_subtree_check,noatime"
+            },
+            {
+                "path": "fastData/shared-backups",
+                "options": "rw,async,no_subtree_check,noatime"
+            },
+            {
+                "path": "fastData/shared-iso",
+                "options": "rw,async,no_subtree_check,noatime"
+            },
+            {
+                "path": "fastData/shared-bulk-data",
+                "options": "rw,async,no_subtree_check,noatime"
+            },
+            {
+                "path": "fastData/shared-test-data-sync",
+                "options": "rw,sync,no_subtree_check,noatime"
+            }
+        ]
     },
     "samba": {
-        "shares": []
+        "user": "heads",
+        "shares": [
+            {
+                "path": "quickOS/shared-prod-data",
+                "options": "browseable=yes writable=yes"
+            },
+            {
+                "path": "quickOS/shared-prod-data-sync",
+                "options": "browseable=yes writable=yes"
+            },
+            {
+                "path": "fastData/shared-test-data",
+                "options": "browseable=yes writable=yes"
+            },
+            {
+                "path": "fastData/shared-bulk-data",
+                "options": "browseable=yes writable=yes"
+            },
+            {
+                "path": "fastData/shared-test-data-sync",
+                "options": "browseable=yes writable=yes"
+            }
+        ]
     },
+    "proxmox_storage_ids": {
+        "quickos_vm": "quickOS-vm",
+        "quickos_lxc": "quickOS-lxc",
+        "fastdata_backup": "fastData-backup",
+        "fastdata_iso": "fastData-iso"
+    },
+    "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {
         "zfs_lxc_pool": "quickOS/lxc-disks",
         "lxc": {

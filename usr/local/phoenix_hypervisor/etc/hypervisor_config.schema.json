@@ -74,80 +74,6 @@
                 "shares"
             ]
         },
-        "zfs": {
-            "type": "object",
-            "properties": {
-                "pools": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Name of the ZFS pool."
-                            }
-                        },
-                        "required": [
-                            "name"
-                        ]
-                    }
-                },
-                "datasets": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "Full dataset path (e.g., 'quickOS/vm-disks')."
-                            },
-                            "properties": {
-                                "type": "object",
-                                "additionalProperties": {
-                                    "type": "string"
-                                },
-                                "description": "ZFS dataset properties (e.g., 'recordsize=128K,compression=lz4')."
-                            }
-                        },
-                        "required": [
-                            "name",
-                            "properties"
-                        ]
-                    }
-                },
-                "dataset_storage_types": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "dataset": {
-                                "type": "string",
-                                "description": "Full dataset path (e.g., 'quickOS/vm-disks')."
-                            },
-                            "storage_type": {
-                                "type": "string",
-                                "description": "Proxmox storage type (e.g., 'zfspool:images')."
-                            }
-                        },
-                        "required": [
-                            "dataset",
-                            "storage_type"
-                        ]
-                    }
-                },
-                "arc_max": {
-                    "type": "string",
-                    "pattern": "^[0-9]+$",
-                    "description": "Maximum ZFS ARC size in bytes (e.g., '32212254720')."
-                }
-            },
-            "required": [
-                "pools",
-                "datasets",
-                "dataset_storage_types",
-                "arc_max"
-            ]
-        },
         "nfs": {
             "type": "object",
             "properties": {
@@ -212,7 +138,6 @@
         "nvidia",
         "network",
         "samba",
-        "zfs",
         "nfs",
         "proxmox_storage_ids",
         "mount_point_base"
