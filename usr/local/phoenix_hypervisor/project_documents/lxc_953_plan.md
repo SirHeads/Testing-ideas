@@ -68,7 +68,7 @@ The configuration for CTID `953` will be updated as follows:
     "name": "api-gateway-lxc",
     "memory_mb": 4096,
     "cores": 4,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 32,
     "network_config": {
         "name": "eth0",
@@ -92,7 +92,7 @@ The configuration for CTID `953` will be updated as follows:
 
 -   **CPU:** 4 cores
 -   **Memory:** 4096 MB
--   **Storage:** 32 GB on the `lxc-disks` pool.
+-   **Storage:** 32 GB on the `quickOS-lxc-disks` pool.
 -   **GPU:** None.
 
 ## 5. Scripting Needs

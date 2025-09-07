@@ -62,7 +62,7 @@ The following parameters will be added to the configuration for CTID `951`:
     "name": "vllm-granite-embed",
     "memory_mb": 72000,
     "cores": 12,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 128,
     "network_config": {
         "name": "eth0",

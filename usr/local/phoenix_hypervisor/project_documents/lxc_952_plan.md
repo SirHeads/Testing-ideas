@@ -58,7 +58,7 @@ The following parameters will be added to the configuration for CTID `952`:
     "name": "qdrant-lxc",
     "memory_mb": 32000,
     "cores": 8,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 256,
     "network_config": {
         "name": "eth0",
@@ -83,7 +83,7 @@ The following parameters will be added to the configuration for CTID `952`:
 
 -   **CPU:** 8 cores
 -   **Memory:** 32000 MB
--   **Storage:** 256 GB on the `lxc-disks` pool.
+-   **Storage:** 256 GB on the `quickOS-lxc-disks` pool.
 
 ### Software and Configuration
 

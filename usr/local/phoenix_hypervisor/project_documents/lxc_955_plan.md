@@ -72,7 +72,7 @@ The configuration for CTID `955` will be as follows, ensuring it inherits from t
     "name": "ollamaBase",
     "memory_mb": 32768,
     "cores": 8,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 128,
     "network_config": {
         "name": "eth0",
@@ -96,7 +96,7 @@ The configuration for CTID `955` will be as follows, ensuring it inherits from t
 
 -   **CPU:** 8 cores
 -   **Memory:** 32768 MB
--   **Storage:** 128 GB on the `lxc-disks` pool.
+-   **Storage:** 128 GB on the `quickOS-lxc-disks` pool.
 -   **GPU:** Dedicated assignment of GPU `0`.
 
 ### 4.3. Software Stack

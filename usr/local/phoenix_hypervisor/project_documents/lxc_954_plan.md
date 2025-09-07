@@ -62,7 +62,7 @@ The following parameters will be added to the configuration for CTID `954`:
     "name": "n8n-lxc",
     "memory_mb": 8192,
     "cores": 4,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 64,
     "network_config": {
         "name": "eth0",
@@ -86,7 +86,7 @@ The following parameters will be added to the configuration for CTID `954`:
 
 -   **CPU:** 4 cores
 -   **Memory:** 8192 MB
--   **Storage:** 64 GB on the `lxc-disks` pool.
+-   **Storage:** 64 GB on the `quickOS-lxc-disks` pool.
 
 ### 4.3. Software and Configuration
 

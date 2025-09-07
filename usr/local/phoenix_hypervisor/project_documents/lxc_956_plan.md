@@ -68,7 +68,7 @@ The configuration for CTID `956` will be as follows:
     "name": "openWebUIBase",
     "memory_mb": 4096,
     "cores": 2,
-    "storage_pool": "lxc-disks",
+    "storage_pool": "quickOS-lxc-disks",
     "storage_size_gb": 32,
     "network_config": {
         "name": "eth0",
@@ -91,7 +91,7 @@ The configuration for CTID `956` will be as follows:
 
 -   **CPU:** 2 cores
 -   **Memory:** 4096 MB
--   **Storage:** 32 GB on the `lxc-disks` pool.
+-   **Storage:** 32 GB on the `quickOS-lxc-disks` pool.
 
 ### 4.3. Software Stack
 

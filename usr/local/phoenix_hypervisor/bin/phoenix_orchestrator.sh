@@ -239,6 +239,28 @@ handle_defined_state() {
 #              from the JSON configuration.
 # =====================================================================================
 # =====================================================================================
+# Function: check_storage_pool_exists
+# Description: Checks if a given storage pool exists on the Proxmox server.
+# Arguments:
+#   $1 - The name of the storage pool to check.
+# Returns:
+#   None. Exits with a fatal error if the storage pool does not exist.
+# =====================================================================================
+check_storage_pool_exists() {
+    local storage_pool_name="$1"
+    log_info "Checking for existence of storage pool: $storage_pool_name"
+
+    # pvesm status output is like:
+    # Name              Type     Status           Total            Used       Available        %
+    # local             dir      active      101782260         3100132        93490612    3.05%
+    # local-lvm         lvmthin  active      698351616       101155594       597196021   14.49%
+    if ! pvesm status | awk 'NR>1 {print $1}' | grep -q "^${storage_pool_name}$"; then
+        log_fatal "Storage pool '$storage_pool_name' does not exist on the Proxmox server."
+    fi
+    log_info "Storage pool '$storage_pool_name' found."
+}
+
+# =====================================================================================
 # Function: create_container_from_template
 # Description: Creates a new LXC container from a specified template using parameters
 #              retrieved from the JSON configuration file.
@@ -258,10 +280,36 @@ create_container_from_template() {
     local template=$(jq_get_value "$CTID" ".template")
     local storage_pool=$(jq_get_value "$CTID" ".storage_pool")
     local storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
+
+    # --- Check for storage pool existence ---
+    check_storage_pool_exists "$storage_pool"
     local features=$(jq_get_value "$CTID" ".features | join(\",\")" || echo "") # Features are handled separately
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0") # Convert boolean to 0 or 1
+
+    # --- Check for template existence and download if necessary ---
+    if [ ! -f "$template" ]; then
+        log_info "Template file not found at $template. Attempting to download..."
+        # Extract the template name from the filename (e.g., ubuntu-24.04-standard)
+        local template_filename=$(basename "$template")
+        local template_name="$template_filename"
+        
+        # Determine the storage ID from the template path
+        local storage_id=""
+        if [[ "$template" == /fastData/shared-iso/* ]]; then
+            storage_id="fastData-iso"
+        else
+            # Add more conditions here if other storage locations are used for templates
+            log_fatal "Could not determine storage ID for template path: $template"
+        fi
+
+        log_info "Downloading template '$template_name' to storage '$storage_id'..."
+        if ! pveam download "$storage_id" "$template_name"; then
+            log_fatal "Failed to download template '$template_name'."
+        fi
+        log_info "Template downloaded successfully."
+    fi
 
     # --- Construct network configuration string ---
     # Construct the network configuration string for net0
@@ -324,8 +372,11 @@ clone_container() {
 
     local hostname=$(jq_get_value "$CTID" ".name") # New hostname for the cloned container
     local storage_pool=$(jq_get_value "$CTID" ".storage_pool") # Storage pool for the cloned container
+ 
+    # --- Check for storage pool existence ---
+    check_storage_pool_exists "$storage_pool"
 
-    # --- Build the pct clone command array ---
+     # --- Build the pct clone command array ---
     local pct_clone_cmd=(
         clone "$source_ctid" "$CTID"
         --snapname "$source_snapshot_name"
