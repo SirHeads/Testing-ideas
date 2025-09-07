@@ -20,38 +20,25 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# Source common utilities
-source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # Ensure script is run as root
 check_root
 
 log_info "Starting NFS server and exports setup."
 
+# Get the configuration file path from the first argument
+if [ -z "$1" ]; then
+    log_fatal "Configuration file path not provided."
+fi
+HYPERVISOR_CONFIG_FILE="$1"
+
 # Parse command-line arguments
-# =====================================================================================
-# Function: parse_arguments
-# Description: Parses command-line arguments for the NFS setup script.
-#              Currently supports a `--no-reboot` flag.
-# Arguments:
-#   $@ - All command-line arguments passed to the script.
-# Returns:
-#   None. Exits with a fatal error if an unknown option is encountered.
-# =====================================================================================
-parse_arguments() {
-  NO_REBOOT=false # Initialize NO_REBOOT flag
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --no-reboot)
-        NO_REBOOT=true # Set flag to skip reboot
-        shift
-        ;;
-      *)
-        log_fatal "Unknown option $1" # Handle unknown options
-        ;;
-    esac
-  done
-}
 
 # install_nfs_packages: Installs required NFS packages
 # Args: None
@@ -84,18 +71,18 @@ install_nfs_packages() {
 #   is found in the subnet or IP determination fails.
 # =====================================================================================
 get_server_ip() {
-  local subnet=$(jq -r '.network.interfaces.address // "10.0.0.0/24"' "$HYPERVISOR_CONFIG_FILE") # Retrieve subnet from config
-  # Check if a network interface exists in the configured subnet
-  if ! check_interface_in_subnet "$subnet"; then
-    log_fatal "No network interface found in subnet $subnet"
-  fi
-  local ip # Variable to store the determined IP address
-  # Extract the IP address from `ip addr show` output that matches the subnet
-  ip=$(ip addr show | grep -E "inet.*$(echo "$subnet" | cut -d'/' -f1)" | awk '{print $2}' | cut -d'/' -f1 | head -1)
+  # Directly read the configured IP address from the config file.
+  local ip_with_cidr=$(jq -r '.network.interfaces.address // ""' "$HYPERVISOR_CONFIG_FILE")
+  
   # Check if an IP address was successfully determined
-  if [[ -z "$ip" ]]; then
-    log_fatal "Failed to determine server IP in subnet $subnet"
+  if [[ -z "$ip_with_cidr" ]]; then
+    log_fatal "Failed to determine server IP from configuration file."
   fi
+  
+  # Remove the CIDR notation (e.g., /24) to get the pure IP address.
+  local ip=$(echo "$ip_with_cidr" | cut -d'/' -f1)
+  
+  log_info "Using configured server IP for NFS: $ip"
   echo "$ip" # Output the determined IP address
 }
 
@@ -130,7 +117,7 @@ configure_nfs_exports() {
   : > "$exports_file" || log_fatal "Failed to clear $exports_file"
 
   local nfs_shares_config # Variable to store NFS shares configuration
-  nfs_shares_config=$(jq -c '.nfs_shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve NFS shares array from config
+  nfs_shares_config=$(jq -c '.nfs.exports[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve NFS shares array from config
   local configured_exports=0 # Counter for successfully configured exports
 
   # Iterate through each NFS share defined in the configuration
@@ -220,12 +207,23 @@ configure_nfs_firewall() {
 # =====================================================================================
 add_nfs_storage() {
   log_info "Adding NFS storage to Proxmox..."
-  check_pvesm # Ensure pvesm command is available (from common_utils)
+  # =====================================================================================
+  # Function: check_pvesm
+  # Description: Checks for the availability of the `pvesm` command.
+  # =====================================================================================
+  check_pvesm() {
+    if ! command -v pvesm >/dev/null 2>&1; then
+      log_fatal "pvesm command not found. This script must be run on a Proxmox VE host."
+    fi
+    log_info "Verified pvesm availability."
+  }
+
+  check_pvesm # Ensure pvesm command is available
 
   local server_ip # Variable to store the server's IP address
   server_ip=$(get_server_ip) # Get the server's IP in the configured subnet
   local nfs_shares_config # Variable to store NFS shares configuration
-  nfs_shares_config=$(jq -c '.nfs_shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve NFS shares array from config
+  nfs_shares_config=$(jq -c '.nfs.exports[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve NFS shares array from config
   local added_proxmox_storage=0 # Counter for successfully added Proxmox storage entries
 
   # Iterate through each NFS share defined in the configuration
@@ -283,20 +281,13 @@ main() {
   add_nfs_storage # Add NFS storage to Proxmox
 
   # Handle system reboot based on the --no-reboot flag
-  if [[ "$NO_REBOOT" == false ]]; then
-    log_info "Forcing reboot to apply NFS changes in 10 seconds. Press Ctrl+C to cancel"
-    sleep 10 # Wait for 10 seconds before rebooting
-    reboot # Initiate system reboot
-  else
-    log_info "Reboot skipped due to --no-reboot flag. Please reboot manually to apply NFS changes"
-  fi
+  log_info "A reboot is recommended to apply NFS changes. Please reboot manually."
   
   log_info "Successfully completed hypervisor_feature_setup_nfs.sh"
   exit 0
 }
 
-parse_arguments "$@" # Parse arguments before main execution
-main "$@" # Call the main function with all arguments
+main "$@" # Call the main function
 
 log_info "Successfully completed hypervisor_feature_setup_nfs.sh"
 exit 0

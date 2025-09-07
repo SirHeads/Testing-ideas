@@ -16,13 +16,23 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# Source common utilities
-source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # Ensure script is run as root
 check_root # Ensure the script is run with root privileges
 
 log_info "Starting admin user creation and configuration."
+
+# Get the configuration file path from the first argument
+if [ -z "$1" ]; then
+    log_fatal "Configuration file path not provided."
+fi
+HYPERVISOR_CONFIG_FILE="$1"
 
 # Read user configuration from hypervisor_config.json
 log_info "Reading user configuration from $HYPERVISOR_CONFIG_FILE..."
@@ -109,19 +119,23 @@ create_system_user() {
 create_proxmox_user() {
     log_info "Creating Proxmox user $USERNAME@pam..."
     # Check if the Proxmox user already exists
-    if pveum user list | grep -q "^$USERNAME@pam\$"; then
-        log_info "Proxmox user $USERNAME@pam already exists, checking permissions"
-        # Check if the user already has the Administrator role
-        if ! pveum acl list | grep -q "^ / $USERNAME@pam .*Administrator\$"; then
-            retry_command "pveum acl modify / -user $USERNAME@pam -role Administrator" || log_fatal "Failed to grant Proxmox admin role to user $USERNAME@pam"
-            log_info "Granted Proxmox admin role to user $USERNAME@pam"
-        else
-            log_info "Proxmox user $USERNAME@pam already has Administrator role"
-        fi
+    # Check if the Proxmox user already exists
+    # Use JSON output for a more reliable check
+    if pveum user list --output-format json | jq -e ".[] | select(.userid == \"$USERNAME@pam\")" > /dev/null; then
+        log_info "Proxmox user $USERNAME@pam already exists, ensuring permissions are correct."
     else
-        retry_command "pveum user add $USERNAME@pam" || log_fatal "Failed to create Proxmox user $USERNAME@pam" # Add Proxmox user
-        retry_command "pveum acl modify / -user $USERNAME@pam -role Administrator" || log_fatal "Failed to grant Proxmox admin role to user $USERNAME@pam" # Grant Administrator role
-        log_info "Created Proxmox user $USERNAME@pam with Administrator role"
+        log_info "Proxmox user $USERNAME@pam does not exist. Creating..."
+        retry_command "pveum user add $USERNAME@pam" || log_fatal "Failed to create Proxmox user $USERNAME@pam"
+        log_info "Created Proxmox user $USERNAME@pam."
+    fi
+
+    # Ensure the user has the Administrator role using a more reliable JSON-based check
+    log_info "Ensuring Proxmox user $USERNAME@pam has Administrator role."
+    if ! (pveum acl list --output-format json | jq -e ".[] | select(.path == \"/\") | .roles | select(has(\"$USERNAME@pam\") and .[\"$USERNAME@pam\"] == \"Administrator\")" > /dev/null); then
+        retry_command "pveum acl modify / -user $USERNAME@pam -role Administrator" || log_fatal "Failed to grant Proxmox admin role to user $USERNAME@pam"
+        log_info "Granted Proxmox admin role to user $USERNAME@pam"
+    else
+        log_info "Proxmox user $USERNAME@pam already has Administrator role."
     fi
 }
 

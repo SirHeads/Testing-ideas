@@ -18,13 +18,23 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# Source common utilities
-source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # Ensure script is run as root
 check_root # Ensure the script is run with root privileges
 
 log_info "Starting ZFS pools, datasets, and Proxmox storage setup."
+
+# Get the configuration file path from the first argument
+if [ -z "$1" ]; then
+    log_fatal "Configuration file path not provided."
+fi
+HYPERVISOR_CONFIG_FILE="$1"
 
 # --- ZFS Pool Creation Functions (adapted from phoenix_setup_zfs_pools.sh) ---
 
@@ -307,7 +317,6 @@ add_proxmox_storage() {
 
         log_info "Processing dataset $full_dataset_path for Proxmox storage (ID: $storage_id, Type: $storage_type, Content: $content_type)"
 
-        case "$storage_type" in
         case "$storage_type" in
             "zfspool")
                 retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $content_type" || log_fatal "Failed to add ZFS storage $storage_id" # Add ZFS storage to Proxmox

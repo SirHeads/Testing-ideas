@@ -4,11 +4,6 @@
     "description": "Schema for validating the core system-wide configuration for the Phoenix Hypervisor scripts.",
     "type": "object",
     "properties": {
-        "$schema": {
-            "type": "string",
-            "format": "uri-reference",
-            "description": "URI of the JSON Schema used to validate this document."
-        },
         "version": {
             "type": "string",
             "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+.*$",
@@ -16,8 +11,36 @@
         },
         "author": {
             "type": "string",
-            "minProperties": 1,
             "description": "Author(s) of the configuration."
+        },
+        "users": {
+            "type": "object",
+            "description": "Admin user configuration.",
+            "properties": {
+                "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The username for the admin user."
+                },
+                "password_hash": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The hashed password for the user."
+                },
+                "sudo_access": {
+                    "type": "boolean",
+                    "description": "Whether the user should have sudo access."
+                },
+                "ssh_public_key": {
+                    "type": "string",
+                    "description": "The SSH public key for the user."
+                }
+            },
+            "required": [
+                "username",
+                "password_hash",
+                "sudo_access"
+            ]
         },
         "core_paths": {
             "type": "object",
@@ -76,12 +99,10 @@
             "properties": {
                 "external_registry_url": {
                     "type": "string",
-                    "format": "uri",
                     "description": "URL for the external Docker registry (e.g., Docker Hub)."
                 },
                 "portainer_server_ip": {
                     "type": "string",
-                    "format": "ipv4",
                     "description": "IP address of the Portainer Server container."
                 },
                 "portainer_server_port": {
@@ -95,15 +116,204 @@
                     "minimum": 1,
                     "maximum": 65535,
                     "description": "Port for Portainer Agent communication."
+                },
+                "interfaces": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        },
+                        "address": {
+                            "type": "string"
+                        },
+                        "gateway": {
+                            "type": "string"
+                        },
+                        "dns_nameservers": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "address",
+                        "gateway",
+                        "dns_nameservers"
+                    ]
                 }
             },
             "required": [
                 "external_registry_url",
                 "portainer_server_ip",
                 "portainer_server_port",
-                "portainer_agent_port"
+                "portainer_agent_port",
+                "interfaces"
             ],
             "additionalProperties": false
+        },
+        "docker": {
+            "type": "object",
+            "description": "Docker-related image configurations.",
+            "properties": {
+                "portainer_server_image": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The Docker image for the Portainer Server."
+                },
+                "portainer_agent_image": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The Docker image for the Portainer Agent."
+                }
+            },
+            "required": [
+                "portainer_server_image",
+                "portainer_agent_image"
+            ],
+            "additionalProperties": false
+        },
+        "zfs": {
+            "type": "object",
+            "description": "ZFS configuration for pools and datasets.",
+            "properties": {
+                "pools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "raid_level": {
+                                "type": "string"
+                            },
+                            "disks": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "raid_level",
+                            "disks"
+                        ]
+                    }
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "pool": {
+                                "type": "string"
+                            },
+                            "mountpoint": {
+                                "type": "string"
+                            },
+                            "properties": {
+                                "type": "object"
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "pool",
+                            "mountpoint"
+                        ]
+                    }
+                },
+                "arc_max": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "pools",
+                "datasets",
+                "arc_max"
+            ]
+        },
+        "nfs": {
+            "type": "object",
+            "description": "NFS configuration for exports.",
+            "properties": {
+                "exports": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string"
+                            },
+                            "clients": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "options": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "required": [
+                            "path",
+                            "clients",
+                            "options"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "exports"
+            ]
+        },
+        "samba": {
+            "type": "object",
+            "description": "Samba configuration for shares.",
+            "properties": {
+                "shares": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "path": {
+                                "type": "string"
+                            },
+                            "browsable": {
+                                "type": "boolean"
+                            },
+                            "read_only": {
+                                "type": "boolean"
+                            },
+                            "guest_ok": {
+                                "type": "boolean"
+                            },
+                            "valid_users": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "path",
+                            "valid_users"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "shares"
+            ]
         },
         "proxmox_defaults": {
             "type": "object",
@@ -278,18 +488,51 @@
                 "debug_mode"
             ],
             "additionalProperties": false
+        },
+        "nvidia_driver": {
+            "type": "object",
+            "properties": {
+                "install": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "runfile_url": {
+                    "type": "string"
+                },
+                "cuda_version": {
+                    "type": "string"
+                },
+                "install_vllm_libs": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "install",
+                "version",
+                "runfile_url",
+                "cuda_version",
+                "install_vllm_libs"
+            ],
+            "additionalProperties": false
         }
     },
     "required": [
-        "$schema",
         "version",
         "author",
+        "users",
         "core_paths",
         "network",
+        "docker",
+        "zfs",
+        "nfs",
+        "samba",
         "proxmox_defaults",
         "vm_defaults",
         "vms",
-        "behavior"
+        "behavior",
+        "nvidia_driver"
     ],
     "additionalProperties": false
 }

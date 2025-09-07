@@ -22,7 +22,12 @@
 
 # --- Source common utilities ---
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
-source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh" # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -900,21 +905,39 @@ delete_vm() {
 handle_hypervisor_setup_state() {
     log_info "Starting hypervisor setup orchestration."
 
+    # 1. Synchronize configuration files
+    log_info "Synchronizing local configuration files to system path..."
+    local local_config_dir="${SCRIPT_DIR}/../etc"
+    local system_config_dir="/usr/local/phoenix_hypervisor/etc"
+    
+    if [ -d "$local_config_dir" ]; then
+        cp -f "${local_config_dir}/phoenix_hypervisor_config.json" "${system_config_dir}/" || log_fatal "Failed to copy phoenix_hypervisor_config.json"
+        cp -f "${local_config_dir}/phoenix_hypervisor_config.schema.json" "${system_config_dir}/" || log_fatal "Failed to copy phoenix_hypervisor_config.schema.json"
+        log_info "Configuration files synchronized successfully."
+    else
+        log_warn "Local etc directory not found at ${local_config_dir}. Assuming system configuration is up-to-date."
+    fi
+
     # 1. Read and validate hypervisor_config.json
     # Read and validate hypervisor_config.json against its schema
-    log_info "Reading and validating hypervisor configuration from $HYPERVISOR_CONFIG_FILE..."
-    if [ ! -f "$HYPERVISOR_CONFIG_FILE" ]; then
-        log_fatal "Hypervisor configuration file not found at $HYPERVISOR_CONFIG_FILE."
+    log_info "Reading and validating hypervisor configuration from $VM_CONFIG_FILE..."
+    if [ ! -f "$VM_CONFIG_FILE" ]; then
+        log_fatal "Hypervisor configuration file not found at $VM_CONFIG_FILE."
     fi
-    if [ ! -f "$HYPERVISOR_CONFIG_SCHEMA_FILE" ]; then
-        log_fatal "Hypervisor configuration schema file not found at $HYPERVISOR_CONFIG_SCHEMA_FILE."
+    if [ ! -f "$VM_CONFIG_SCHEMA_FILE" ]; then
+        log_fatal "Hypervisor configuration schema file not found at $VM_CONFIG_SCHEMA_FILE."
     fi
 
     # Validate the configuration file using `ajv` against its schema
-    if ! ajv validate -s "$HYPERVISOR_CONFIG_SCHEMA_FILE" -d "$HYPERVISOR_CONFIG_FILE"; then
-        log_fatal "Hypervisor configuration validation failed. Please check $HYPERVISOR_CONFIG_FILE against $HYPERVISOR_CONFIG_SCHEMA_FILE."
+    if ! ajv validate -s "$VM_CONFIG_SCHEMA_FILE" -d "$VM_CONFIG_FILE"; then
+        log_fatal "Hypervisor configuration validation failed. Please check $VM_CONFIG_FILE against $VM_CONFIG_SCHEMA_FILE."
     fi
     log_info "Hypervisor configuration validated successfully."
+
+    # 2. Validate ZFS pool configuration
+    if [ "$(jq '.zfs.pools | length' "$VM_CONFIG_FILE")" -eq 0 ]; then
+        log_warn "No ZFS pools are defined in the configuration file. ZFS setup will be skipped."
+    fi
 
     # 2. Execute hypervisor feature scripts in sequence
     # Execute hypervisor feature scripts in a predefined sequence
@@ -939,7 +962,7 @@ handle_hypervisor_setup_state() {
         fi
 
         # Execute the hypervisor setup script
-        if ! "$script_path"; then
+        if ! "$script_path" "$VM_CONFIG_FILE"; then
             log_fatal "Hypervisor setup script '$script_name' failed."
         fi
     done
@@ -978,12 +1001,137 @@ setup_logging() {
 }
 
 # =====================================================================================
-# Function: main
-# Description: The main entry point for the script. It orchestrates the entire
-#              container provisioning process through a state machine.
+# Function: check_dependencies
+# Description: Checks for necessary command-line tools and installs them if missing.
 # =====================================================================================
-main() {
-    # --- Initial Setup ---
+# =====================================================================================
+# Function: disable_proxmox_enterprise_repos
+# Description: Temporarily disables Proxmox enterprise repositories to prevent apt update failures.
+# =====================================================================================
+disable_proxmox_enterprise_repos() {
+    local repo_dir="/etc/apt/sources.list.d"
+    log_info "Disabling Proxmox enterprise and Ceph repositories..."
+
+    # Loop through all files in the repository directory
+    for file in "$repo_dir"/*; do
+        # Check if the file is a regular file and not already disabled
+        if [ -f "$file" ] && [[ "$file" != *.disabled ]]; then
+            # Check if the filename contains 'pve-enterprise' or 'ceph'
+            if [[ "$file" =~ pve-enterprise ]] || [[ "$file" =~ ceph ]]; then
+                local disabled_file="${file}.disabled"
+                log_info "Disabling repository: $file -> $disabled_file"
+                mv "$file" "$disabled_file" || log_fatal "Failed to disable repository $file."
+            fi
+        fi
+    done
+    log_info "Proxmox enterprise and Ceph repositories disabled."
+}
+
+# =====================================================================================
+# Function: enable_proxmox_enterprise_repos
+# Description: Re-enables Proxmox enterprise and Ceph repositories.
+# =====================================================================================
+enable_proxmox_enterprise_repos() {
+    local repo_dir="/etc/apt/sources.list.d"
+    log_info "Enabling Proxmox enterprise and Ceph repositories..."
+
+    # Loop through all files in the repository directory
+    for file in "$repo_dir"/*; do
+        # Check if the file is a regular file and ends with '.disabled'
+        if [ -f "$file" ] && [[ "$file" == *.disabled ]]; then
+            # Check if the filename contains 'pve-enterprise' or 'ceph'
+            if [[ "$file" =~ pve-enterprise ]] || [[ "$file" =~ ceph ]]; then
+                local enabled_file="${file%.disabled}"
+                log_info "Enabling repository: $file -> $enabled_file"
+                mv "$file" "$enabled_file" || log_fatal "Failed to enable repository $file."
+            fi
+        fi
+    done
+    log_info "Proxmox enterprise and Ceph repositories enabled."
+}
+
+# =====================================================================================
+# Function: check_dependencies
+# Description: Checks for necessary command-line tools and installs them if missing.
+# =====================================================================================
+check_dependencies() {
+    log_info "Checking for required dependencies..."
+
+    # Check for npm and install if missing
+    if ! command -v npm &> /dev/null; then
+        disable_proxmox_enterprise_repos # Temporarily disable enterprise repos and enable no-subscription
+        log_info "npm not found. Attempting to install Node.js and npm..."
+
+        # Ensure a clean state by removing any leftover nodesource list from previous failed runs
+        log_info "Removing any leftover NodeSource repository list..."
+        rm -f /etc/apt/sources.list.d/nodesource.list
+
+        # 1. Ensure curl, gpg, and lsb-release are installed.
+        log_info "Ensuring curl, gpg, and lsb-release are installed..."
+        apt-get update || log_fatal "Failed to apt-get update before installing core dependencies."
+        apt-get install -y curl gpg lsb-release || log_fatal "Failed to install curl, gpg, and lsb-release."
+
+        # 2. Create the /etc/apt/keyrings directory.
+        log_info "Creating /etc/apt/keyrings directory if it doesn't exist..."
+        if [ ! -d "/etc/apt/keyrings" ]; then
+            mkdir -m 0755 -p /etc/apt/keyrings || log_fatal "Failed to create /etc/apt/keyrings directory."
+        fi
+
+        # 3. Download the NodeSource GPG key, de-armor it, and save it to /etc/apt/keyrings/nodesource.gpg.
+        log_info "Removing any leftover NodeSource GPG key to ensure a clean state..."
+        rm -f /etc/apt/keyrings/nodesource.gpg
+        log_info "Downloading and adding NodeSource GPG key..."
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg || log_fatal "Failed to add NodeSource GPG key."
+
+        # 4. Dynamically determine the distribution codename.
+        log_info "Detecting distribution codename..."
+        if [ -f /etc/os-release ]; then
+            source /etc/os-release
+            local DISTRO_CODENAME=${VERSION_CODENAME:-$(lsb_release -cs)}
+        else
+            local DISTRO_CODENAME=$(lsb_release -cs)
+        fi
+        log_info "Distribution codename detected: $DISTRO_CODENAME"
+
+        # If codename is 'trixie' (testing), use 'bookworm' (stable) for NodeSource compatibility.
+        if [ "$DISTRO_CODENAME" == "trixie" ]; then
+            log_info "Detected 'trixie' codename, using 'bookworm' for NodeSource repository compatibility."
+            DISTRO_CODENAME="bookworm"
+        fi
+
+        # 5. Create the nodesource.list file, ensuring it correctly references the GPG key.
+        log_info "Creating NodeSource repository list file..."
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x $DISTRO_CODENAME main" | tee /etc/apt/sources.list.d/nodesource.list >/dev/null || log_fatal "Failed to create nodesource.list."
+        
+        # 6. Only then, run apt-get update.
+        log_info "Running apt-get update after adding NodeSource repository..."
+        apt-get update || log_fatal "Failed to apt-get update after adding NodeSource repository."
+
+        # 7. Finally, run apt-get install -y nodejs.
+        log_info "Running apt-get install -y nodejs..."
+        apt-get install -y nodejs || log_fatal "Failed to install Node.js."
+        
+        # The Debian 'nodejs' package may not include 'npm', so install it separately.
+        log_info "Ensuring npm is installed..."
+        apt-get install -y npm || log_fatal "Failed to install npm."
+        
+        log_info "Node.js and npm installed successfully."
+    else
+        log_info "npm is already installed."
+    fi
+
+    # Check for ajv-cli and install if missing
+    if ! command -v ajv &> /dev/null; then
+        log_info "ajv-cli not found. Attempting to install globally using npm..."
+        if ! npm install -g ajv-cli; then
+            log_fatal "Failed to install ajv-cli. Please ensure npm is installed and configured correctly, or install ajv-cli manually."
+        fi
+        log_info "ajv-cli installed successfully."
+    else
+        log_info "ajv-cli is already installed."
+    fi
+}
+
 # =====================================================================================
 # Function: main
 # Description: The main entry point for the Phoenix Orchestrator script. It sets up
@@ -1000,6 +1148,8 @@ main() {
     # Initial Setup: Configure logging and redirect stdout/stderr
     setup_logging
     exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
+
+    check_dependencies # Check and install dependencies
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Started"

@@ -1,0 +1,184 @@
+{
+    "version": "0.01.01",
+    "author": "Heads, Qwen3-coder",
+    "users": {
+        "username": "heads",
+        "password_hash": "NOT_SET",
+        "sudo_access": true,
+        "ssh_public_key": ""
+    },
+    "core_paths": {
+        "lxc_config_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json",
+        "lxc_config_schema_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json",
+        "hf_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_hf_token.conf",
+        "docker_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_docker_token.conf",
+        "docker_images_path": "/usr/local/phoenix_hypervisor/etc/proxmox_docker_images",
+        "hypervisor_marker_dir": "/usr/local/phoenix_hypervisor/lib",
+        "hypervisor_marker": "/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized"
+    },
+    "network": {
+        "external_registry_url": "docker.io/SirHeads",
+        "portainer_server_ip": "10.0.0.99",
+        "portainer_server_port": 9443,
+        "portainer_agent_port": 9001,
+        "interfaces": {
+            "name": "vmbr0",
+            "address": "10.0.0.13/24",
+            "gateway": "10.0.0.1",
+            "dns_nameservers": "8.8.8.8"
+        }
+    },
+    "docker": {
+        "portainer_server_image": "portainer/portainer-ce:latest",
+        "portainer_agent_image": "portainer/agent:latest"
+    },
+    "zfs": {
+        "pools": [
+            {
+                "name": "quickOS",
+                "raid_level": "mirror",
+                "disks": [
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y320880M",
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y310536X"
+                ]
+            },
+            {
+                "name": "fastData",
+                "raid_level": "single",
+                "disks": [
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_4TB_S7U8NJ0Y402334Y"
+                ]
+            }
+        ],
+        "datasets": [
+            {
+                "name": "vm-disks",
+                "pool": "quickOS",
+                "properties": {
+                    "recordsize": "128K",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "800G"
+                }
+            },
+            {
+                "name": "lxc-disks",
+                "pool": "quickOS",
+                "properties": {
+                    "recordsize": "16K",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "600G"
+                }
+            },
+            {
+                "name": "shared-prod-data",
+                "pool": "quickOS",
+                "properties": {
+                    "recordsize": "128K",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "400G"
+                }
+            },
+            {
+                "name": "shared-prod-data-sync",
+                "pool": "quickOS",
+                "properties": {
+                    "recordsize": "16K",
+                    "compression": "lz4",
+                    "sync": "always",
+                    "quota": "100G"
+                }
+            },
+            {
+                "name": "shared-test-data",
+                "pool": "fastData",
+                "properties": {
+                    "recordsize": "128K",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "500G"
+                }
+            },
+            {
+                "name": "shared-backups",
+                "pool": "fastData",
+                "properties": {
+                    "recordsize": "1M",
+                    "compression": "zstd",
+                    "sync": "standard",
+                    "quota": "2T"
+                }
+            },
+            {
+                "name": "shared-iso",
+                "pool": "fastData",
+                "properties": {
+                    "recordsize": "1M",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "100G"
+                }
+            },
+            {
+                "name": "shared-bulk-data",
+                "pool": "fastData",
+                "properties": {
+                    "recordsize": "1M",
+                    "compression": "lz4",
+                    "sync": "standard",
+                    "quota": "1.4T"
+                }
+            }
+        ],
+        "arc_max": "32212254720"
+    },
+    "nfs": {
+        "exports": []
+    },
+    "samba": {
+        "shares": []
+    },
+    "proxmox_defaults": {
+        "zfs_lxc_pool": "quickOS/lxc-disks",
+        "lxc": {
+            "cores": 2,
+            "memory_mb": 2048,
+            "network_config": "10.0.0.110/24,10.0.0.1,8.8.8.8",
+            "features": "nesting=1",
+            "security": "default",
+            "nesting": 1
+        }
+    },
+    "vm_defaults": {
+        "template": "ubuntu-24.04-standard",
+        "cores": 4,
+        "memory_mb": 8192,
+        "disk_size_gb": 100,
+        "storage_pool": "local-lvm",
+        "network_bridge": "vmbr0"
+    },
+    "vms": [
+        {
+            "name": "webserver-vm",
+            "cores": 4,
+            "memory_mb": 8192,
+            "disk_size_gb": 100,
+            "post_create_scripts": [
+                "install_webserver.sh"
+            ]
+        }
+    ],
+    "nvidia_driver": {
+        "install": true,
+        "version": "580.76.05",
+        "runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
+        "cuda_version": "12.8",
+        "install_vllm_libs": true
+    },
+    "behavior": {
+        "rollback_on_failure": false,
+        "debug_mode": true
+    }
+}

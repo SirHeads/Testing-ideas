@@ -22,7 +22,12 @@ set -e # Exit immediately if a command exits with a non-zero status.
 set -o pipefail # Return the exit status of the last command in the pipe that failed.
 
 # --- Source common utilities ---
-source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh" # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""

@@ -17,8 +17,12 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# Source common utilities
-source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # Ensure script is run as root
 check_root # Ensure the script is run with root privileges
@@ -116,7 +120,7 @@ configure_samba_shares() {
   mkdir -p "$MOUNT_POINT_BASE" || log_fatal "Failed to create $MOUNT_POINT_BASE" # Ensure base mount point exists
 
   local samba_shares_config # Variable to store Samba shares configuration
-  samba_shares_config=$(jq -c '.samba_shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
+  samba_shares_config=$(jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
 
   # Iterate through each Samba share defined in the configuration
   for share_json in $samba_shares_config; do
@@ -168,28 +172,27 @@ configure_samba_config() {
 
   # Start with global settings
   # Write global Samba settings to smb.conf
+  # Write a modern, streamlined global Samba settings to smb.conf
   cat << EOF > "$smb_conf_file"
 [global]
-   workgroup = $NETWORK_NAME # Set the workgroup name
-   server string = %h Proxmox Samba Server # Server description
-   security = user # User-level security
-   log file = /var/log/samba/log.%m # Log file path
-   max log size = 1000 # Maximum log file size
-   syslog = 0 # Disable syslog
-   panic action = /usr/share/samba/panic-action %d # Panic action script
-   server role = standalone server # Server role
-   passdb backend = tdbsam # Password database backend
-   obey pam restrictions = yes # Obey PAM restrictions
-   unix password sync = yes # Synchronize Unix and Samba passwords
-   passwd program = /usr/bin/passwd %u # Program for password changes
-   passwd chat = *Enter\snew\s*\spassword:* %n\n *Retype\snew\s*\spassword:* %n\n *password\supdated\ssuccessfully* . # Chat for password changes
-   pam password change = yes # Enable PAM password change
-   map to guest = bad user # Map bad users to guest
-   dns proxy = no # Disable DNS proxy
+   workgroup = $NETWORK_NAME
+   server string = %h Proxmox Samba Server
+   log file = /var/log/samba/log.%m
+   max log size = 1000
+   logging = file
+   panic action = /usr/share/samba/panic-action %d
+   server role = standalone server
+   obey pam restrictions = yes
+   unix password sync = yes
+   passwd program = /usr/bin/passwd %u
+   passwd chat = *Enter\snew\s*\spassword:* %n\n *Retype\snew\s*\spassword:* %n\n *password\supdated\ssuccessfully* .
+   pam password change = yes
+   map to guest = bad user
+   usershare allow guests = yes
 EOF
 
   local samba_shares_config # Variable to store Samba shares configuration
-  samba_shares_config=$(jq -c '.samba_shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
+  samba_shares_config=$(jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
 
   # Iterate through each Samba share and append its configuration to smb.conf
   for share_json in $samba_shares_config; do

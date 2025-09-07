@@ -20,13 +20,23 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# Source common utilities
-source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh # Source common utilities for logging and error handling
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # Ensure script is run as root
 check_root # Ensure the script is run with root privileges
 
-log_info "Starting initial Proxmox VE setup."
+# Get the configuration file path from the first argument
+if [ -z "$1" ]; then
+    log_fatal "Configuration file path not provided."
+fi
+HYPERVISOR_CONFIG_FILE="$1"
+ 
+ log_info "Starting initial Proxmox VE setup."
 
 # Configure log rotation
 # =====================================================================================
@@ -232,8 +242,9 @@ read_network_config() {
     fi
 
 log_info "Using network configuration: Hostname=$HOSTNAME, Interface=$INTERFACE, IP=$IP_ADDRESS, Gateway=$GATEWAY, DNS=$DNS_SERVER"
-
-# =====================================================================================
+}
+ 
+ # =====================================================================================
 # Function: set_system_hostname
 # Description: Sets the system hostname.
 # Arguments:
