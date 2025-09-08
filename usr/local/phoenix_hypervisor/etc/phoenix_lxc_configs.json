@@ -75,7 +75,7 @@
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 128,
+            "storage_size_gb": 32,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -118,7 +118,7 @@
             "memory_mb": 72000,
             "cores": 12,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 100,
+            "storage_size_gb": 128,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",

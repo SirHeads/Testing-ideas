@@ -29,6 +29,13 @@ export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
 
+# --- Color Codes ---
+COLOR_GREEN='\033[0;32m'
+COLOR_RED='\033[0;31m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_BLUE='\033[0;34m'
+COLOR_RESET='\033[0m'
+
 # --- Logging Functions ---
 # =====================================================================================
 # Function: log_debug
@@ -42,7 +49,7 @@ log_debug() {
     # Check if debug mode is enabled
     if [ "$PHOENIX_DEBUG" == "true" ]; then
         # Log the debug message with timestamp and script name
-        echo "$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE"
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
     fi
 }
 
@@ -56,7 +63,20 @@ log_debug() {
 # =====================================================================================
 log_info() {
     # Log the informational message with timestamp and script name
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE"
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
+}
+
+# =====================================================================================
+# Function: log_success
+# Description: Logs a success message to stdout and the main log file.
+# Arguments:
+#   $@ - The message to log.
+# Returns:
+#   None.
+# =====================================================================================
+log_success() {
+    # Log the success message with timestamp and script name
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
 }
 
 # =====================================================================================
@@ -68,8 +88,8 @@ log_info() {
 #   None.
 # =====================================================================================
 log_warn() {
-    # Log the warning message with timestamp and script name to stderr
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+	# Log the warning message with timestamp and script name to stderr
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -82,7 +102,7 @@ log_warn() {
 # =====================================================================================
 log_error() {
     # Log the error message with timestamp and script name to stderr
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================

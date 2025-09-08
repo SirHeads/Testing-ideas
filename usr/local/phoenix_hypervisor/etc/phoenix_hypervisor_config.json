@@ -16,6 +16,7 @@
         "hypervisor_marker_dir": "/usr/local/phoenix_hypervisor/lib",
         "hypervisor_marker": "/usr/local/phoenix_hypervisor/lib/.phoenix_hypervisor_initialized"
     },
+    "timezone": "America/New_York",
     "network": {
         "external_registry_url": "docker.io/SirHeads",
         "portainer_server_ip": "10.0.0.99",
@@ -27,70 +28,146 @@
             "gateway": "10.0.0.1",
             "dns_nameservers": "8.8.8.8"
         },
-        "nfs_server": "10.0.0.13",
-        "default_subnet": "10.0.0.0/24"
+        "default_subnet": "10.0.0.0/24",
+        "nfs_server": "10.0.0.13"
     },
     "docker": {
         "portainer_server_image": "portainer/portainer-ce:latest",
         "portainer_agent_image": "portainer/agent:latest"
     },
     "nfs": {
-        "shares": [
-            {
-                "path": "quickOS/shared-prod-data",
-                "options": "rw,async,no_subtree_check,noatime"
-            },
-            {
-                "path": "quickOS/shared-prod-data-sync",
-                "options": "rw,sync,no_subtree_check,noatime"
-            },
-            {
-                "path": "fastData/shared-test-data",
-                "options": "rw,async,no_subtree_check,noatime"
-            },
-            {
-                "path": "fastData/shared-backups",
-                "options": "rw,async,no_subtree_check,noatime"
-            },
-            {
-                "path": "fastData/shared-iso",
-                "options": "rw,async,no_subtree_check,noatime"
-            },
-            {
-                "path": "fastData/shared-bulk-data",
-                "options": "rw,async,no_subtree_check,noatime"
-            },
-            {
-                "path": "fastData/shared-test-data-sync",
-                "options": "rw,sync,no_subtree_check,noatime"
-            }
-        ]
+        "exports": []
     },
     "samba": {
         "user": "heads",
         "shares": [
             {
+                "name": "shared-prod-data",
                 "path": "quickOS/shared-prod-data",
-                "options": "browseable=yes writable=yes"
+                "options": "browseable=yes writable=yes",
+                "valid_users": [
+                    "heads"
+                ]
             },
             {
+                "name": "shared-prod-data-sync",
                 "path": "quickOS/shared-prod-data-sync",
-                "options": "browseable=yes writable=yes"
+                "options": "browseable=yes writable=yes",
+                "valid_users": [
+                    "heads"
+                ]
             },
             {
+                "name": "shared-test-data",
                 "path": "fastData/shared-test-data",
-                "options": "browseable=yes writable=yes"
+                "options": "browseable=yes writable=yes",
+                "valid_users": [
+                    "heads"
+                ]
             },
             {
+                "name": "shared-bulk-data",
                 "path": "fastData/shared-bulk-data",
-                "options": "browseable=yes writable=yes"
+                "options": "browseable=yes writable=yes",
+                "valid_users": [
+                    "heads"
+                ]
             },
             {
+                "name": "shared-test-data-sync",
                 "path": "fastData/shared-test-data-sync",
-                "options": "browseable=yes writable=yes"
+                "options": "browseable=yes writable=yes",
+                "valid_users": [
+                    "heads"
+                ]
             }
         ]
     },
+    "zfs": {
+        "arc_max_gb": 32,
+        "pools": [
+            {
+                "name": "quickOS",
+                "raid_level": "mirror",
+                "disks": [
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y320880M",
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y310536X"
+                ]
+            },
+            {
+                "name": "fastData",
+                "raid_level": "single",
+                "disks": [
+                    "/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_4TB_S7U8NJ0Y402334Y"
+                ]
+            }
+        ],
+        "datasets": [
+            {
+                "name": "vm-disks",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=800G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images"
+            },
+            {
+                "name": "lxc-disks",
+                "pool": "quickOS",
+                "properties": "recordsize=16K,compression=lz4,sync=standard,quota=600G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "rootdir"
+            },
+            {
+                "name": "shared-prod-data",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images"
+            },
+            {
+                "name": "shared-prod-data-sync",
+                "pool": "quickOS",
+                "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images"
+            },
+            {
+                "name": "shared-test-data",
+                "pool": "fastData",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images"
+            },
+            {
+                "name": "shared-backups",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=zstd,sync=standard,quota=2T",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "backup"
+            },
+            {
+                "name": "shared-iso",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "iso,vztmpl"
+            },
+            {
+                "name": "shared-bulk-data",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images"
+            }
+        ]
+    },
+    "proxmox_storage_ids": {
+        "quickos_vm": "quickOS-vm",
+        "quickos_lxc": "quickOS-lxc",
+        "fastdata_backup": "fastData-backup",
+        "fastdata_iso": "fastData-iso"
+    },
+    "mount_point_base": "/mnt/pve",
     "proxmox_storage_ids": {
         "quickos_vm": "quickOS-vm",
         "quickos_lxc": "quickOS-lxc",

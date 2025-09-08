@@ -53,7 +53,6 @@ HYPERVISOR_CONFIG_FILE="$1"
 # =====================================================================================
 install_nfs_packages() {
   log_info "Installing NFS packages..."
-  retry_command "apt-get update" || log_fatal "Failed to update package list" # Update package lists
   retry_command "apt-get install -y nfs-kernel-server nfs-common ufw" || log_fatal "Failed to install NFS packages" # Install NFS packages and UFW
   log_info "NFS packages installed"
 }

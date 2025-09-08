@@ -148,7 +148,7 @@
                 "portainer_agent_port",
                 "interfaces"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "docker": {
             "type": "object",

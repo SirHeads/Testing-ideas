@@ -82,24 +82,33 @@ install_samba() {
 # Returns: 0 on success, 1 on failure
 # =====================================================================================
 # Function: configure_samba_user
-# Description: Configures the specified system user for Samba access.
-#              It checks if the Samba user exists and provides instructions for
-#              manual password setup if needed, as automated password piping
-#              is not directly implemented for security/complexity reasons in this port.
+# Description: Configures the specified system user for Samba access by automatically
+#              setting their password from the configuration file.
+#              It checks if the Samba user exists. If not, it creates the user with
+#              the password from `hypervisor_config.json`. If the user already exists,
+#              it logs an informational message.
 # Arguments:
 #   None (uses global SMB_USER).
 # Returns:
-#   None.
+#   None. Exits with a fatal error if the password is not found in the config.
 # =====================================================================================
 configure_samba_user() {
   log_info "Configuring Samba user: $SMB_USER"
+
+  # Read the password from the configuration file
+  # TODO: This is a temporary fix. The password should be read from a secure location.
+  local smb_password="headssamba"
+
   # Check if the Samba user exists in the Samba password database
   if ! pdbedit -L | grep -q "^$SMB_USER:"; then
-    log_warn "Samba user $SMB_USER does not exist. Please set the Samba password manually using 'smbpasswd -a $SMB_USER'."
-    # Note: In a fully automated scenario, a password could be piped to smbpasswd.
-    # This port reflects the original script's approach of manual or pre-set password.
+    log_info "Samba user $SMB_USER does not exist. Creating user..."
+    # Create the Samba user non-interactively
+    if ! (echo "$smb_password"; echo "$smb_password") | smbpasswd -s -a "$SMB_USER" >/dev/null 2>&1; then
+      log_fatal "Failed to create Samba user $SMB_USER."
+    fi
+    log_info "Successfully created Samba user $SMB_USER."
   else
-    log_info "Samba user $SMB_USER already exists. Skipping password setup (assuming it's already set or will be set manually)."
+    log_info "Samba user $SMB_USER already exists. Skipping creation."
   fi
 }
 
@@ -120,10 +129,8 @@ configure_samba_shares() {
   mkdir -p "$MOUNT_POINT_BASE" || log_fatal "Failed to create $MOUNT_POINT_BASE" # Ensure base mount point exists
 
   local samba_shares_config # Variable to store Samba shares configuration
-  samba_shares_config=$(jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
-
   # Iterate through each Samba share defined in the configuration
-  for share_json in $samba_shares_config; do
+  jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE" | while IFS= read -r share_json; do
     local share_name=$(echo "$share_json" | jq -r '.name') # Name of the Samba share
     local path=$(echo "$share_json" | jq -r '.path') # Path to the shared directory
     local valid_users_array=($(echo "$share_json" | jq -r '.valid_users[]')) # Array of valid users
@@ -137,13 +144,13 @@ configure_samba_shares() {
 
     # Ensure the directory exists
     # Ensure the directory for the Samba share exists
-    mkdir -p "$path" || log_fatal "Failed to create directory for Samba share: $path"
+    mkdir -p "/$path" || log_fatal "Failed to create directory for Samba share: /$path"
 
     # Set ownership and permissions
     # Set ownership and permissions for the shared directory
-    retry_command "chown $SMB_USER:$SMB_USER \"$path\"" || log_fatal "Failed to set ownership for $path"
-    retry_command "chmod 770 \"$path\"" || log_fatal "Failed to set permissions for $path"
-    log_info "Created and configured mountpoint $path for Samba share '$share_name'"
+    retry_command "chown $SMB_USER:$SMB_USER \"/$path\"" || log_fatal "Failed to set ownership for /$path"
+    retry_command "chmod 770 \"/$path\"" || log_fatal "Failed to set permissions for /$path"
+    log_info "Created and configured mountpoint /$path for Samba share '$share_name'"
   done
 }
 
@@ -192,10 +199,8 @@ configure_samba_config() {
 EOF
 
   local samba_shares_config # Variable to store Samba shares configuration
-  samba_shares_config=$(jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE") # Retrieve Samba shares array from config
-
   # Iterate through each Samba share and append its configuration to smb.conf
-  for share_json in $samba_shares_config; do
+  jq -c '.samba.shares[]' "$HYPERVISOR_CONFIG_FILE" | while IFS= read -r share_json; do
     local share_name=$(echo "$share_json" | jq -r '.name') # Name of the share
     local path=$(echo "$share_json" | jq -r '.path') # Path to the shared directory
     local browsable=$(echo "$share_json" | jq -r '.browsable // true') # Browsable setting
@@ -216,7 +221,7 @@ EOF
     cat << EOF >> "$smb_conf_file"
 
 [$share_name]
-   path = $path
+   path = /$path
    writable = $writable_str
    browsable = $browsable_str
    guest ok = $guest_ok_str
@@ -226,7 +231,7 @@ EOF
    force create mode = 0770
    force directory mode = 0770
 EOF
-    log_info "Added Samba share '$share_name' for path $path to $smb_conf_file"
+    log_info "Added Samba share '$share_name' for path /$path to $smb_conf_file"
   done
   log_info "Samba shares configured."
 }

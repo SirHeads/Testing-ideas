@@ -20,8 +20,6 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# --- Source common utilities ---
-# The common_utils.sh script provides shared functions for logging, error handling, etc.
 # --- Determine script's absolute directory ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
@@ -459,6 +457,27 @@ apply_configurations() {
     # Apply network configuration
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
     log_info "Configurations applied successfully for CTID $CTID."
+}
+
+# =====================================================================================
+# Function: ensure_container_disk_size
+# Description: Ensures the container's root disk size matches the configuration.
+# Arguments:
+#   None (uses global CTID).
+# Returns:
+#   None. Exits with a fatal error if the `pct resize` command fails.
+# =====================================================================================
+ensure_container_disk_size() {
+    log_info "Ensuring correct disk size for CTID: $CTID"
+    local storage_size_gb
+    storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
+
+    # The pct resize command is idempotent for our purposes.
+    # It sets the disk to the specified size.
+    if ! run_pct_command resize "$CTID" rootfs "${storage_size_gb}G"; then
+        log_fatal "Failed to set disk size for CTID $CTID."
+    fi
+    log_info "Disk size for CTID $CTID set to ${storage_size_gb}G."
 }
 
 # =====================================================================================
@@ -1006,6 +1025,12 @@ handle_hypervisor_setup_state() {
         fi
     done
 
+    echo "------------------------------------------------------------"
+    echo "Running post-setup verification tests..."
+    echo "------------------------------------------------------------"
+    /usr/local/phoenix_hypervisor/bin/tests/phoenix_hypervisor_tests.sh 2>&1 | tee -a "$LOG_FILE"
+    log_info "Hypervisor setup verification complete. Please review the test output above."
+
     log_info "All hypervisor setup scripts executed successfully."
 }
 
@@ -1093,83 +1118,6 @@ enable_proxmox_enterprise_repos() {
 # Function: check_dependencies
 # Description: Checks for necessary command-line tools and installs them if missing.
 # =====================================================================================
-check_dependencies() {
-    log_info "Checking for required dependencies..."
-
-    # Check for npm and install if missing
-    if ! command -v npm &> /dev/null; then
-        disable_proxmox_enterprise_repos # Temporarily disable enterprise repos and enable no-subscription
-        log_info "npm not found. Attempting to install Node.js and npm..."
-
-        # Ensure a clean state by removing any leftover nodesource list from previous failed runs
-        log_info "Removing any leftover NodeSource repository list..."
-        rm -f /etc/apt/sources.list.d/nodesource.list
-
-        # 1. Ensure curl, gpg, and lsb-release are installed.
-        log_info "Ensuring curl, gpg, and lsb-release are installed..."
-        apt-get update || log_fatal "Failed to apt-get update before installing core dependencies."
-        apt-get install -y curl gpg lsb-release || log_fatal "Failed to install curl, gpg, and lsb-release."
-
-        # 2. Create the /etc/apt/keyrings directory.
-        log_info "Creating /etc/apt/keyrings directory if it doesn't exist..."
-        if [ ! -d "/etc/apt/keyrings" ]; then
-            mkdir -m 0755 -p /etc/apt/keyrings || log_fatal "Failed to create /etc/apt/keyrings directory."
-        fi
-
-        # 3. Download the NodeSource GPG key, de-armor it, and save it to /etc/apt/keyrings/nodesource.gpg.
-        log_info "Removing any leftover NodeSource GPG key to ensure a clean state..."
-        rm -f /etc/apt/keyrings/nodesource.gpg
-        log_info "Downloading and adding NodeSource GPG key..."
-        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg || log_fatal "Failed to add NodeSource GPG key."
-
-        # 4. Dynamically determine the distribution codename.
-        log_info "Detecting distribution codename..."
-        if [ -f /etc/os-release ]; then
-            source /etc/os-release
-            local DISTRO_CODENAME=${VERSION_CODENAME:-$(lsb_release -cs)}
-        else
-            local DISTRO_CODENAME=$(lsb_release -cs)
-        fi
-        log_info "Distribution codename detected: $DISTRO_CODENAME"
-
-        # If codename is 'trixie' (testing), use 'bookworm' (stable) for NodeSource compatibility.
-        if [ "$DISTRO_CODENAME" == "trixie" ]; then
-            log_info "Detected 'trixie' codename, using 'bookworm' for NodeSource repository compatibility."
-            DISTRO_CODENAME="bookworm"
-        fi
-
-        # 5. Create the nodesource.list file, ensuring it correctly references the GPG key.
-        log_info "Creating NodeSource repository list file..."
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x $DISTRO_CODENAME main" | tee /etc/apt/sources.list.d/nodesource.list >/dev/null || log_fatal "Failed to create nodesource.list."
-        
-        # 6. Only then, run apt-get update.
-        log_info "Running apt-get update after adding NodeSource repository..."
-        apt-get update || log_fatal "Failed to apt-get update after adding NodeSource repository."
-
-        # 7. Finally, run apt-get install -y nodejs.
-        log_info "Running apt-get install -y nodejs..."
-        apt-get install -y nodejs || log_fatal "Failed to install Node.js."
-        
-        # The Debian 'nodejs' package may not include 'npm', so install it separately.
-        log_info "Ensuring npm is installed..."
-        apt-get install -y npm || log_fatal "Failed to install npm."
-        
-        log_info "Node.js and npm installed successfully."
-    else
-        log_info "npm is already installed."
-    fi
-
-    # Check for ajv-cli and install if missing
-    if ! command -v ajv &> /dev/null; then
-        log_info "ajv-cli not found. Attempting to install globally using npm..."
-        if ! npm install -g ajv-cli; then
-            log_fatal "Failed to install ajv-cli. Please ensure npm is installed and configured correctly, or install ajv-cli manually."
-        fi
-        log_info "ajv-cli installed successfully."
-    else
-        log_info "ajv-cli is already installed."
-    fi
-}
 
 # =====================================================================================
 # Function: main
@@ -1188,7 +1136,6 @@ main() {
     setup_logging
     exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
 
-    check_dependencies # Check and install dependencies
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Started"
@@ -1223,6 +1170,7 @@ main() {
 
         # 2. Ensure Container is Configured: Apply configurations (idempotent)
         log_info "Ensuring container $CTID is correctly configured..."
+        ensure_container_disk_size # Ensure disk size is correct
         apply_configurations # Apply configurations to the container
 
         # 3. Ensure Container is Running

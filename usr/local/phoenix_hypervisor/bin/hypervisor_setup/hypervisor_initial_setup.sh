@@ -36,7 +36,6 @@ if [ -z "$1" ]; then
 fi
 HYPERVISOR_CONFIG_FILE="$1"
  
- log_info "Starting initial Proxmox VE setup."
 
 # Configure log rotation
 # =====================================================================================
@@ -67,56 +66,75 @@ EOF
 # =====================================================================================
 # Function: configure_proxmox_repositories
 # Description: Configures Proxmox VE repositories for the Trixie distribution.
-#              It disables enterprise repositories and enables no-subscription repositories
-#              for PVE and Ceph.
+#              It downloads the Proxmox GPG key, disables enterprise repositories,
+#              and enables no-subscription repositories for PVE and Ceph.
 # Arguments:
 #   None.
 # Returns:
-#   None. Exits with a fatal error if file operations fail.
+#   None. Exits with a fatal error if file operations or GPG key installation fail.
 # =====================================================================================
 configure_proxmox_repositories() {
     log_info "Configuring Proxmox repositories for Trixie..."
 
-    # Disable Enterprise Repositories (check for both .list and .sources extensions)
-    if [ -f /etc/apt/sources.list.d/pve-enterprise.list ]; then
-        mv /etc/apt/sources.list.d/pve-enterprise.list /etc/apt/sources.list.d/pve-enterprise.list.bak # Backup .list file
-        log_info "Backed up Proxmox VE subscription repository file (.list)"
-    elif [ -f /etc/apt/sources.list.d/pve-enterprise.sources ]; then
-        mv /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/pve-enterprise.sources.bak # Backup .sources file
-        log_info "Backed up Proxmox VE subscription repository file (.sources)"
+    # Define GPG key path
+    local proxmox_keyring="/usr/share/keyrings/proxmox-archive-keyring.gpg"
+
+    # Install Proxmox GPG key
+    log_info "Installing Proxmox GPG key to ${proxmox_keyring}..."
+    if ! curl -fsSL https://enterprise.proxmox.com/debian/proxmox-release-trixie.gpg -o "${proxmox_keyring}"; then
+        log_fatal "Failed to download and install Proxmox GPG key."
+    fi
+    log_info "Proxmox GPG key installed."
+
+    # Disable Enterprise Repositories by renaming them
+    if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ]; then
+        mv /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/pve-enterprise.sources.disabled
+        log_info "Disabled Proxmox VE enterprise repository."
     else
-        log_warn "Proxmox VE subscription repository file (.list or .sources) not found, skipping backup"
+        log_warn "Proxmox VE enterprise repository file not found, skipping."
     fi
 
-    # Disable Ceph Enterprise Repositories (check for both .list and .sources extensions)
-    if [ -f /etc/apt/sources.list.d/ceph.list ]; then
-        mv /etc/apt/sources.list.d/ceph.list /etc/apt/sources.list.d/ceph.list.bak # Backup .list file
-        log_info "Backed up Ceph subscription repository file (.list)"
-    elif [ -f /etc/apt/sources.list.d/ceph.sources ]; then
-        mv /etc/apt/sources.list.d/ceph.sources /etc/apt/sources.list.d/ceph.sources.bak # Backup .sources file
-        log_info "Backed up Ceph subscription repository file (.sources)"
-    else
-        log_warn "Ceph subscription repository file (.list or .sources) not found, skipping backup"
-    fi
+    # Create the PVE no-subscription repository file
+    log_info "Creating Proxmox VE no-subscription source file..."
+    cat << EOF > /etc/apt/sources.list.d/proxmox.sources
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: ${proxmox_keyring}
+EOF
 
-    # Enable Proxmox VE no-subscription repository for Trixie
-    if ! grep -q "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" /etc/apt/sources.list; then
-        echo "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription" >> /etc/apt/sources.list # Add repository line
-        log_info "Added Proxmox VE no-subscription repository for trixie"
-    else
-        log_warn "Proxmox VE no-subscription repository for trixie already enabled, skipping"
-    fi
+    # Create the Ceph no-subscription repository file
+    log_info "Creating Ceph no-subscription source file..."
+    cat << EOF > /etc/apt/sources.list.d/ceph.sources
+Types: deb
+URIs: http://download.proxmox.com/debian/ceph-squid
+Suites: trixie
+Components: no-subscription
+Signed-By: ${proxmox_keyring}
+EOF
 
-    # Enable Ceph no-subscription repository (ceph-squid) for Trixie
-    if ! grep -q "deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription" /etc/apt/sources.list; then
-        echo "deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription" >> /etc/apt/sources.list # Add repository line
-        log_info "Added Ceph no-subscription repository (ceph-squid) for trixie"
-    else
-        log_warn "Ceph no-subscription repository (ceph-squid) for trixie already enabled, skipping"
-    fi
-    log_info "Proxmox repositories configured."
+    log_info "Successfully configured Proxmox and Ceph repositories."
 }
 # --- END MODIFIED REPOSITORY CONFIGURATION ---
+
+# Configure NodeSource repository
+# =====================================================================================
+# Function: configure_nodesource_repository
+# Description: Configures the NodeSource repository for Node.js 20.x using the
+#              "bookworm" distribution, as "trixie" is not supported.
+# Arguments:
+#   None.
+# Returns:
+#   None.
+# =====================================================================================
+configure_nodesource_repository() {
+    log_info "Configuring NodeSource repository..."
+    cat << EOF > /etc/apt/sources.list.d/nodesource.list
+deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x bookworm main
+EOF
+    log_info "NodeSource repository configured for bookworm."
+}
 
 # Update and upgrade system
 # =====================================================================================
@@ -197,9 +215,13 @@ install_samba_packages() {
 #   None. Exits with a fatal error if setting the timezone fails.
 # =====================================================================================
 set_system_timezone() {
-    log_info "Setting timezone to America/New_York..."
-    retry_command "timedatectl set-timezone America/New_York" || log_fatal "Failed to set timezone" # Set timezone
-    log_info "Timezone set to America/New_York"
+    local timezone
+    timezone=$(jq -r '.timezone // "America/New_York"' "$HYPERVISOR_CONFIG_FILE")
+    log_info "Setting timezone to ${timezone}..."
+    if ! timedatectl set-timezone "${timezone}"; then
+        log_fatal "Failed to set timezone to ${timezone}"
+    fi
+    log_info "Timezone set to ${timezone}"
 }
 
 # Configure NTP
@@ -335,11 +357,20 @@ configure_firewall_rules() {
     retry_command "ufw allow 2049/tcp" || log_fatal "Failed to allow NFS port in firewall" # Allow NFS
     retry_command "ufw allow 111/tcp" || log_fatal "Failed to allow RPC port in firewall" # Allow RPC (for NFS)
     retry_command "ufw allow Samba" || log_fatal "Failed to allow Samba in firewall" # Allow Samba
-    retry_command "ufw enable" || log_fatal "Failed to enable ufw" # Enable UFW
-    log_info "Firewall rules configured and enabled"
+    # Enable and start UFW firewall
+    log_info "Enabling and starting UFW firewall..."
+    if ufw status | grep -q "Status: active"; then
+        log_info "UFW firewall is already active."
+    else
+        if ! yes | ufw enable; then
+            log_fatal "Failed to enable UFW firewall."
+        fi
+    fi
+    retry_command "systemctl start ufw" || log_fatal "Failed to start UFW service."
+    retry_command "systemctl enable ufw" || log_fatal "Failed to enable UFW service on boot."
+    log_info "Firewall rules configured and UFW service enabled and started."
 }
 
-log_info "Successfully completed hypervisor_initial_setup.sh"
 
 # =====================================================================================
 # Function: main
@@ -357,6 +388,7 @@ main() {
     
     configure_log_rotation # Configure log rotation for the main log file
     configure_proxmox_repositories # Configure Proxmox repositories
+    configure_nodesource_repository # Configure NodeSource repository
     update_and_upgrade_system # Update and upgrade the system
     install_jq # Install jq
     install_s_tui # Install s-tui
