@@ -474,9 +474,7 @@ ensure_container_disk_size() {
 
     # The pct resize command is idempotent for our purposes.
     # It sets the disk to the specified size.
-    if ! run_pct_command resize "$CTID" rootfs "${storage_size_gb}G"; then
-        log_fatal "Failed to set disk size for CTID $CTID."
-    fi
+    run_pct_command resize "$CTID" rootfs "${storage_size_gb}G"
     log_info "Disk size for CTID $CTID set to ${storage_size_gb}G."
 }
 

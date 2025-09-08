@@ -218,9 +218,26 @@ run_pct_command() {
     fi
 
     # Execute the pct command
-    if ! pct "${pct_args[@]}"; then
-        log_error "'pct ${pct_args[*]}' command failed."
-        return 1
+    local output
+    local exit_code=0
+    # Capture the output and exit code of the pct command.
+    output=$(pct "${pct_args[@]}" 2>&1) || exit_code=$?
+
+    # Log the captured output and exit code for debugging purposes.
+    log_debug "pct command output:\n$output"
+    log_debug "pct command exit code: $exit_code"
+
+    # Check if the command failed (exit code is not 0).
+    if [ $exit_code -ne 0 ]; then
+        # Check for the specific non-error condition of the disk already being the correct size.
+        if [[ "${pct_args[0]}" == "resize" && "$output" == *"disk is already at specified size"* ]]; then
+            log_info "Ignoring non-fatal error for 'pct resize': $output"
+        else
+            # For all other errors, log the failure and return an error code.
+            log_error "'pct ${pct_args[*]}' command failed with exit code $exit_code."
+            log_error "Output:\n$output"
+            return 1
+        fi
     fi
     log_info "'pct ${pct_args[*]}' command executed successfully."
     return 0
