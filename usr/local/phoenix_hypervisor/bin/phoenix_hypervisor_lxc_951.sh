@@ -42,69 +42,51 @@ parse_arguments() {
 }
 
 # =====================================================================================
-# Function: verify_vllm_environment
-# Description: Checks that the vLLM executable is present and has the correct permissions.
+# Function: setup_embedding_server_environment
+# Description: Installs dependencies and copies the server script into the container.
 # =====================================================================================
-verify_vllm_environment() {
-    log_info "Verifying vLLM environment in CTID: $CTID..."
-    local python_executable="/opt/vllm/bin/python3"
-
-    if ! pct_exec "$CTID" test -f "$python_executable"; then
-        log_error "vLLM python executable not found at $python_executable."
-        log_error "Listing contents of /opt/vllm/bin/:"
-        pct_exec "$CTID" ls -l /opt/vllm/bin/ | log_plain_output
-        log_fatal "vLLM environment is incomplete."
-    fi
-
-    if ! pct_exec "$CTID" test -x "$python_executable"; then
-        log_error "vLLM python executable is not executable."
-        log_error "Listing permissions for $python_executable:"
-        pct_exec "$CTID" ls -l "$python_executable" | log_plain_output
-        log_fatal "vLLM environment has incorrect permissions."
-    fi
-
-    log_info "vLLM environment verified successfully."
+setup_embedding_server_environment() {
+    log_info "Setting up embedding server environment in CTID: $CTID..."
+    
+    # --- Install Python dependencies for the FastAPI server ---
+    log_info "Installing FastAPI, Uvicorn, and SentenceTransformers..."
+    pct_exec "$CTID" /opt/vllm/bin/pip install fastapi uvicorn "sentence-transformers>=2.2.0"
+    
+    # --- Create application directory and copy the server script ---
+    log_info "Copying embedding server script into the container..."
+    pct_exec "$CTID" mkdir -p /opt/app
+    pct push "$CTID" "${SCRIPT_DIR}/lxc_setup/embedding_server.py" "/opt/app/embedding_server.py"
+    
+    log_info "Embedding server environment setup complete."
 }
 
 # =====================================================================================
 # Function: generate_systemd_service_file
-# Description: Dynamically creates a systemd service file for the vLLM server.
+# Description: Dynamically creates a systemd service file for the embedding server.
 # =====================================================================================
 generate_systemd_service_file() {
     log_info "Generating systemd service file for $SERVICE_NAME..."
 
-    # --- Retrieve vLLM parameters from the central config ---
+    # --- Retrieve model name from the central config ---
     local model
     model=$(jq_get_value "$CTID" ".vllm_model")
-    local tensor_parallel_size
-    tensor_parallel_size=$(jq_get_value "$CTID" ".vllm_tensor_parallel_size")
-    local gpu_memory_utilization
-    gpu_memory_utilization=$(jq_get_value "$CTID" ".vllm_gpu_memory_utilization")
-    local max_model_len
-    max_model_len=$(jq_get_value "$CTID" ".vllm_max_model_len")
 
-    # --- Construct the ExecStart command ---
-    local exec_start_cmd="/opt/vllm/bin/python3 -m vllm.entrypoints.api_server"
-    exec_start_cmd+=" --model $model"
-    exec_start_cmd+=" --tensor-parallel-size $tensor_parallel_size"
-    exec_start_cmd+=" --gpu-memory-utilization $gpu_memory_utilization"
-    exec_start_cmd+=" --max-model-len $max_model_len"
-    exec_start_cmd+=" --kv-cache-dtype auto"
-    exec_start_cmd+=" --disable-custom-all-reduce"
-    exec_start_cmd+=" --host 0.0.0.0"
+    # --- Construct the ExecStart command for Uvicorn ---
+    local exec_start_cmd="/opt/vllm/bin/uvicorn embedding_server:app --host 0.0.0.0 --port 8000"
 
-    log_info "Constructed vLLM ExecStart command: $exec_start_cmd"
+    log_info "Constructed Uvicorn ExecStart command: $exec_start_cmd"
 
-    # --- Create the systemd service file content using a single, robust printf command ---
+    # --- Create the systemd service file content ---
     local service_file_content
     service_file_content=$(printf '%s\n' \
         "[Unit]" \
-        "Description=vLLM API Server" \
+        "Description=Sentence Embedding FastAPI Server" \
         "After=network.target" \
         "" \
         "[Service]" \
         "User=root" \
-        "WorkingDirectory=/opt/vllm" \
+        "WorkingDirectory=/opt/app" \
+        "Environment=\"EMBEDDING_MODEL_NAME=$model\"" \
         "ExecStart=$exec_start_cmd" \
         "Restart=always" \
         "RestartSec=10" \
@@ -114,11 +96,10 @@ generate_systemd_service_file() {
         "[Install]" \
         "WantedBy=multi-user.target")
 
-    # --- Write the service file inside the container using a robust pipe method ---
+    # --- Write the service file inside the container ---
     local service_file_path="/etc/systemd/system/${SERVICE_NAME}.service"
     log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
 
-    # --- Use a here-doc and pipe it into the container for maximum reliability ---
     if ! echo "${service_file_content}" | pct exec "$CTID" -- tee "${service_file_path}" > /dev/null; then
         log_fatal "Failed to write systemd service file in CTID $CTID."
     fi
@@ -165,35 +146,22 @@ manage_vllm_service() {
 # Description: Performs a health check to ensure the vLLM API is responsive.
 # =====================================================================================
 perform_health_check() {
-    log_info "Performing health check on the vLLM API server..."
+    log_info "Performing health check on the Embedding API server..."
     local max_attempts=12
     local attempt=0
     local interval=10 # seconds
-    local health_check_url="http://localhost:8000/v1/models"
-    local model_name
-    model_name=$(jq_get_value "$CTID" ".vllm_model")
+    local health_check_url="http://localhost:8000/health"
 
     while [ "$attempt" -lt "$max_attempts" ]; do
         attempt=$((attempt + 1))
         log_info "Health check attempt $attempt/$max_attempts..."
         
-        local response
-        response=$(pct exec "$CTID" -- curl -s "$health_check_url" || echo "CURL_ERROR")
-
-        if [ "$response" == "CURL_ERROR" ]; then
-            log_info "API not ready yet (curl command failed, likely connection refused). Retrying in $interval seconds..."
-            sleep "$interval"
-            continue
-        fi
-
-        local model_id
-        model_id=$(echo "$response" | jq -r ".data.id")
-
-        if [ "$model_id" == "$model_name" ]; then
-            log_info "Health check passed! The vLLM API server is responsive and the correct model is loaded."
+        # Use curl's --fail option to handle HTTP errors and connection issues
+        if pct exec "$CTID" -- curl -s --fail "$health_check_url" > /dev/null; then
+            log_info "Health check passed! The Embedding API server is responsive."
             return 0
         else
-            log_info "API is responsive, but the model is not yet loaded. Retrying in $interval seconds..."
+            log_info "API not ready yet. Retrying in $interval seconds..."
             sleep "$interval"
         fi
     done
@@ -202,7 +170,7 @@ perform_health_check() {
     log_error "Retrieving latest service logs for diagnosis..."
     log_error "Recent logs for $SERVICE_NAME:"
     pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
-    log_fatal "vLLM service health check failed."
+    log_fatal "Embedding service health check failed."
 }
 
 # =====================================================================================
@@ -215,35 +183,41 @@ validate_api_with_test_query() {
     model=$(jq_get_value "$CTID" ".vllm_model")
     local api_url="http://localhost:8000/v1/embeddings"
     
-    # --- Construct the JSON payload for the test query ---
+    # --- Construct the JSON payload for the test query (compact format) ---
     local json_payload
-    json_payload=$(jq -n --arg model "$model" \
-        '{model: $model, input: "This is a test sentence for embedding."}')
+    json_payload=$(jq -c -n --arg model "$model" \
+        '{"model": $model, "input": "This is a test sentence for embedding."}')
 
-    # --- Execute the curl command inside the container ---
+    # --- Execute the curl command inside the container using bash -c for robust quoting ---
     local api_response
-    api_response=$(pct_exec "$CTID" curl -s -X POST "$api_url" \
-        -H "Content-Type: application/json" \
-        -d "$json_payload")
+    local curl_cmd="curl -s -X POST '$api_url' -H 'Content-Type: application/json' -d '$json_payload'"
+    log_info "Executing in CTID $CTID via bash: $curl_cmd"
+    api_response=$(pct exec "$CTID" -- bash -c "$curl_cmd")
+
+    # --- Check for empty response ---
+    if [ -z "$api_response" ]; then
+        log_error "API validation failed. Received an empty response from the server."
+        log_fatal "The embedding model is not responding correctly."
+    fi
 
     # --- Check if the response contains an error ---
     if echo "$api_response" | jq -e 'has("error")' > /dev/null; then
         log_error "API validation failed. The server returned an error."
         log_error "API Response:"
         echo "$api_response" | log_plain_output
-        log_fatal "The vLLM embedding model appears to have failed to load correctly."
+        log_fatal "The embedding model appears to have failed to load correctly."
     fi
 
     # --- Check if the response contains a valid embedding data structure ---
-    if ! echo "$api_response" | jq -e '.data.embedding | length > 0' > /dev/null; then
+    if ! echo "$api_response" | jq -e '.data[0].embedding | length > 0' > /dev/null; then
         log_error "API validation failed. The response format was unexpected or embedding is empty."
         log_error "API Response:"
         echo "$api_response" | log_plain_output
-        log_fatal "The vLLM embedding model is not responding with valid embeddings."
+        log_fatal "The embedding model is not responding with valid embeddings."
     fi
 
     log_info "API validation successful! The embedding model is loaded and generating responses."
-    log_info "Test query response snippet: $(echo "$api_response" | jq -r '.data.embedding[0:5]' | tr -d '\n')..."
+    log_info "Test query response snippet: $(echo "$api_response" | jq -r '.data[0].embedding[0:5]' | tr -d '\n')..."
 }
 
 # =====================================================================================
@@ -277,7 +251,7 @@ display_connection_info() {
 # =====================================================================================
 main() {
     parse_arguments "$@"
-    verify_vllm_environment
+    setup_embedding_server_environment
     generate_systemd_service_file
     manage_vllm_service
     perform_health_check

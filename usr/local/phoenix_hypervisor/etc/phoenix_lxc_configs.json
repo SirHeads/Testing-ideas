@@ -294,6 +294,26 @@
                 "nvidia"
             ],
             "application_script": "phoenix_hypervisor_lxc_957.sh"
+        },
+        "958": {
+            "name": "rag-api-service",
+            "memory_mb": 24576,
+            "cores": 8,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 100,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.202/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B8",
+            "gpu_assignment": "0",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "901",
+            "features": [],
+            "application_script": "phoenix_hypervisor_lxc_958.sh"
         }
     }
 }
