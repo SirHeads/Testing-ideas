@@ -287,20 +287,22 @@ create_container_from_template() {
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0") # Convert boolean to 0 or 1
 
     # --- Check for template existence and download if necessary ---
-    if [ ! -f "$template" ]; then
-        log_info "Template file not found at $template. Attempting to download..."
+    local mount_point_base=$(jq -r '.mount_point_base' "$VM_CONFIG_FILE")
+    local iso_dataset_path=$(jq -r '.zfs.datasets[] | select(.name == "shared-iso") | .pool + "/" + .name' "$VM_CONFIG_FILE")
+    local template_path="${mount_point_base}/${iso_dataset_path}/template/cache/$(basename "$template")"
+
+    if [ ! -f "$template_path" ]; then
+        log_info "Template file not found at $template_path. Attempting to download..."
         # Extract the template name from the filename (e.g., ubuntu-24.04-standard)
         local template_filename=$(basename "$template")
         local template_name="$template_filename"
         
-        # Determine the storage ID from the template path
-        local storage_id=""
-        if [[ "$template" == /fastData/shared-iso/* ]]; then
-            storage_id="fastData-iso"
-        else
-            # Add more conditions here if other storage locations are used for templates
-            log_fatal "Could not determine storage ID for template path: $template"
-        fi
+         # Determine the storage ID for ISOs from the configuration file
+         local storage_id
+         storage_id=$(jq -r '.proxmox_storage_ids.fastdata_iso' "$VM_CONFIG_FILE")
+         if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
+            log_fatal "Could not determine ISO storage ID from configuration file: $VM_CONFIG_FILE"
+         fi
 
         log_info "Downloading template '$template_name' to storage '$storage_id'..."
         if ! pveam download "$storage_id" "$template_name"; then
@@ -1116,6 +1118,50 @@ enable_proxmox_enterprise_repos() {
 # Function: check_dependencies
 # Description: Checks for necessary command-line tools and installs them if missing.
 # =====================================================================================
+check_dependencies() {
+    log_info "Checking for dependencies..."
+    local dependencies=("jq" "pct" "qm" "ajv")
+    local missing_dependencies=()
+
+    for cmd in "${dependencies[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_dependencies+=("$cmd")
+        fi
+    done
+
+    if [ ${#missing_dependencies[@]} -ne 0 ]; then
+        log_info "Missing dependencies: ${missing_dependencies[*]}. Attempting to install..."
+        
+        # Temporarily disable enterprise repos to avoid apt update failures
+        disable_proxmox_enterprise_repos
+        
+        if ! apt-get update; then
+            log_fatal "Failed to update apt repositories. Please check your internet connection and repository configuration."
+        fi
+
+        for cmd in "${missing_dependencies[@]}"; do
+            case "$cmd" in
+                jq)
+                    if ! apt-get install -y jq; then
+                        log_fatal "Failed to install jq. Please install it manually."
+                    fi
+                    ;;
+                ajv)
+                    if ! npm install -g ajv-cli; then
+                        log_fatal "Failed to install ajv-cli. Please ensure you have Node.js and npm installed."
+                    fi
+                    ;;
+                # pct and qm are part of Proxmox, so we don't install them here.
+                # If they are missing, something is seriously wrong with the environment.
+            esac
+        done
+        
+        # Re-enable enterprise repos
+        enable_proxmox_enterprise_repos
+    else
+        log_info "All dependencies are satisfied."
+    fi
+}
 
 # =====================================================================================
 # Function: main
@@ -1134,6 +1180,8 @@ main() {
     setup_logging
     exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
 
+
+    check_dependencies
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Started"

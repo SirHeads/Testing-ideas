@@ -13,6 +13,11 @@
             "type": "string",
             "description": "Author(s) of the configuration."
         },
+        "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The timezone for the hypervisor and containers."
+        },
         "users": {
             "type": "object",
             "description": "Admin user configuration.",
@@ -141,12 +146,65 @@
                     ]
                 }
             },
+            "properties": {
+                "external_registry_url": {
+                    "type": "string",
+                    "description": "URL for the external Docker registry (e.g., Docker Hub)."
+                },
+                "portainer_server_ip": {
+                    "type": "string",
+                    "description": "IP address of the Portainer Server container."
+                },
+                "portainer_server_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Port for accessing the Portainer web UI."
+                },
+                "portainer_agent_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Port for Portainer Agent communication."
+                },
+                "interfaces": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        },
+                        "address": {
+                            "type": "string"
+                        },
+                        "gateway": {
+                            "type": "string"
+                        },
+                        "dns_nameservers": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "address",
+                        "gateway",
+                        "dns_nameservers"
+                    ]
+                },
+                "default_subnet": {
+                    "type": "string"
+                },
+                "nfs_server": {
+                    "type": "string"
+                }
+            },
             "required": [
                 "external_registry_url",
                 "portainer_server_ip",
                 "portainer_server_port",
                 "portainer_agent_port",
-                "interfaces"
+                "interfaces",
+                "default_subnet",
+                "nfs_server"
             ],
             "additionalProperties": true
         },
@@ -212,6 +270,9 @@
             "type": "object",
             "description": "Samba configuration for shares.",
             "properties": {
+                "user": {
+                    "type": "string"
+                },
                 "shares": {
                     "type": "array",
                     "items": {
@@ -223,14 +284,8 @@
                             "path": {
                                 "type": "string"
                             },
-                            "browsable": {
-                                "type": "boolean"
-                            },
-                            "read_only": {
-                                "type": "boolean"
-                            },
-                            "guest_ok": {
-                                "type": "boolean"
+                            "options": {
+                                "type": "string"
                             },
                             "valid_users": {
                                 "type": "array",
@@ -242,12 +297,14 @@
                         "required": [
                             "name",
                             "path",
+                            "options",
                             "valid_users"
                         ]
                     }
                 }
             },
             "required": [
+                "user",
                 "shares"
             ]
         },
@@ -452,11 +509,106 @@
                 "install_vllm_libs"
             ],
             "additionalProperties": false
+        },
+        "zfs": {
+            "type": "object",
+            "properties": {
+                "arc_max_gb": {
+                    "type": "integer"
+                },
+                "pools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "raid_level": {
+                                "type": "string"
+                            },
+                            "disks": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "raid_level",
+                            "disks"
+                        ]
+                    }
+                },
+                "datasets": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "pool": {
+                                "type": "string"
+                            },
+                            "properties": {
+                                "type": "string"
+                            },
+                            "proxmox_storage_type": {
+                                "type": "string"
+                            },
+                            "proxmox_content_type": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "pool",
+                            "properties",
+                            "proxmox_storage_type",
+                            "proxmox_content_type"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "arc_max_gb",
+                "pools",
+                "datasets"
+            ]
+        },
+        "proxmox_storage_ids": {
+            "type": "object",
+            "properties": {
+                "quickos_vm": {
+                    "type": "string"
+                },
+                "quickos_lxc": {
+                    "type": "string"
+                },
+                "fastdata_backup": {
+                    "type": "string"
+                },
+                "fastdata_iso": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "quickos_vm",
+                "quickos_lxc",
+                "fastdata_backup",
+                "fastdata_iso"
+            ]
+        },
+        "mount_point_base": {
+            "type": "string"
         }
     },
     "required": [
         "version",
         "author",
+        "timezone",
         "users",
         "core_paths",
         "network",
@@ -467,7 +619,10 @@
         "vm_defaults",
         "vms",
         "behavior",
-        "nvidia_driver"
+        "nvidia_driver",
+        "zfs",
+        "proxmox_storage_ids",
+        "mount_point_base"
     ],
     "additionalProperties": false
 }
