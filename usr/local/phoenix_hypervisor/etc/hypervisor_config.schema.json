@@ -1,0 +1,145 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Hypervisor Configuration Schema",
+    "description": "Schema for validating the hypervisor configuration file, directly ported from phoenix_config.sh.",
+    "type": "object",
+    "properties": {
+        "nvidia": {
+            "type": "object",
+            "properties": {
+                "driver_version": {
+                    "type": "string",
+                    "description": "NVIDIA driver version for the Proxmox host setup."
+                },
+                "runfile_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Download URL for the NVIDIA driver runfile."
+                }
+            },
+            "required": [
+                "driver_version",
+                "runfile_url"
+            ]
+        },
+        "network": {
+            "type": "object",
+            "properties": {
+                "nfs_server": {
+                    "type": "string",
+                    "format": "ipv4",
+                    "description": "IP address of the NFS server."
+                },
+                "default_subnet": {
+                    "type": "string",
+                    "pattern": "^([0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$",
+                    "description": "Default subnet in CIDR format."
+                }
+            },
+            "required": [
+                "nfs_server",
+                "default_subnet"
+            ]
+        },
+        "samba": {
+            "type": "object",
+            "properties": {
+                "user": {
+                    "type": "string",
+                    "description": "Username for Samba shares."
+                },
+                "shares": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the Samba share."
+                            },
+                            "options": {
+                                "type": "string",
+                                "description": "Samba share options (e.g., 'browseable=yes writable=yes')."
+                            }
+                        },
+                        "required": [
+                            "path",
+                            "options"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "user",
+                "shares"
+            ]
+        },
+        "nfs": {
+            "type": "object",
+            "properties": {
+                "shares": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "description": "Path to the NFS share."
+                            },
+                            "options": {
+                                "type": "string",
+                                "description": "NFS export options (e.g., 'rw,async,no_subtree_check,noatime')."
+                            }
+                        },
+                        "required": [
+                            "path",
+                            "options"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "shares"
+            ]
+        },
+        "proxmox_storage_ids": {
+            "type": "object",
+            "properties": {
+                "quickos_vm": {
+                    "type": "string",
+                    "description": "Proxmox storage ID for quickOS VM disks."
+                },
+                "quickos_lxc": {
+                    "type": "string",
+                    "description": "Proxmox storage ID for quickOS LXC disks."
+                },
+                "fastdata_backup": {
+                    "type": "string",
+                    "description": "Proxmox storage ID for fastData backups."
+                },
+                "fastdata_iso": {
+                    "type": "string",
+                    "description": "Proxmox storage ID for fastData ISOs."
+                }
+            },
+            "required": [
+                "quickos_vm",
+                "quickos_lxc",
+                "fastdata_backup",
+                "fastdata_iso"
+            ]
+        },
+        "mount_point_base": {
+            "type": "string",
+            "description": "Base mount point for ZFS filesystems."
+        }
+    },
+    "required": [
+        "nvidia",
+        "network",
+        "samba",
+        "nfs",
+        "proxmox_storage_ids",
+        "mount_point_base"
+    ]
+}

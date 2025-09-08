@@ -1,0 +1,299 @@
+{
+    "$schema": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json",
+    "nvidia_driver_version": "580.76.05",
+    "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
+    "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
+    "lxc_configs": {
+        "900": {
+            "name": "BaseTemplate",
+            "memory_mb": 2048,
+            "cores": 2,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.200/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:CC",
+            "gpu_assignment": "none",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "template_snapshot_name": "base-snapshot",
+            "features": [
+                "base_setup"
+            ]
+        },
+        "901": {
+            "name": "BaseTemplateGPU",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.201/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:CD",
+            "gpu_assignment": "0,1",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "template_snapshot_name": "gpu-snapshot",
+            "clone_from_ctid": "900",
+            "features": [
+                "nvidia"
+            ]
+        },
+        "902": {
+            "name": "BaseTemplateDocker",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.202/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:CE",
+            "gpu_assignment": "none",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "template_snapshot_name": "docker-snapshot",
+            "clone_from_ctid": "900",
+            "features": [
+                "docker"
+            ]
+        },
+        "910": {
+            "name": "Portainer",
+            "memory_mb": 32768,
+            "cores": 6,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.99/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:99",
+            "gpu_assignment": "none",
+            "portainer_role": "server",
+            "unprivileged": true,
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "920": {
+            "name": "BaseTemplateVLLM",
+            "memory_mb": 72000,
+            "cores": 12,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.220/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:D1",
+            "gpu_assignment": "0,1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "template_snapshot_name": "vllm-base-snapshot",
+            "clone_from_ctid": "901",
+            "features": [
+                "vllm"
+            ]
+        },
+        "950": {
+            "name": "vllmQwen3Coder",
+            "memory_mb": 72000,
+            "cores": 12,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.150/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B0",
+            "gpu_assignment": "0,1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "920",
+            "features": [
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_950.sh",
+            "vllm_model": "cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
+            "vllm_tensor_parallel_size": 2,
+            "vllm_gpu_memory_utilization": 0.85,
+            "vllm_max_model_len": 8192
+        },
+        "951": {
+            "name": "vllm-granite-embed",
+            "memory_mb": 72000,
+            "cores": 12,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.151/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B1",
+            "gpu_assignment": "0,1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "920",
+            "features": [
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_951.sh",
+            "vllm_model": "ibm-granite/granite-embedding-english-r2",
+            "vllm_tensor_parallel_size": 2,
+            "vllm_gpu_memory_utilization": 0.85,
+            "vllm_max_model_len": 8192
+        },
+        "952": {
+            "name": "qdrant-lxc",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.152/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B2",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "953": {
+            "name": "api-gateway-lxc",
+            "memory_mb": 4096,
+            "cores": 4,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.153/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B3",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "infrastructure",
+            "clone_from_ctid": "900",
+            "features": [
+                "base_setup"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_953.sh"
+        },
+        "954": {
+            "name": "n8n-lxc",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.154/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B4",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ]
+        },
+        "955": {
+            "name": "ollamaBase",
+            "memory_mb": 32768,
+            "cores": 8,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.155/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B5",
+            "gpu_assignment": "0",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "901",
+            "features": [
+                "nvidia"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_955.sh"
+        },
+        "956": {
+            "name": "openWebUIBase",
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.156/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B6",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "902",
+            "features": [
+                "docker"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_956.sh"
+        },
+        "957": {
+            "name": "llamacppBase",
+            "memory_mb": 32768,
+            "cores": 8,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 128,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.157/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B7",
+            "gpu_assignment": "1",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "901",
+            "features": [
+                "nvidia"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_957.sh"
+        }
+    }
+}
