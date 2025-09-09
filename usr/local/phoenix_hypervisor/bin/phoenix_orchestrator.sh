@@ -438,6 +438,20 @@ apply_configurations() {
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
 
+   # --- Apply pct options ---
+   local pct_options
+   pct_options=$(jq_get_value "$CTID" ".pct_options[]" || echo "")
+   if [ -n "$pct_options" ]; then
+       log_info "Applying pct options for CTID $CTID..."
+       for option in $pct_options; do
+          if [[ "$option" == "nesting=1" ]]; then
+              run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+          else
+              run_pct_command set "$CTID" --"$option" || log_fatal "Failed to set pct option: $option"
+          fi
+       done
+   fi
+
     # --- Enable Nesting for Docker ---
     # Enable nesting feature if 'docker' is specified, which is required for Docker-in-LXC
     if [[ " ${features[*]} " =~ " docker " ]]; then

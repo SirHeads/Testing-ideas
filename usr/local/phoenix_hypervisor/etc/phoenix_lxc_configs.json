@@ -111,7 +111,8 @@
             "clone_from_ctid": "901",
             "features": [
                 "vllm"
-            ]
+            ],
+            "pct_options": []
         },
         "950": {
             "name": "vllmQwen3Coder",
@@ -161,9 +162,18 @@
             ],
             "application_script": "phoenix_hypervisor_lxc_951.sh",
             "vllm_model": "ibm-granite/granite-embedding-english-r2",
-            "vllm_tensor_parallel_size": 2,
+            "vllm_tensor_parallel_size": 1,
             "vllm_gpu_memory_utilization": 0.85,
-            "vllm_max_model_len": 8192
+            "vllm_max_model_len": 8192,
+            "pct_options": [],
+            "vllm_args": [
+                "--tensor-parallel-size",
+                "1",
+                "--gpu-memory-utilization",
+                "0.85",
+                "--max-model-len",
+                "8192"
+            ]
         },
         "952": {
             "name": "qdrant-lxc",
@@ -189,6 +199,7 @@
         "953": {
             "name": "api-gateway-lxc",
             "memory_mb": 4096,
+            "swap_mb": 512,
             "cores": 4,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 32,
@@ -205,6 +216,9 @@
             "clone_from_ctid": "900",
             "features": [
                 "base_setup"
+            ],
+            "pct_options": [
+                "nesting=1"
             ],
             "application_script": "phoenix_hypervisor_lxc_953.sh"
         },

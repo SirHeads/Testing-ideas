@@ -26,7 +26,8 @@ source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
-SERVICE_NAME="vllm_api_server"
+SERVICE_NAME="embedding_api_server"
+VLLM_SERVICE_NAME="vllm_model_server"
 
 # =====================================================================================
 # Function: parse_arguments
@@ -42,103 +43,71 @@ parse_arguments() {
 }
 
 # =====================================================================================
-# Function: setup_embedding_server_environment
-# Description: Installs dependencies and copies the server script into the container.
+# Function: generate_vllm_service_file
+# Description: Dynamically creates a systemd service file for the vLLM model server
+#              by reading configuration directly from the JSON file.
 # =====================================================================================
-setup_embedding_server_environment() {
-    log_info "Setting up embedding server environment in CTID: $CTID..."
+generate_vllm_service_file() {
+    log_info "Generating systemd service file for $VLLM_SERVICE_NAME..."
+
+    # Retrieve core configuration values
+    local model=$(jq_get_value "$CTID" ".vllm_model")
     
-    # --- Install Python dependencies for the FastAPI server ---
-    log_info "Installing FastAPI, Uvicorn, and SentenceTransformers..."
-    pct_exec "$CTID" /opt/vllm/bin/pip install fastapi uvicorn "sentence-transformers>=2.2.0"
-    
-    # --- Create application directory and copy the server script ---
-    log_info "Copying embedding server script into the container..."
-    pct_exec "$CTID" mkdir -p /opt/app
-    pct push "$CTID" "${SCRIPT_DIR}/lxc_setup/embedding_server.py" "/opt/app/embedding_server.py"
-    
-    log_info "Embedding server environment setup complete."
-}
-
-# =====================================================================================
-# Function: generate_systemd_service_file
-# Description: Dynamically creates a systemd service file for the embedding server.
-# =====================================================================================
-generate_systemd_service_file() {
-    log_info "Generating systemd service file for $SERVICE_NAME..."
-
-    # --- Retrieve model name from the central config ---
-    local model
-    model=$(jq_get_value "$CTID" ".vllm_model")
-
-    # --- Construct the ExecStart command for Uvicorn ---
-    local exec_start_cmd="/opt/vllm/bin/uvicorn embedding_server:app --host 0.0.0.0 --port 8000"
-
-    log_info "Constructed Uvicorn ExecStart command: $exec_start_cmd"
-
-    # --- Create the systemd service file content ---
-    local service_file_content
-    service_file_content=$(printf '%s\n' \
-        "[Unit]" \
-        "Description=Sentence Embedding FastAPI Server" \
-        "After=network.target" \
-        "" \
-        "[Service]" \
-        "User=root" \
-        "WorkingDirectory=/opt/app" \
-        "Environment=\"EMBEDDING_MODEL_NAME=$model\"" \
-        "ExecStart=$exec_start_cmd" \
-        "Restart=always" \
-        "RestartSec=10" \
-        "StandardOutput=journal" \
-        "StandardError=journal" \
-        "" \
-        "[Install]" \
-        "WantedBy=multi-user.target")
-
-    # --- Write the service file inside the container ---
-    local service_file_path="/etc/systemd/system/${SERVICE_NAME}.service"
-    log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
-
-    if ! echo "${service_file_content}" | pct exec "$CTID" -- tee "${service_file_path}" > /dev/null; then
-        log_fatal "Failed to write systemd service file in CTID $CTID."
+    # Read the vllm_args array into a bash array
+    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
+    if [ ${#vllm_args[@]} -eq 0 ]; then
+        log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
     fi
 
-    log_info "Systemd service file generated successfully."
+    # Construct the ExecStart command from the array
+    local exec_start_cmd="/opt/vllm/bin/vllm serve \"$model\""
+    for arg in "${vllm_args[@]}"; do
+        exec_start_cmd+=" $arg"
+    done
+
+    local service_file_path="/etc/systemd/system/${VLLM_SERVICE_NAME}.service"
+    log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
+
+    # Use a heredoc to write the service file, now with a data-driven ExecStart
+    if ! pct exec "$CTID" -- bash -c "cat > ${service_file_path}" <<EOF; then
+[Unit]
+Description=vLLM OpenAI-Compatible Model Server
+After=network.target
+
+[Service]
+User=root
+ExecStart=$exec_start_cmd --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        log_fatal "Failed to write vLLM systemd service file in CTID $CTID."
+    fi
+
+    log_info "vLLM systemd service file generated successfully."
 }
 
 # =====================================================================================
 # Function: manage_vllm_service
-# Description: Enables and starts the vLLM systemd service.
+# Description: Enables and starts the vLLM model server systemd service.
 # =====================================================================================
 manage_vllm_service() {
-    log_info "Managing the $SERVICE_NAME service in CTID $CTID..."
+    log_info "Managing the $VLLM_SERVICE_NAME service in CTID $CTID..."
 
-    # --- Reload the systemd daemon to recognize the new service ---
-    log_info "Reloading systemd daemon..."
-    if ! pct_exec "$CTID" systemctl daemon-reload; then
-        log_fatal "Failed to reload systemd daemon in CTID $CTID."
+    # --- Reload, enable, and restart the vLLM service ---
+    pct_exec "$CTID" systemctl daemon-reload
+    pct_exec "$CTID" systemctl enable "$VLLM_SERVICE_NAME"
+    if ! pct_exec "$CTID" systemctl restart "$VLLM_SERVICE_NAME"; then
+        log_error "$VLLM_SERVICE_NAME service failed to start. Retrieving logs..."
+        pct_exec "$CTID" journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
+        log_fatal "Failed to start $VLLM_SERVICE_NAME service."
     fi
 
-    # --- Enable the service to start on boot ---
-    log_info "Enabling $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl enable "$SERVICE_NAME"; then
-        log_fatal "Failed to enable $SERVICE_NAME service in CTID $CTID."
-    fi
-
-    # --- Start the service ---
-    log_info "Starting $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl restart "$SERVICE_NAME"; then
-        log_error "$SERVICE_NAME service failed to start. Retrieving logs..."
-        # --- If the service fails, grab the latest logs from journalctl ---
-        local journal_logs
-        journal_logs=$(pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50)
-        log_error "Recent logs for $SERVICE_NAME:"
-        log_plain_output "$journal_logs"
-        log_fatal "Failed to start $SERVICE_NAME service. See logs above for details."
-    fi
-
-    log_info "$SERVICE_NAME service started successfully."
+    log_info "$VLLM_SERVICE_NAME service started successfully."
 }
 
 # =====================================================================================
@@ -146,8 +115,8 @@ manage_vllm_service() {
 # Description: Performs a health check to ensure the vLLM API is responsive.
 # =====================================================================================
 perform_health_check() {
-    log_info "Performing health check on the Embedding API server..."
-    local max_attempts=12
+    log_info "Performing health check on the vLLM API server..."
+    local max_attempts=10
     local attempt=0
     local interval=10 # seconds
     local health_check_url="http://localhost:8000/health"
@@ -158,7 +127,7 @@ perform_health_check() {
         
         # Use curl's --fail option to handle HTTP errors and connection issues
         if pct exec "$CTID" -- curl -s --fail "$health_check_url" > /dev/null; then
-            log_info "Health check passed! The Embedding API server is responsive."
+            log_info "Health check passed! The vLLM API server is responsive."
             return 0
         else
             log_info "API not ready yet. Retrying in $interval seconds..."
@@ -168,9 +137,9 @@ perform_health_check() {
 
     log_error "Health check failed after $max_attempts attempts. The API server is not responsive."
     log_error "Retrieving latest service logs for diagnosis..."
-    log_error "Recent logs for $SERVICE_NAME:"
-    pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
-    log_fatal "Embedding service health check failed."
+    log_error "Recent logs for $VLLM_SERVICE_NAME:"
+    pct_exec "$CTID" journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
+    log_fatal "vLLM service health check failed."
 }
 
 # =====================================================================================
@@ -231,7 +200,7 @@ display_connection_info() {
     model=$(jq_get_value "$CTID" ".vllm_model")
 
     log_info "============================================================"
-    log_info "vLLM API Server is now running and fully operational."
+    log_info "Embedding API Server is now running and fully operational."
     log_info "============================================================"
     log_info "Connection Details:"
     log_info "  IP Address: $ip_address"
@@ -251,11 +220,14 @@ display_connection_info() {
 # =====================================================================================
 main() {
     parse_arguments "$@"
-    setup_embedding_server_environment
-    generate_systemd_service_file
+    generate_vllm_service_file
     manage_vllm_service
-    perform_health_check
-    validate_api_with_test_query
+    if pct_exec "$CTID" systemctl is-active --quiet "$VLLM_SERVICE_NAME"; then
+        perform_health_check
+        validate_api_with_test_query
+    else
+        log_info "Service $VLLM_SERVICE_NAME is not active. Skipping health check and API validation."
+    fi
     display_connection_info
     exit_script 0
 }

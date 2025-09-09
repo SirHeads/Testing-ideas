@@ -1,84 +1,121 @@
-# LXC Provisioning Failure Diagnostic Plan
+# Server Deployment Issue: Diagnostic Plan
 
-## 1. Primary Hypothesis: Race Condition
+## Objective
+This plan outlines a series of non-destructive checks to systematically diagnose why an updated Python script (`/opt/app/embedding_server.py`) is not being loaded by the `uvicorn` server process in the Proxmox LXC container.
 
-The most likely cause of the "Unit file does not exist" error is a race condition where `systemctl daemon-reload` is executed before the `pct push` command has fully written the service file to the container's filesystem.
+---
 
-## 2. Diagnostic Steps
+### Hypothesis 1: Rogue Process Manager
 
-Execute these commands on the **Proxmox host** after the provisioning script has failed, leaving the LXC container (ID 958) in its failed state.
+**Theory:** An unknown process manager (e.g., `supervisord`, `pm2`, or a cron job) is automatically restarting the `uvicorn` process, overwriting our manual intervention.
 
-### Step 2.1: Verify File Existence and Content
+**Diagnostic Steps:**
 
-These commands will confirm if the `embedding_server.service` file was successfully copied into the container and if its contents are correct.
+1.  **Check for common process managers:**
+    ```bash
+    ps aux | grep -E "supervisord|pm2|cron"
+    ```
+2.  **Look for systemd user services that might not be obvious:**
+    ```bash
+    systemctl --user list-units | grep -i uvicorn
+    ```
+3.  **Check the crontab for any relevant entries:**
+    ```bash
+    crontab -l
+    cat /etc/crontab /etc/cron.*/*
+    ```
 
-```bash
-# Check if the service file exists and view its permissions
-pct exec 958 -- ls -l /etc/systemd/system/
+---
 
-# Display the content of the service file to check for corruption or syntax errors
-pct exec 958 -- cat /etc/systemd/system/embedding_server.service
-```
+### Hypothesis 2: File System or Mount Issues
 
-### Step 2.2: Check Systemd's State
+**Theory:** The `/opt/app` directory is a mount point from a read-only, ephemeral, or network-based file system, causing our changes to be ignored or reverted.
 
-This command checks if `systemd` is aware of the service file, even if it's masked, invalid, or failed to load.
+**Diagnostic Steps:**
 
-```bash
-# List all unit files known to systemd
-pct exec 958 -- systemctl list-unit-files | grep embedding_server
-```
+1.  **Check the mount points on the system:**
+    ```bash
+    df -h
+    mount | grep "/opt/app"
+    ```
+2.  **Inspect the container's configuration for mount definitions (if accessible from the Proxmox host):**
+    ```bash
+    pct config <CT_ID>
+    ```
+3.  **Perform a "touch test" to see if a new file persists after a restart:**
+    ```bash
+    touch /opt/app/test_persistence.txt
+    # Manually restart the uvicorn process as before
+    ls /opt/app/test_persistence.txt
+    ```
 
-### Step 2.3: Inspect Systemd Logs
+---
 
-This command inspects the `systemd` journal for any errors related to loading or parsing unit files during the `daemon-reload` process.
+### Hypothesis 3: Python Caching or Environment Issues
 
-```bash
-# View the last 100 lines of the systemd journal
-pct exec 958 -- journalctl -u systemd -n 100
-```
+**Theory:** Python is using a cached version of the old script (`.pyc` files) or the Python path is incorrect.
 
-### Step 2.4: Manually Test Systemd Commands
+**Diagnostic Steps:**
 
-These commands attempt to manually reload the `systemd` daemon and enable the service, which may succeed if the file has since been fully written to the filesystem.
+1.  **Find and delete all `.pyc` cache files:**
+    ```bash
+    find /opt/app -name "*.pyc" -delete
+    find /opt/vllm -name "*.pyc" -delete
+    ```
+2.  **Check the Python path being used by the running process:**
+    *   First, find the PID of the `uvicorn` process: `ps aux | grep uvicorn`
+    *   Then, inspect the environment of that process (replace `<PID>`):
+        ```bash
+        cat /proc/<PID>/environ | tr '\0' '\n' | grep PYTHONPATH
+        ```
+3.  **Explicitly check the version of the code Python is loading:**
+    *   Add a temporary print statement to the top of `/opt/app/embedding_server.py`:
+        ```python
+        import time
+        print(f"LOADING embedding_server.py - VERSION: {time.time()}")
+        ```
+    *   Restart the server and check the logs to see if the new version timestamp appears.
 
-```bash
-# Manually reload the systemd daemon
-pct exec 958 -- systemctl daemon-reload
+---
 
-# Attempt to enable the service again
-pct exec 958 -- systemctl enable embedding_server.service
-```
+### Hypothesis 4: Container Orchestration or Configuration Management
 
-## 3. Proposed Solution
+**Theory:** A tool like Ansible, Puppet, or a Docker entrypoint script is enforcing a specific file state, reverting our changes.
 
-If the manual `systemctl enable` command in Step 2.4 succeeds, it strongly indicates a race condition. The definitive solution is to introduce a small delay in the provisioning script between copying the file and reloading the daemon.
+**Diagnostic Steps:**
 
-**Proposed Change in `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_958.sh`:**
+1.  **Check for common configuration management agents:**
+    ```bash
+    ps aux | grep -E "ansible|puppet|chef|salt"
+    ```
+2.  **Review the container's entrypoint or command (if it's a Docker-like container):**
+    *   This may require inspecting the container's configuration on the Proxmox host.
+3.  **Look for signs of recent file changes by other users/processes:**
+    ```bash
+    stat /opt/app/embedding_server.py
+    ```
+    *   Pay close attention to the `Modify` and `Change` timestamps.
 
-```diff
-...
-38 | pct push 958 /usr/local/phoenix_hypervisor/src/rag-api-service/systemd/ /etc/systemd/system/
-39 | 
-40 | # Create requirements.txt
-...
-61 | log_info "Reloading systemd..."
-62 | pct exec $LXC_ID -- systemctl daemon-reload
-...
-```
+---
 
-**Should be changed to:**
+### Hypothesis 5: Multiple `uvicorn` Processes
 
-```diff
-...
-38 | pct push 958 /usr/local/phoenix_hypervisor/src/rag-api-service/systemd/ /etc/systemd/system/
-   | + sleep 2 # Add a 2-second delay to ensure the filesystem syncs
-39 | 
-40 | # Create requirements.txt
-...
-61 | log_info "Reloading systemd..."
-62 | pct exec $LXC_ID -- systemctl daemon-reload
-...
-```
+**Theory:** There are multiple `uvicorn` processes running, and we are killing and restarting a decoy process while an old one continues to serve requests.
 
-This change will be implemented by the **Code** mode after you approve this plan.
+**Diagnostic Steps:**
+
+1.  **Get a detailed list of all Python processes:**
+    ```bash
+    ps aux | grep python
+    ```
+2.  **Use `pstree` to see the process hierarchy:**
+    ```bash
+    pstree -p
+    ```
+3.  **Kill all `uvicorn` processes decisively before restarting:**
+    ```bash
+    pkill -f uvicorn
+    # Verify they are all gone
+    ps aux | grep uvicorn
+    # Then restart the server
+    ```

@@ -1,127 +1,101 @@
-#!/usr/bin/env python3
-#
-# File: embedding_server.py
-# Description: A dedicated FastAPI application to serve sentence embedding models.
-#              It loads a SentenceTransformer model on startup and provides an
-#              OpenAI-compatible API endpoint for generating embeddings.
-# Author: Roo, AI Software Engineer
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import json
 
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-from sentence_transformers import SentenceTransformer
-import torch
-from typing import List, Union
-
-# --- Pydantic Models for API Data Validation ---
-
-class EmbeddingRequest(BaseModel):
-    """Defines the structure for an embedding request."""
-    model: str
-    input: Union[str, List[str]]
-
-class EmbeddingData(BaseModel):
-    """Represents a single embedding vector in the response."""
-    object: str = "embedding"
-    embedding: List[float]
-    index: int
-
-class UsageData(BaseModel):
-    """Represents token usage information."""
-    prompt_tokens: int = 0
-    total_tokens: int = 0
-
-class EmbeddingResponse(BaseModel):
-    """Defines the structure for the embedding API response."""
-    object: str = "list"
-    data: List[EmbeddingData]
-    model: str
-    usage: UsageData
-
-# --- FastAPI Application Setup ---
-
+# --- FastAPI Application ---
 app = FastAPI()
-model = None
-model_name = ""
 
-@app.on_event("startup")
-def startup_event():
-    """
-    Handles the model loading process when the server starts.
-    It retrieves the model name from an environment variable and loads
-    the SentenceTransformer model, optimizing it for the available hardware.
-    """
-    global model, model_name
-    
-    # Retrieve the model name from the environment variable
-    model_name = os.getenv("EMBEDDING_MODEL_NAME")
-    if not model_name:
-        raise RuntimeError("EMBEDDING_MODEL_NAME environment variable not set.")
+# --- CORS Middleware ---
+# This middleware allows cross-origin requests, which is necessary for
+# the Roo Code extension to communicate with this proxy service.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
-    print(f"Loading model: {model_name}...")
-
-    # Determine the device to use (CUDA if available, otherwise CPU)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
-
-    # Load the SentenceTransformer model
-    model = SentenceTransformer(model_name, device=device)
-    
-    # Optimize the model for inference if on CUDA
-    if device == "cuda":
-        model.half() # Use half-precision for faster inference
-        
-    model.eval() # Set the model to evaluation mode
-    print("Model loaded successfully.")
-
-# --- API Endpoints ---
+# --- OpenAI Compatible Proxy ---
+# This is the URL of the actual embedding model service that this API proxies.
+EMBEDDING_MODEL_URL = "http://localhost:8001/v1/embeddings"
 
 @app.get("/health")
-def health_check():
-    """A simple health check endpoint to verify the server is running."""
+async def health_check():
+    """
+    This endpoint is used by the deployment script to verify that the
+    service is running and responsive.
+    """
     return {"status": "ok"}
 
-@app.post("/v1/embeddings", response_model=EmbeddingResponse)
-def create_embeddings(request: EmbeddingRequest):
+
+@app.get("/v1/models")
+async def list_models():
     """
-    Generates embeddings for the given input text(s).
-    This endpoint is designed to be compatible with the OpenAI embeddings API.
+    This endpoint provides a list of available models, mimicking the OpenAI API.
+    It is used by clients like the Roo Code extension to verify the connection.
     """
-    global model, model_name
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "ibm-granite/granite-embedding-english-r2",
+                "object": "model",
+                "created": 1677610600,
+                "owned_by": "system",
+                "permission": [],
+                "root": "ibm-granite/granite-embedding-english-r2",
+                "parent": None,
+            }
+        ],
+    }
 
-    if model is None:
-        raise HTTPException(status_code=503, detail="Model is not loaded yet.")
 
-    # Ensure the requested model matches the loaded model
-    if request.model != model_name:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model requested. This server is serving '{model_name}', but you requested '{request.model}'."
-        )
-
-    # Handle both single string and list of strings for input
-    inputs = [request.input] if isinstance(request.input, str) else request.input
-    
-    # Generate embeddings
+@app.post("/v1/embeddings")
+async def create_embedding(request: Request):
+    """
+    This endpoint acts as a proxy, forwarding embedding requests from a client
+    (like the Roo Code extension) to the actual embedding model service.
+    It is designed to be compatible with the OpenAI API format.
+    """
     try:
-        embeddings = model.encode(inputs, convert_to_tensor=True)
+        # Get the original request body from the client
+        body = await request.json()
+
+        # Use an async HTTP client to forward the request
+        async with httpx.AsyncClient() as client:
+            # Forward the request to the actual embedding model service
+            response = await client.post(
+                EMBEDDING_MODEL_URL,
+                json=body,
+                # Pass through relevant headers, excluding host-specific ones
+                headers={key: value for key, value in request.headers.items() if key.lower() not in ['host', 'content-length']},
+                timeout=60.0,
+            )
+
+        # Raise an exception if the model service returned an error
+        response.raise_for_status()
+
+        # Return the successful response from the model service directly to the client
+        return JSONResponse(content=response.json(), status_code=response.status_code)
+
+    except httpx.RequestError as e:
+        # Handle errors related to connecting to the model service
+        raise HTTPException(
+            status_code=502, # Bad Gateway
+            detail=f"Error connecting to the embedding model service: {e}"
+        )
+    except httpx.HTTPStatusError as e:
+        # If the model service returned an error, forward that error back to the client
+        return JSONResponse(
+            content=e.response.json(),
+            status_code=e.response.status_code
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error during embedding generation: {e}")
-
-    # Format the response data
-    response_data = [
-        EmbeddingData(embedding=emb.tolist(), index=i)
-        for i, emb in enumerate(embeddings)
-    ]
-
-    return EmbeddingResponse(
-        data=response_data,
-        model=model_name,
-        usage=UsageData() # Token usage is not tracked in this simple server
-    )
-
-if __name__ == "__main__":
-    import uvicorn
-    # This block allows running the server directly for testing
-    # In production, it will be run by a process manager like systemd/gunicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+        # Handle any other unexpected errors
+        raise HTTPException(
+            status_code=500, # Internal Server Error
+            detail=f"An unexpected error occurred: {e}"
+        )
