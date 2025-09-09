@@ -11,7 +11,6 @@ apt-get install -y nginx
 cat <<'EOF' > /etc/nginx/sites-available/vllm_proxy
 upstream vllm_backend {
     server 10.0.0.151:8000;
-    server 10.0.0.152:8000;
 }
 
 server {

@@ -194,7 +194,9 @@
             "clone_from_ctid": "902",
             "features": [
                 "docker"
-            ]
+            ],
+            "application_script": "phoenix_hypervisor_lxc_952.sh",
+            "pct_options": []
         },
         "953": {
             "name": "api-gateway-lxc",

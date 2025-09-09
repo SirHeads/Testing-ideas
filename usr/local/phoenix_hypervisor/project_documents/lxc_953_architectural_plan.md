@@ -81,8 +81,7 @@ graph TD
 
 Initially, the reverse proxy will be configured to route traffic to the following backend services:
 
-*   **vLLM Container 1:** `http://10.0.0.151:8000`
-*   **vLLM Container 2:** `http://10.0.0.152:8000`
+*   **vLLM Embedding Service:** `http://10.0.0.151:8000`
 
 Additional services can be easily added to the configuration as needed.
 
@@ -101,7 +100,6 @@ A separate server block will be created for each domain or service. For example,
 ```nginx
 upstream vllm_backend {
     server 10.0.0.151:8000;
-    server 10.0.0.152:8000;
 }
 
 server {

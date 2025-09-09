@@ -642,7 +642,8 @@ handle_customizing_state() {
 # =====================================================================================
 # Function: run_application_script
 # Description: Executes a final application-specific script for the LXC container
-#              if one is defined in its JSON configuration.
+#              if one is defined in its JSON configuration. The script is executed
+#              inside the container using 'pct exec'.
 # Arguments:
 #   None (uses global CTID).
 # Returns:
@@ -660,15 +661,15 @@ run_application_script() {
     fi
 
     local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path
-    log_info "Executing application script: $app_script_name ($app_script_path)"
+    log_info "Executing application script inside container: $app_script_name ($app_script_path)"
 
     # Check if the application script exists
     if [ ! -f "$app_script_path" ]; then
         log_fatal "Application script not found at $app_script_path."
     fi
 
-    # Execute the application script, passing the CTID as an argument
-    if ! "$app_script_path" "$CTID"; then
+    # Execute the application script inside the container by piping it to 'pct exec'
+    if ! cat "$app_script_path" | pct exec "$CTID" -- bash; then
         log_fatal "Application script '$app_script_name' failed for CTID $CTID."
     fi
 
