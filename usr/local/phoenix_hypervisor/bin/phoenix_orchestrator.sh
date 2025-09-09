@@ -440,7 +440,7 @@ apply_configurations() {
 
    # --- Apply pct options ---
    local pct_options
-   pct_options=$(jq_get_value "$CTID" ".pct_options[]" || echo "")
+   pct_options=$(jq_get_value "$CTID" ".pct_options // [] | .[]" || echo "")
    if [ -n "$pct_options" ]; then
        log_info "Applying pct options for CTID $CTID..."
        for option in $pct_options; do

@@ -5,7 +5,7 @@
 #              This script handles the installation of the Ollama service, its systemd
 #              service management (enable/start), and performs health checks to ensure
 #              Ollama is running and GPU resources are properly detected.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), curl, sh (for install script),
+# Dependencies: curl, sh (for install script),
 #               systemctl, journalctl, nvidia-smi (for GPU detection).
 # Inputs:
 #   $1 (CTID) - The container ID for the Ollama base container.
@@ -16,13 +16,87 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# --- Source common utilities ---
-# --- Determine script's absolute directory ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+# --- Embedded Common Utilities ---
 
-# --- Source common utilities ---
-# The common_utils.sh script provides shared functions for logging, error handling, etc.
-source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
+# --- Shell Settings ---
+set -e # Exit immediately if a command exits with a non-zero status.
+set -o pipefail # Return the exit status of the last command in the pipe that failed.
+
+# --- Global Constants ---
+export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+
+# --- Color Codes ---
+COLOR_GREEN='\033[0;32m'
+COLOR_RED='\033[0;31m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_BLUE='\033[0;34m'
+COLOR_RESET='\033[0m'
+
+# --- Logging Functions ---
+log_info() {
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
+}
+
+log_warn() {
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+log_error() {
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+log_fatal() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    exit 1
+}
+
+log_plain_output() {
+    while IFS= read -r line; do
+        echo "    | $line" | tee -a "$MAIN_LOG_FILE"
+    done
+}
+
+ # --- Exit Function ---
+ exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
+
+pct_exec() {
+    # This function is a placeholder when run inside the container.
+    # It executes commands directly.
+    local ctid="$1"
+    shift
+    log_info "Executing in CTID $ctid: $*"
+    if ! "$@"; then
+        log_error "Command failed in CTID $ctid: '$*'"
+        return 1
+    fi
+    return 0
+}
+
+jq_get_value() {
+    local ctid="$1"
+    local jq_query="$2"
+    local value
+    value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
+    if [ "$?" -ne 0 ]; then
+        log_error "jq command failed for CTID $ctid with query '${jq_query}'."
+        return 1
+    elif [ -z "$value" ] || [ "$value" == "null" ]; then
+        return 1
+    fi
+    echo "$value"
+    return 0
+}
+
+# --- End of Embedded Utilities ---
 
 # --- Script Variables ---
 CTID=""
@@ -33,39 +107,22 @@ OLLAMA_API_PORT="11434"
 # Function: parse_arguments
 # Description: Parses the CTID from command-line arguments.
 # =====================================================================================
-# =====================================================================================
-# Function: parse_arguments
-# Description: Parses command-line arguments to extract the Container ID (CTID).
-# Arguments:
-#   $1 - The Container ID (CTID) for the LXC container.
-# Returns:
-#   Exits with status 2 if no CTID is provided or if too many arguments are given.
-# =====================================================================================
 parse_arguments() {
-    # Check if exactly one argument (CTID) is provided
     if [ "$#" -ne 1 ]; then
         log_error "Usage: $0 <CTID>"
         exit_script 2
     fi
-    CTID="$1" # Assign the first argument to CTID
+    CTID="$1"
     log_info "Executing application runner for CTID: $CTID"
 }
 
 # =====================================================================================
 # Function: install_ollama
 # Description: Installs the Ollama service inside the specified LXC container.
-#              It uses the official Ollama installation script, which is designed
-#              to be idempotent and handles its own dependencies and service setup.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   Exits with a fatal error if the Ollama installation script fails.
 # =====================================================================================
 install_ollama() {
     log_info "Installing Ollama in CTID: $CTID..."
-    # Execute the official Ollama installation script inside the container.
-    # The script handles dependencies and service setup and is idempotent.
-    if ! pct_exec "$CTID" bash -c "curl -fsSL https://ollama.com/install.sh | sh"; then
+    if ! bash -c "curl -fsSL https://ollama.com/install.sh | sh"; then
         log_fatal "Failed to install Ollama in CTID $CTID."
     fi
     log_info "Ollama installation complete."
@@ -74,116 +131,84 @@ install_ollama() {
 # =====================================================================================
 # Function: manage_ollama_service
 # Description: Manages the Ollama systemd service within the specified LXC container.
-#              This includes reloading the systemd daemon, enabling the service to start
-#              on boot, and starting/restarting the service. It also provides error
-#              logging and retrieves journalctl logs on service startup failure.
-# Arguments:
-#   None (uses global CTID and SERVICE_NAME).
-# Returns:
-#   Exits with a fatal error if systemd daemon reload, service enable, or service start fails.
 # =====================================================================================
 manage_ollama_service() {
     log_info "Managing the $SERVICE_NAME service in CTID $CTID..."
-
-    # --- Reload the systemd daemon to recognize the new service ---
-    # Reload the systemd daemon to recognize any changes to service files
+    log_info "Setting OLLAMA_HOST environment variable..."
+    if ! systemctl set-environment OLLAMA_HOST=0.0.0.0; then
+        log_fatal "Failed to set OLLAMA_HOST environment variable in CTID $CTID."
+    fi
     log_info "Reloading systemd daemon..."
-    if ! pct_exec "$CTID" systemctl daemon-reload; then
+    if ! systemctl daemon-reload; then
         log_fatal "Failed to reload systemd daemon in CTID $CTID."
     fi
-
-    # --- Enable the service to start on boot ---
-    # Enable the Ollama service to ensure it starts automatically on container boot
     log_info "Enabling $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl enable "$SERVICE_NAME"; then
+    if ! systemctl enable "$SERVICE_NAME"; then
         log_fatal "Failed to enable $SERVICE_NAME service in CTID $CTID."
     fi
-
-    # --- Start the service ---
-    # Start (or restart if already running) the Ollama service
     log_info "Starting $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl restart "$SERVICE_NAME"; then
+    if ! systemctl restart "$SERVICE_NAME"; then
         log_error "$SERVICE_NAME service failed to start. Retrieving logs..."
         local journal_logs
-        # If the service fails to start, retrieve and log the latest journalctl logs for diagnosis
-        journal_logs=$(pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50)
+        journal_logs=$(journalctl -u "$SERVICE_NAME" --no-pager -n 50)
         log_error "Recent logs for $SERVICE_NAME:"
-        log_plain_output "$journal_logs" # Log the retrieved journal entries
+        log_plain_output "$journal_logs"
         log_fatal "Failed to start $SERVICE_NAME service. See logs above for details."
     fi
-
     log_info "$SERVICE_NAME service started successfully."
 }
 
 # =====================================================================================
 # Function: perform_health_check
-# Description: Performs a health check on the Ollama service within the specified
-#              LXC container to ensure it is running and that GPU resources are
-#              properly detected by `nvidia-smi`. It retries multiple times with a delay.
-# Arguments:
-#   None (uses global CTID, SERVICE_NAME, OLLAMA_API_PORT).
-# Returns:
-#   0 on successful health check (Ollama API responsive and GPU detected), exits with
-#   a fatal error if the health check fails after all attempts.
+# Description: Performs a health check on the Ollama service.
 # =====================================================================================
 perform_health_check() {
     log_info "Performing health check on the Ollama service and GPU..."
-    local max_attempts=12 # Maximum number of health check attempts
-    local attempt=0 # Current attempt counter
-    local interval=10 # Delay between attempts in seconds
-    local ollama_url="http://localhost:${OLLAMA_API_PORT}" # Ollama API endpoint
+    local max_attempts=12
+    local attempt=0
+    local interval=10
+    local ollama_url="http://localhost:${OLLAMA_API_PORT}"
 
-    # Loop to perform health checks until successful or max attempts reached
     while [ "$attempt" -lt "$max_attempts" ]; do
-        attempt=$((attempt + 1)) # Increment attempt counter
+        attempt=$((attempt + 1))
         log_info "Health check attempt $attempt/$max_attempts..."
         
         local response_code
-        # Execute curl command inside the container to check the Ollama API,
-        # capturing only the HTTP response code.
-        response_code=$(pct exec "$CTID" -- curl -s -o /dev/null -w "%{http_code}" "$ollama_url" || echo "CURL_ERROR")
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" "$ollama_url" || echo "CURL_ERROR")
 
-        # Check the response code from the curl command
         if [ "$response_code" == "CURL_ERROR" ]; then
             log_info "Ollama API not ready yet (curl command failed, likely connection refused). Retrying in $interval seconds..."
-            sleep "$interval" # Wait before retrying
-            continue # Continue to the next attempt
+            sleep "$interval"
+            continue
         elif [ "$response_code" == "200" ]; then
             log_info "Ollama API is responsive. Verifying GPU detection..."
-            # Check if nvidia-smi runs successfully inside the container to confirm GPU detection
-            if pct_exec "$CTID" nvidia-smi > /dev/null 2>&1; then
+            if nvidia-smi > /dev/null 2>&1; then
                 log_info "GPU detected by nvidia-smi. Ollama health check passed!"
-                return 0 # Health check successful
+                return 0
             else
                 log_warn "nvidia-smi command failed in CTID $CTID. GPU might not be properly configured. Retrying in $interval seconds..."
-                sleep "$interval" # Wait before retrying
+                sleep "$interval"
             fi
         else
             log_info "Ollama API returned HTTP status code: $response_code. Retrying in $interval seconds..."
-            sleep "$interval" # Wait before retrying
+            sleep "$interval"
         fi
     done
 
     log_error "Health check failed after $max_attempts attempts. Ollama is not responsive or GPU is not detected."
     log_error "Retrieving latest service logs for diagnosis..."
     log_error "Recent logs for $SERVICE_NAME:"
-    pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
+    journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
     log_fatal "Ollama service health check failed."
 }
 
 # =====================================================================================
 # Function: display_connection_info
-# Description: Displays the final connection details for the Ollama base container,
-#              including its IP address and the Ollama API port, along with an
-#              example curl command for interaction.
-# Arguments:
-#   None (uses global CTID and OLLAMA_API_PORT).
-# Returns:
-#   None.
+# Description: Displays the final connection details for the Ollama base container.
 # =====================================================================================
 display_connection_info() {
     local ip_address
-    ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1) # Extract IP address from network config
+    ip_address=$(hostname -I | awk '{print $1}')
 
     log_info "============================================================"
     log_info "Ollama Base Container is now running and fully operational."
@@ -199,22 +224,17 @@ display_connection_info() {
 
 # =====================================================================================
 # Function: main
-# Description: Main entry point for the Ollama base container application runner script.
-#              Orchestrates the entire process of installing, managing, and verifying
-#              the Ollama service within an LXC container.
-# Arguments:
-#   $@ - All command-line arguments passed to the script.
-# Returns:
-#   Exits with status 0 on successful completion, or a non-zero status on failure
-#   (handled by exit_script).
+# Description: Main entry point for the script.
 # =====================================================================================
 main() {
-    parse_arguments "$@" # Parse command-line arguments
-    install_ollama # Install Ollama
-    manage_ollama_service # Enable and start the Ollama service
-    perform_health_check # Perform a health check on Ollama and GPU detection
-    display_connection_info # Display connection information to the user
-    exit_script 0 # Exit successfully
+    # Since this script runs inside the container, CTID is not passed.
+    # We'll assign a placeholder value.
+    parse_arguments "955"
+    install_ollama
+    manage_ollama_service
+    perform_health_check
+    display_connection_info
+    exit_script 0
 }
 
 main "$@"

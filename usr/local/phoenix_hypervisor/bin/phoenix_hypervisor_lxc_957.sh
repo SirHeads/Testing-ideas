@@ -13,6 +13,9 @@ LLAMA_CPP_DIR="/opt/llama.cpp"
 IP_ADDRESS="10.0.0.157"
 PORT="8080" # Default llama.cpp server port
 
+# Ensure CUDA binaries are in the PATH
+export PATH=$PATH:/usr/local/cuda/bin
+
 # =====================================================================================
 # Function: log_message
 # Description: Logs a message to both stdout and a specified log file.
@@ -39,17 +42,26 @@ command_exists() {
 
 log_message "Starting setup for llamacppBase LXC container (ID 957)..."
 
-# 1. Install Dependencies
-log_message "Installing required packages: build-essential, cmake, git..."
-apt update -y >> "$LOG_FILE" 2>&1
-apt install -y build-essential cmake git >> "$LOG_FILE" 2>&1
-
-if [ $? -eq 0 ]; then
-    log_message "Dependencies installed successfully."
-else
-    log_message "ERROR: Failed to install dependencies. Exiting."
-    exit 1
-fi
+# =====================================================================================
+# Function: install_dependencies
+# Description: Installs required packages for building llama.cpp.
+# Arguments:
+#   None.
+# Returns:
+#   Exits with status 1 if dependency installation fails.
+# =====================================================================================
+install_dependencies() {
+    log_message "Installing required packages: build-essential, cmake, git..."
+    apt update -y >> "$LOG_FILE" 2>&1
+    apt install -y build-essential cmake git >> "$LOG_FILE" 2>&1
+    
+    if [ $? -eq 0 ]; then
+        log_message "Dependencies installed successfully."
+    else
+        log_message "ERROR: Failed to install dependencies. Exiting."
+        exit 1
+    fi
+}
 
 # =====================================================================================
 # Function: clone_or_update_llama_cpp
@@ -69,12 +81,6 @@ clone_or_update_llama_cpp() {
         git clone https://github.com/ggerganov/llama.cpp.git "$LLAMA_CPP_DIR" >> "$LOG_FILE" 2>&1 # Clone the repository
     fi
     
-    if [ $? -eq 0 ]; then
-        log_message "llama.cpp repository cloned/updated successfully."
-    else
-        log_message "ERROR: Failed to clone/update llama.cpp repository. Exiting."
-        exit 1
-    fi
 }
 
 if [ $? -eq 0 ]; then
@@ -102,21 +108,15 @@ compile_llama_cpp() {
     # The 'nvidia' feature script should have already set up CUDA_PATH and added to PATH.
     if command_exists nvcc; then
         log_message "nvcc found. Proceeding with cuBLAS compilation."
-        make clean >> "$LOG_FILE" 2>&1 # Clean previous builds
-        LLAMA_CUBLAS=1 make -j$(nproc) >> "$LOG_FILE" 2>&1 # Compile with cuBLAS for GPU acceleration
+        cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF
+        cmake --build build --config Release -- -j$(nproc)
     else
         log_message "WARNING: nvcc not found. Compiling llama.cpp without cuBLAS support. " \
-                    "Ensure the 'nvidia' feature script ran successfully and CUDA is in PATH."
-        make clean >> "$LOG_FILE" 2>&1 # Clean previous builds
-        make -j$(nproc) >> "$LOG_FILE" 2>&1 # Compile without cuBLAS
+                     "Ensure the 'nvidia' feature script ran successfully and CUDA is in PATH."
+        cmake -B build -DLLAMA_CURL=OFF
+        cmake --build build --config Release -- -j$(nproc)
     fi
     
-    if [ $? -eq 0 ]; then
-        log_message "llama.cpp compiled successfully."
-    else
-        log_message "ERROR: Failed to compile llama.cpp. Check $LOG_FILE for details. Exiting."
-        exit 1
-    fi
 }
 
 if [ $? -eq 0 ]; then
@@ -139,15 +139,15 @@ perform_health_checks() {
     log_message "Performing health checks..."
 
     # Check for the presence of the main binary
-    if [ -f "$LLAMA_CPP_DIR/main" ]; then
-        log_message "llama.cpp 'main' binary found."
+    if [ -f "$LLAMA_CPP_DIR/build/bin/llama-cli" ]; then
+        log_message "llama.cpp 'llama-cli' binary found."
     else
-        log_message "ERROR: llama.cpp 'main' binary not found. Compilation might have failed."
+        log_message "ERROR: llama.cpp 'llama-cli' binary not found. Compilation might have failed."
         exit 1
     fi
 
     # Check for the presence of the server binary
-    if [ -f "$LLAMA_CPP_DIR/server" ]; then
+    if [ -f "$LLAMA_CPP_DIR/build/bin/server" ]; then
         log_message "llama.cpp 'server' binary found."
     else
         log_message "WARNING: llama.cpp 'server' binary not found. This might be expected if not building the server."
