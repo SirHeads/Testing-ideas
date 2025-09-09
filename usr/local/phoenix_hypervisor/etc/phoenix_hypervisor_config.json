@@ -162,17 +162,10 @@
         ]
     },
     "proxmox_storage_ids": {
-        "quickos_vm": "quickOS-vm",
-        "quickos_lxc": "quickOS-lxc",
-        "fastdata_backup": "fastData-backup",
-        "fastdata_iso": "fastData-iso"
-    },
-    "mount_point_base": "/mnt/pve",
-    "proxmox_storage_ids": {
-        "quickos_vm": "quickOS-vm",
-        "quickos_lxc": "quickOS-lxc",
-        "fastdata_backup": "fastData-backup",
-        "fastdata_iso": "fastData-iso"
+        "quickos_vm": "quickOS-vm-disks",
+        "quickos_lxc": "quickOS-lxc-disks",
+        "fastdata_backup": "fastData-shared-backups",
+        "fastdata_iso": "fastData-shared-iso"
     },
     "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {

@@ -122,7 +122,7 @@ EOF
 # =====================================================================================
 # Function: configure_nodesource_repository
 # Description: Configures the NodeSource repository for Node.js 20.x using the
-#              "bookworm" distribution, as "trixie" is not supported.
+#              "nodistro" distribution.
 # Arguments:
 #   None.
 # Returns:
@@ -130,10 +130,20 @@ EOF
 # =====================================================================================
 configure_nodesource_repository() {
     log_info "Configuring NodeSource repository..."
-    cat << EOF > /etc/apt/sources.list.d/nodesource.list
-deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x bookworm main
-EOF
-    log_info "NodeSource repository configured for bookworm."
+    
+    # Create the keyring directory if it doesn't exist
+    mkdir -p /etc/apt/keyrings
+    
+    # Download the NodeSource GPG key
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    
+    # Set the correct permissions for the GPG key
+    chmod 644 /etc/apt/keyrings/nodesource.gpg
+    
+    # Create the repository source file with "nodistro"
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
+    
+    log_info "NodeSource repository configured for nodistro."
 }
 
 # Update and upgrade system
@@ -362,7 +372,8 @@ configure_firewall_rules() {
     if ufw status | grep -q "Status: active"; then
         log_info "UFW firewall is already active."
     else
-        if ! yes | ufw enable; then
+        yes | ufw enable
+        if ! ufw status | grep -q "Status: active"; then
             log_fatal "Failed to enable UFW firewall."
         fi
     fi

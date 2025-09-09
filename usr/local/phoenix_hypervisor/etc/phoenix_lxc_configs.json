@@ -111,7 +111,8 @@
             "clone_from_ctid": "901",
             "features": [
                 "vllm"
-            ]
+            ],
+            "pct_options": []
         },
         "950": {
             "name": "vllmQwen3Coder",
@@ -161,9 +162,18 @@
             ],
             "application_script": "phoenix_hypervisor_lxc_951.sh",
             "vllm_model": "ibm-granite/granite-embedding-english-r2",
-            "vllm_tensor_parallel_size": 2,
+            "vllm_tensor_parallel_size": 1,
             "vllm_gpu_memory_utilization": 0.85,
-            "vllm_max_model_len": 8192
+            "vllm_max_model_len": 8192,
+            "pct_options": [],
+            "vllm_args": [
+                "--tensor-parallel-size",
+                "1",
+                "--gpu-memory-utilization",
+                "0.85",
+                "--max-model-len",
+                "8192"
+            ]
         },
         "952": {
             "name": "qdrant-lxc",
@@ -184,11 +194,14 @@
             "clone_from_ctid": "902",
             "features": [
                 "docker"
-            ]
+            ],
+            "application_script": "phoenix_hypervisor_lxc_952.sh",
+            "pct_options": []
         },
         "953": {
             "name": "api-gateway-lxc",
             "memory_mb": 4096,
+            "swap_mb": 512,
             "cores": 4,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 32,
@@ -205,6 +218,9 @@
             "clone_from_ctid": "900",
             "features": [
                 "base_setup"
+            ],
+            "pct_options": [
+                "nesting=1"
             ],
             "application_script": "phoenix_hypervisor_lxc_953.sh"
         },
@@ -294,6 +310,26 @@
                 "nvidia"
             ],
             "application_script": "phoenix_hypervisor_lxc_957.sh"
+        },
+        "958": {
+            "name": "rag-api-service",
+            "memory_mb": 24576,
+            "cores": 8,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 100,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.202/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:B8",
+            "gpu_assignment": "0",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "901",
+            "features": [],
+            "application_script": "phoenix_hypervisor_lxc_958.sh"
         }
     }
 }

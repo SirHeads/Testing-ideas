@@ -88,8 +88,9 @@ install_and_test_vllm() {
 
     # Idempotency Check: Check if vLLM is installed in editable mode.
     # Idempotency Check: Check if vLLM is already installed from source in editable mode
-    if pct_exec "$CTID" "${vllm_dir}/bin/pip" list | grep -q "vllm.*${vllm_repo_dir}"; then
-        log_info "vLLM appears to be installed from source in CTID $CTID. Skipping installation."
+    # Idempotency Check: Check if the vLLM executable exists in the virtual environment.
+    if pct_exec "$CTID" [ -f "${vllm_dir}/bin/vllm" ]; then
+        log_info "vLLM executable found in ${vllm_dir}/bin. Skipping installation."
         return 0
     fi
 

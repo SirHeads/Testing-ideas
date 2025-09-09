@@ -287,20 +287,22 @@ create_container_from_template() {
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0") # Convert boolean to 0 or 1
 
     # --- Check for template existence and download if necessary ---
-    if [ ! -f "$template" ]; then
-        log_info "Template file not found at $template. Attempting to download..."
+    local mount_point_base=$(jq -r '.mount_point_base' "$VM_CONFIG_FILE")
+    local iso_dataset_path=$(jq -r '.zfs.datasets[] | select(.name == "shared-iso") | .pool + "/" + .name' "$VM_CONFIG_FILE")
+    local template_path="${mount_point_base}/${iso_dataset_path}/template/cache/$(basename "$template")"
+
+    if [ ! -f "$template_path" ]; then
+        log_info "Template file not found at $template_path. Attempting to download..."
         # Extract the template name from the filename (e.g., ubuntu-24.04-standard)
         local template_filename=$(basename "$template")
         local template_name="$template_filename"
         
-        # Determine the storage ID from the template path
-        local storage_id=""
-        if [[ "$template" == /fastData/shared-iso/* ]]; then
-            storage_id="fastData-iso"
-        else
-            # Add more conditions here if other storage locations are used for templates
-            log_fatal "Could not determine storage ID for template path: $template"
-        fi
+         # Determine the storage ID for ISOs from the configuration file
+         local storage_id
+         storage_id=$(jq -r '.proxmox_storage_ids.fastdata_iso' "$VM_CONFIG_FILE")
+         if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
+            log_fatal "Could not determine ISO storage ID from configuration file: $VM_CONFIG_FILE"
+         fi
 
         log_info "Downloading template '$template_name' to storage '$storage_id'..."
         if ! pveam download "$storage_id" "$template_name"; then
@@ -435,6 +437,20 @@ apply_configurations() {
     # Apply core settings: memory and CPU cores
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
+
+   # --- Apply pct options ---
+   local pct_options
+   pct_options=$(jq_get_value "$CTID" ".pct_options[]" || echo "")
+   if [ -n "$pct_options" ]; then
+       log_info "Applying pct options for CTID $CTID..."
+       for option in $pct_options; do
+          if [[ "$option" == "nesting=1" ]]; then
+              run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+          else
+              run_pct_command set "$CTID" --"$option" || log_fatal "Failed to set pct option: $option"
+          fi
+       done
+   fi
 
     # --- Enable Nesting for Docker ---
     # Enable nesting feature if 'docker' is specified, which is required for Docker-in-LXC
@@ -626,7 +642,8 @@ handle_customizing_state() {
 # =====================================================================================
 # Function: run_application_script
 # Description: Executes a final application-specific script for the LXC container
-#              if one is defined in its JSON configuration.
+#              if one is defined in its JSON configuration. The script is executed
+#              inside the container using 'pct exec'.
 # Arguments:
 #   None (uses global CTID).
 # Returns:
@@ -644,15 +661,15 @@ run_application_script() {
     fi
 
     local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path
-    log_info "Executing application script: $app_script_name ($app_script_path)"
+    log_info "Executing application script inside container: $app_script_name ($app_script_path)"
 
     # Check if the application script exists
     if [ ! -f "$app_script_path" ]; then
         log_fatal "Application script not found at $app_script_path."
     fi
 
-    # Execute the application script, passing the CTID as an argument
-    if ! "$app_script_path" "$CTID"; then
+    # Execute the application script inside the container by piping it to 'pct exec'
+    if ! cat "$app_script_path" | pct exec "$CTID" -- bash; then
         log_fatal "Application script '$app_script_name' failed for CTID $CTID."
     fi
 
@@ -1116,6 +1133,50 @@ enable_proxmox_enterprise_repos() {
 # Function: check_dependencies
 # Description: Checks for necessary command-line tools and installs them if missing.
 # =====================================================================================
+check_dependencies() {
+    log_info "Checking for dependencies..."
+    local dependencies=("jq" "pct" "qm" "ajv")
+    local missing_dependencies=()
+
+    for cmd in "${dependencies[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_dependencies+=("$cmd")
+        fi
+    done
+
+    if [ ${#missing_dependencies[@]} -ne 0 ]; then
+        log_info "Missing dependencies: ${missing_dependencies[*]}. Attempting to install..."
+        
+        # Temporarily disable enterprise repos to avoid apt update failures
+        disable_proxmox_enterprise_repos
+        
+        if ! apt-get update; then
+            log_fatal "Failed to update apt repositories. Please check your internet connection and repository configuration."
+        fi
+
+        for cmd in "${missing_dependencies[@]}"; do
+            case "$cmd" in
+                jq)
+                    if ! apt-get install -y jq; then
+                        log_fatal "Failed to install jq. Please install it manually."
+                    fi
+                    ;;
+                ajv)
+                    if ! npm install -g ajv-cli; then
+                        log_fatal "Failed to install ajv-cli. Please ensure you have Node.js and npm installed."
+                    fi
+                    ;;
+                # pct and qm are part of Proxmox, so we don't install them here.
+                # If they are missing, something is seriously wrong with the environment.
+            esac
+        done
+        
+        # Re-enable enterprise repos
+        enable_proxmox_enterprise_repos
+    else
+        log_info "All dependencies are satisfied."
+    fi
+}
 
 # =====================================================================================
 # Function: main
@@ -1134,6 +1195,8 @@ main() {
     setup_logging
     exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
 
+
+    check_dependencies
 
     log_info "============================================================"
     log_info "Phoenix Orchestrator Started"

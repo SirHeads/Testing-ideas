@@ -199,6 +199,34 @@ jq_get_value() {
 }
 
 # =====================================================================================
+# Function: jq_get_array
+# Description: A robust wrapper for jq to query the LXC config file for an array.
+#              It retrieves all elements of a JSON array for a given CTID.
+# Arguments:
+#   $1 (ctid) - The container ID.
+#   $2 (jq_query) - The jq query string that selects the array.
+# Returns:
+#   The elements of the array, each on a new line.
+# =====================================================================================
+jq_get_array() {
+    local ctid="$1"
+    local jq_query="$2"
+    local values
+
+    values=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
+
+    if [ "$?" -ne 0 ]; then
+        log_error "jq command failed for CTID $ctid with query '${jq_query}'."
+        return 1
+    elif [ -z "$values" ] || [ "$values" == "null" ]; then
+        return 1
+    fi
+
+    echo "$values"
+    return 0
+}
+
+# =====================================================================================
 # Function: run_pct_command
 # Description: A robust wrapper for executing pct commands with error handling.
 #              In dry-run mode, it logs the command instead of executing it.
