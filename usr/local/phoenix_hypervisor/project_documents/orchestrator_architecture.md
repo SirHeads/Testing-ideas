@@ -39,6 +39,44 @@ The orchestrator is built around a state machine and a feature-based customizati
 -   **Logging:** Comprehensive logging provides a clear audit trail of the script's execution.
 -   **Dry-Run Mode:** A `--dry-run` flag allows for safe validation of the configuration and script logic without making any actual changes to the system.
 
+### Application Script Execution Model: Contextual Configuration
+
+To provide a consistent, reliable, and sandboxed environment for application scripts, the orchestrator follows a "Contextual Configuration" model. This model ensures that scripts running inside a container have access to necessary configurations without requiring them to be permanently installed in the container image.
+
+The process is as follows:
+
+1.  **Staging:** A temporary directory is created inside the container (`/tmp/phoenix_run`).
+2.  **Artifact Deployment:** The orchestrator copies all necessary files for the script's execution from the host into this temporary directory. This includes:
+    *   The application script itself (e.g., `phoenix_hypervisor_lxc_951.sh`).
+    *   The shared `phoenix_hypervisor_common_utils.sh` script.
+    *   The relevant configuration file, `phoenix_lxc_configs.json`.
+3.  **Execution:** The application script is made executable and then run from within the container.
+4.  **Context-Aware Configuration:** The `phoenix_hypervisor_common_utils.sh` script is designed to be context-aware. It detects that it is running from `/tmp/phoenix_run` and automatically sets its `LXC_CONFIG_FILE` path to the local copy in that directory, rather than the absolute path used on the host.
+5.  **Cleanup:** After the script finishes, the temporary directory and all its contents are removed from the container, leaving the container's filesystem clean.
+
+This model guarantees that application scripts are self-contained and portable, with their dependencies explicitly provided at runtime.
+
+```mermaid
+sequenceDiagram
+    participant Orchestrator [Host]
+    participant Container
+    participant App Script [in Container]
+    participant Common Utils [in Container]
+
+    Orchestrator->>Container: Create /tmp/phoenix_run
+    Orchestrator->>Container: Copy App Script to /tmp/phoenix_run
+    Orchestrator->>Container: Copy Common Utils to /tmp/phoenix_run
+    Orchestrator->>Container: Copy Config File to /tmp/phoenix_run
+
+    Orchestrator->>Container: Execute App Script
+    App Script->>Common Utils: source common_utils.sh
+    note right of Common Utils: Script detects it's in /tmp/phoenix_run <br/> and sets config path to local copy.
+    App Script->>Common Utils: Call jq_get_value() to read config
+    Common Utils-->>App Script: Read ./phoenix_lxc_configs.json successfully
+    Common Utils-->>App Script: Return config value
+    App Script-->>Orchestrator [Host]: Success!
+```
+
 ## Dual-Mode Operation
 
 The orchestrator now operates in two primary modes:

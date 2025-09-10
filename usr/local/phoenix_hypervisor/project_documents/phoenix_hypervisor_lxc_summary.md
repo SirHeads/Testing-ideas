@@ -43,6 +43,15 @@ The system uses a hierarchical template structure based on ZFS snapshots to opti
 *   **`910` (`Portainer`):** Clones from `902`. A Docker-enabled container running the Portainer Server for managing Docker environments.
 *   **`950` (`vllmQwen3Coder`):** Clones from `920`. A GPU+vLLM container configured to serve a specific large language model (Qwen3 Coder 30B) directly (no Docker).
 
+## Application Script Guidelines
+
+When creating an `application_script` for a new container, developers must adhere to the following rules to ensure compatibility with the orchestrator's execution model:
+
+1.  **Execution Context:** Be aware that the script is executed *inside* the container in a temporary directory (`/tmp/phoenix_run`). It is not run on the Proxmox host.
+2.  **No Host-Level Commands:** The script **must not** call any Proxmox-specific commands that only exist on the host (e.g., `pct`, `qm`). All operations must be performed using standard Linux commands available within the container's OS.
+3.  **Configuration File Access:** If the script needs to read from `phoenix_lxc_configs.json`, it should do so via the helper functions in `common_utils.sh` (e.g., `jq_get_value`). The common utils script will automatically find the configuration file, which the orchestrator copies into the temporary execution directory.
+4.  **Idempotency:** Application scripts, like feature scripts, should be idempotent where possible. Rerunning the orchestrator should not break a container that is already correctly configured.
+
 ## Container Details
 
 | CTID | Name | Type | Clone Source CTID | Clone Source Snapshot | Key Features | Role/Function |

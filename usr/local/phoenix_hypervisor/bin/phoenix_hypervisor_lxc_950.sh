@@ -3,9 +3,9 @@
 # File: phoenix_hypervisor_lxc_950.sh
 # Description: Manages the deployment and lifecycle of a vLLM API server within an LXC container (CTID 950).
 #              This script handles environment verification, dynamic systemd service file generation,
-#              service management (enable/start), and health checks to ensure the vLLM server
-#              is running correctly and serving the specified model.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, pct, systemctl, curl, journalctl.
+#              and service management using container-native commands (e.g., systemctl, curl)
+#              to ensure the vLLM server is running correctly.
+# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq.
 # Inputs:
 #   $1 (CTID) - The container ID for the vLLM server.
 #   Configuration values from LXC_CONFIG_FILE: .vllm_model, .vllm_tensor_parallel_size,
@@ -60,17 +60,17 @@ verify_vllm_environment() {
     local python_executable="/opt/vllm/bin/python3" # Expected path to vLLM's Python executable
 
     # Check if the vLLM Python executable file exists
-    if ! pct_exec "$CTID" test -f "$python_executable"; then
+    if ! test -f "$python_executable"; then
         log_error "vLLM python executable not found at $python_executable."
         log_error "Listing contents of /opt/vllm/bin/:"
-        pct_exec "$CTID" ls -l /opt/vllm/bin/ | log_plain_output # Log directory contents for debugging
+        ls -l /opt/vllm/bin/ | log_plain_output # Log directory contents for debugging
         log_fatal "vLLM environment is incomplete."
     fi
 
-    if ! pct_exec "$CTID" test -x "$python_executable"; then
+    if ! test -x "$python_executable"; then
         log_error "vLLM python executable is not executable."
         log_error "Listing permissions for $python_executable:"
-        pct_exec "$CTID" ls -l "$python_executable" | log_plain_output
+        ls -l "$python_executable" | log_plain_output
         log_fatal "vLLM environment has incorrect permissions."
     fi
 
@@ -140,7 +140,7 @@ generate_systemd_service_file() {
 
     # --- Use a here-doc and pipe it into the container for maximum reliability ---
     # Use a here-doc and pipe the service file content into the container for maximum reliability
-    if ! echo "${service_file_content}" | pct exec "$CTID" -- tee "${service_file_path}" > /dev/null; then
+    if ! echo "${service_file_content}" | tee "${service_file_path}" > /dev/null; then
         log_fatal "Failed to write systemd service file in CTID $CTID."
     fi
 
@@ -164,25 +164,25 @@ manage_vllm_service() {
     # --- Reload the systemd daemon to recognize the new service ---
     # Reload the systemd daemon to recognize the newly created service file
     log_info "Reloading systemd daemon..."
-    if ! pct_exec "$CTID" systemctl daemon-reload; then
+    if ! systemctl daemon-reload; then
         log_fatal "Failed to reload systemd daemon in CTID $CTID."
     fi
 
     # --- Enable the service to start on boot ---
     # Enable the service to ensure it starts automatically on container boot
     log_info "Enabling $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl enable "$SERVICE_NAME"; then
+    if ! systemctl enable "$SERVICE_NAME"; then
         log_fatal "Failed to enable $SERVICE_NAME service in CTID $CTID."
     fi
 
     # --- Start the service ---
     # Start (or restart if already running) the vLLM API server service
     log_info "Starting $SERVICE_NAME service..."
-    if ! pct_exec "$CTID" systemctl restart "$SERVICE_NAME"; then
+    if ! systemctl restart "$SERVICE_NAME"; then
         log_error "$SERVICE_NAME service failed to start. Retrieving logs..."
         # If the service fails to start, retrieve and log the latest journalctl logs for diagnosis
         local journal_logs
-        journal_logs=$(pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50)
+        journal_logs=$(journalctl -u "$SERVICE_NAME" --no-pager -n 50)
         log_error "Recent logs for $SERVICE_NAME:"
         log_plain_output "$journal_logs" # Log the retrieved journal entries
         log_fatal "Failed to start $SERVICE_NAME service. See logs above for details."
@@ -217,7 +217,7 @@ perform_health_check() {
         
         local response
         # Execute curl command inside the container to check API endpoint
-        response=$(pct exec "$CTID" -- curl -s "$health_check_url" || echo "CURL_ERROR")
+        response=$(curl -s "$health_check_url" || echo "CURL_ERROR")
 
         # Check if curl command itself failed (e.g., connection refused)
         if [ "$response" == "CURL_ERROR" ]; then
@@ -242,7 +242,7 @@ perform_health_check() {
     log_error "Health check failed after $max_attempts attempts. The API server is not responsive."
     log_error "Retrieving latest service logs for diagnosis..."
     log_error "Recent logs for $SERVICE_NAME:"
-    pct_exec "$CTID" journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
+    journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
     log_fatal "vLLM service health check failed."
 }
 
@@ -269,7 +269,7 @@ validate_api_with_test_query() {
     # --- Execute the curl command inside the container ---
     # Execute the curl command inside the container to send the test query
     local api_response
-    api_response=$(pct_exec "$CTID" curl -s -X POST "$api_url" \
+    api_response=$(curl -s -X POST "$api_url" \
         -H "Content-Type: application/json" \
         -d "$json_payload")
 

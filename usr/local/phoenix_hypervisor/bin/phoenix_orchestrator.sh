@@ -5,6 +5,8 @@
 #              This script serves as the single point of entry for container and VM provisioning,
 #              hypervisor setup, and applies features and application scripts to containers.
 #              It implements a state machine to ensure idempotent and resumable execution.
+#              For application scripts, it uses a contextual execution model, copying the script,
+#              utils, and configuration into a temporary directory within the container before execution.
 # Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, pct, qm, ajv (for schema validation).
 # Inputs:
 #   --dry-run: Optional flag to enable dry-run mode.
@@ -668,9 +670,53 @@ run_application_script() {
         log_fatal "Application script not found at $app_script_path."
     fi
 
-    # Execute the application script inside the container by piping it to 'pct exec'
-    if ! cat "$app_script_path" | pct exec "$CTID" -- bash; then
+    # --- New Robust Script Execution Model ---
+    local temp_dir_in_container="/tmp/phoenix_run"
+    local common_utils_source_path="${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
+    local common_utils_dest_path="${temp_dir_in_container}/phoenix_hypervisor_common_utils.sh"
+    local app_script_dest_path="${temp_dir_in_container}/${app_script_name}"
+
+    # 1. Create a temporary directory in the container
+    log_info "Creating temporary directory in container: $temp_dir_in_container"
+    if ! pct exec "$CTID" -- mkdir -p "$temp_dir_in_container"; then
+        log_fatal "Failed to create temporary directory in container $CTID."
+    fi
+
+    # 2. Copy common_utils.sh to the container
+    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
+    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
+        log_fatal "Failed to copy common_utils.sh to container $CTID."
+    fi
+
+    # 3. Copy the application script to the container
+    log_info "Copying application script to $CTID:$app_script_dest_path..."
+    if ! pct push "$CTID" "$app_script_path" "$app_script_dest_path"; then
+        log_fatal "Failed to copy application script to container $CTID."
+    fi
+
+    # 3b. Copy the LXC config file to the container's temp directory
+    local lxc_config_dest_path="${temp_dir_in_container}/phoenix_lxc_configs.json"
+    log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
+    if ! pct push "$CTID" "$LXC_CONFIG_FILE" "$lxc_config_dest_path"; then
+        log_fatal "Failed to copy LXC config file to container $CTID."
+    fi
+
+    # 4. Make the application script executable
+    log_info "Making application script executable in container..."
+    if ! pct exec "$CTID" -- chmod +x "$app_script_dest_path"; then
+        log_fatal "Failed to make application script executable in container $CTID."
+    fi
+
+    # 5. Execute the application script
+    log_info "Executing application script in container..."
+    if ! pct exec "$CTID" -- "$app_script_dest_path" "$CTID"; then
         log_fatal "Application script '$app_script_name' failed for CTID $CTID."
+    fi
+
+    # 6. Clean up the temporary directory
+    log_info "Cleaning up temporary directory in container..."
+    if ! pct exec "$CTID" -- rm -rf "$temp_dir_in_container"; then
+        log_warn "Failed to clean up temporary directory in container $CTID."
     fi
 
     log_info "Application script executed successfully for CTID $CTID."
@@ -1025,17 +1071,18 @@ handle_hypervisor_setup_state() {
 
         # Check if the script file exists
         if [ ! -f "$script_path" ]; then
-            log_fatal "Hypervisor setup script not found at $script_path."
+            log_error "Hypervisor setup script not found at $script_path."
+            continue # Skip to the next script
         fi
 
         # Execute the hypervisor setup script
         if [[ "$script_name" == "hypervisor_feature_setup_zfs.sh" ]]; then
             if ! "$script_path"; then
-                log_fatal "Hypervisor setup script '$script_name' failed."
+                log_error "Hypervisor setup script '$script_name' failed."
             fi
         else
             if ! "$script_path" "$VM_CONFIG_FILE"; then
-                log_fatal "Hypervisor setup script '$script_name' failed."
+                log_error "Hypervisor setup script '$script_name' failed."
             fi
         fi
     done
@@ -1162,8 +1209,15 @@ check_dependencies() {
                     fi
                     ;;
                 ajv)
+                    if ! command -v node > /dev/null || ! command -v npm > /dev/null; then
+                        log_info "Node.js or npm not found. Attempting to install..."
+                        if ! apt-get install -y nodejs npm; then
+                            log_fatal "Failed to install Node.js and npm. Please install them manually."
+                        fi
+                        log_info "Node.js and npm installed successfully."
+                    fi
                     if ! npm install -g ajv-cli; then
-                        log_fatal "Failed to install ajv-cli. Please ensure you have Node.js and npm installed."
+                        log_fatal "Failed to install ajv-cli. Please ensure you have Node.js and npm installed and that the installation is working correctly."
                     fi
                     ;;
                 # pct and qm are part of Proxmox, so we don't install them here.

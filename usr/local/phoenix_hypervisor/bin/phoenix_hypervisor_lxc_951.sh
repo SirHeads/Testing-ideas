@@ -5,7 +5,9 @@
 #              This script handles environment verification, dynamic systemd service file generation,
 #              service management (enable/start), and health checks to ensure the vLLM server
 #              is running correctly and serving the specified model for embeddings.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, pct, systemctl, curl, journalctl.
+# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, systemctl, curl, journalctl.
+#               Note: This script is executed inside the container and must not use host-level
+#               commands like 'pct' or 'qm'.
 # Inputs:
 #   $1 (CTID) - The container ID for the vLLM server.
 #   Configuration values from LXC_CONFIG_FILE: .vllm_model, .vllm_tensor_parallel_size,
@@ -69,7 +71,7 @@ generate_vllm_service_file() {
     log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
 
     # Use a heredoc to write the service file, now with a data-driven ExecStart
-    if ! pct exec "$CTID" -- bash -c "cat > ${service_file_path}" <<EOF; then
+    if ! bash -c "cat > ${service_file_path}" <<EOF; then
 [Unit]
 Description=vLLM OpenAI-Compatible Model Server
 After=network.target
@@ -99,11 +101,11 @@ manage_vllm_service() {
     log_info "Managing the $VLLM_SERVICE_NAME service in CTID $CTID..."
 
     # --- Reload, enable, and restart the vLLM service ---
-    pct_exec "$CTID" systemctl daemon-reload
-    pct_exec "$CTID" systemctl enable "$VLLM_SERVICE_NAME"
-    if ! pct_exec "$CTID" systemctl restart "$VLLM_SERVICE_NAME"; then
+    systemctl daemon-reload
+    systemctl enable "$VLLM_SERVICE_NAME"
+    if ! systemctl restart "$VLLM_SERVICE_NAME"; then
         log_error "$VLLM_SERVICE_NAME service failed to start. Retrieving logs..."
-        pct_exec "$CTID" journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
+        journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
         log_fatal "Failed to start $VLLM_SERVICE_NAME service."
     fi
 
@@ -126,7 +128,7 @@ perform_health_check() {
         log_info "Health check attempt $attempt/$max_attempts..."
         
         # Use curl's --fail option to handle HTTP errors and connection issues
-        if pct exec "$CTID" -- curl -s --fail "$health_check_url" > /dev/null; then
+        if curl -s --fail "$health_check_url" > /dev/null; then
             log_info "Health check passed! The vLLM API server is responsive."
             return 0
         else
@@ -138,7 +140,7 @@ perform_health_check() {
     log_error "Health check failed after $max_attempts attempts. The API server is not responsive."
     log_error "Retrieving latest service logs for diagnosis..."
     log_error "Recent logs for $VLLM_SERVICE_NAME:"
-    pct_exec "$CTID" journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
+    journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
     log_fatal "vLLM service health check failed."
 }
 
@@ -161,7 +163,7 @@ validate_api_with_test_query() {
     local api_response
     local curl_cmd="curl -s -X POST '$api_url' -H 'Content-Type: application/json' -d '$json_payload'"
     log_info "Executing in CTID $CTID via bash: $curl_cmd"
-    api_response=$(pct exec "$CTID" -- bash -c "$curl_cmd")
+    api_response=$(bash -c "$curl_cmd")
 
     # --- Check for empty response ---
     if [ -z "$api_response" ]; then
@@ -222,7 +224,7 @@ main() {
     parse_arguments "$@"
     generate_vllm_service_file
     manage_vllm_service
-    if pct_exec "$CTID" systemctl is-active --quiet "$VLLM_SERVICE_NAME"; then
+    if systemctl is-active --quiet "$VLLM_SERVICE_NAME"; then
         perform_health_check
         validate_api_with_test_query
     else
