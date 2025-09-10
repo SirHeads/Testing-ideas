@@ -1,0 +1,55 @@
+# /etc/nginx/nginx.conf
+
+# Define a javascript function to extract the model from the JSON body.
+js_set $model_name http.get_model;
+
+# Define upstream servers for each vLLM model.
+upstream embedding_service {
+    server 127.0.0.1:8000;
+}
+
+upstream qwen_service {
+    server 10.0.0.150:8000;
+}
+
+# Map the model name to the correct upstream service.
+map $model_name $target_upstream {
+    default embedding_service; # Default to the embedding model for safety
+    "Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit" qwen_service;
+    "text-embedding-ada-002" embedding_service; # Explicitly map embedding model
+}
+
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+
+    # Define a custom log format to include the model name and upstream server
+    log_format vllm_log '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for" '
+                        'model:"$model_name" upstream:"$target_upstream"';
+
+    # Set the access log to use the custom format
+    access_log /var/log/nginx/vllm_access.log vllm_log;
+
+    # Common proxy settings to avoid repetition
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location /v1/chat/completions {
+        # This location is for chat models
+        proxy_pass http://$target_upstream;
+    }
+
+    location /v1/completions {
+        # This location is for completion models
+        proxy_pass http://$target_upstream;
+    }
+
+    location /v1/embeddings {
+        # This location is for embedding models
+        proxy_pass http://$target_upstream;
+    }
+}

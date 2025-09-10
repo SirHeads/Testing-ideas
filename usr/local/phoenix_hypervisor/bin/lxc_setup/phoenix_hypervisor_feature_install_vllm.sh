@@ -31,7 +31,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 # --- Source common utilities ---
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
-source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
+source "$(dirname "$0")/../phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -135,6 +135,9 @@ install_and_test_vllm() {
     # Build and Install vLLM from Source in editable mode (includes flash-attn)
     log_info "Building and installing vLLM from source (includes flash-attn)..."
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}" # Install vLLM from source
+    log_info "Installing FlashInfer from source..."
+    pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
     log_info "Cleaning pip cache after vLLM installation..."
     pct_exec "$CTID" rm -rf /root/.cache/pip # Clean pip cache
 

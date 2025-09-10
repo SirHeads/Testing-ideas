@@ -22,11 +22,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 # --- Source common utilities ---
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
-source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
-SERVICE_NAME="vllm_api_server"
+SERVICE_NAME="vllm_model_server"
 
 # =====================================================================================
 # Function: parse_arguments
@@ -91,26 +91,27 @@ generate_systemd_service_file() {
     log_info "Generating systemd service file for $SERVICE_NAME..."
 
     # --- Retrieve vLLM parameters from the central config ---
-    # Retrieve vLLM model parameters from the central configuration file
     local model
     model=$(jq_get_value "$CTID" ".vllm_model")
-    local tensor_parallel_size
-    tensor_parallel_size=$(jq_get_value "$CTID" ".vllm_tensor_parallel_size")
-    local gpu_memory_utilization
-    gpu_memory_utilization=$(jq_get_value "$CTID" ".vllm_gpu_memory_utilization")
-    local max_model_len
-    max_model_len=$(jq_get_value "$CTID" ".vllm_max_model_len")
+    local served_model_name
+    served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
 
+    # Read the vllm_args array into a bash array
+    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
+    if [ ${#vllm_args[@]} -eq 0 ]; then
+        log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
+    fi
+
+    local port
+    port=$(jq_get_value "$CTID" ".vllm_port")
+ 
     # --- Construct the ExecStart command ---
     # Construct the ExecStart command for the vLLM API server
-    local exec_start_cmd="/opt/vllm/bin/python3 -m vllm.entrypoints.api_server"
-    exec_start_cmd+=" --model $model" # Specify the model to be served
-    exec_start_cmd+=" --tensor-parallel-size $tensor_parallel_size" # Set tensor parallel size
-    exec_start_cmd+=" --gpu-memory-utilization $gpu_memory_utilization" # Set GPU memory utilization
-    exec_start_cmd+=" --max-model-len $max_model_len" # Set maximum model length
-    exec_start_cmd+=" --kv-cache-dtype auto" # Configure KV cache data type
-    exec_start_cmd+=" --disable-custom-all-reduce" # Disable custom all-reduce for vLLM
-    exec_start_cmd+=" --host 0.0.0.0" # Bind to all network interfaces
+    local exec_start_cmd="/opt/vllm/bin/vllm serve \"$model\""
+    for arg in "${vllm_args[@]}"; do
+        exec_start_cmd+=" $arg"
+    done
+    exec_start_cmd+=" --host 0.0.0.0 --port $port"
 
     log_info "Constructed vLLM ExecStart command: $exec_start_cmd"
 
@@ -124,6 +125,7 @@ generate_systemd_service_file() {
         "[Service]" \
         "User=root" \
         "WorkingDirectory=/opt/vllm" \
+        "Environment=VLLM_DISABLE_TORCH_COMPILE=1" \
         "ExecStart=$exec_start_cmd" \
         "Restart=always" \
         "RestartSec=10" \
@@ -189,6 +191,15 @@ manage_vllm_service() {
     fi
 
     log_info "$SERVICE_NAME service started successfully."
+
+    log_info "Verifying service file content:"
+    cat "/etc/systemd/system/${SERVICE_NAME}.service" | log_plain_output
+
+    log_info "Checking service status:"
+    systemctl status "$SERVICE_NAME" | log_plain_output
+
+    log_info "Checking running vLLM process:"
+    ps aux | grep vllm | log_plain_output
 }
 
 # =====================================================================================
@@ -203,12 +214,15 @@ manage_vllm_service() {
 # =====================================================================================
 perform_health_check() {
     log_info "Performing health check on the vLLM API server..."
-    local max_attempts=12 # Maximum number of health check attempts
+    local max_attempts=30 # Maximum number of health check attempts
     local attempt=0 # Current attempt counter
     local interval=10 # Delay between attempts in seconds
-    local health_check_url="http://localhost:8000/v1/models" # Endpoint for health check
+    local port
+    port=$(jq_get_value "$CTID" ".vllm_port")
+    local health_check_url="http://localhost:${port}/health"
     local model_name
-    model_name=$(jq_get_value "$CTID" ".vllm_model") # Expected model name from config
+    local model_name
+    model_name=$(jq_get_value "$CTID" ".vllm_served_model_name") # Expected model name from config
 
     # Loop to perform health checks until successful or max attempts reached
     while [ "$attempt" -lt "$max_attempts" ]; do
@@ -227,7 +241,13 @@ perform_health_check() {
         fi
 
         local model_id
-        model_id=$(echo "$response" | jq -r ".data[0].id")
+        if [ "$(echo "$response" | jq -r '.status')" == "ok" ]; then
+            log_info "Health check passed! The vLLM API server is responsive."
+            return 0
+        else
+            log_info "API is responsive, but the model is not yet loaded. Retrying in $interval seconds..."
+            sleep "$interval" # Wait before retrying
+        fi
 
         # Compare the retrieved model ID with the expected model name
         if [ "$model_id" == "$model_name" ]; then
@@ -258,8 +278,11 @@ perform_health_check() {
 validate_api_with_test_query() {
     log_info "Performing a final API validation with a test query..."
     local model
-    model=$(jq_get_value "$CTID" ".vllm_model") # Retrieve the model name
-    local api_url="http://localhost:8000/v1/chat/completions" # API endpoint for chat completions
+    local model
+    model=$(jq_get_value "$CTID" ".vllm_served_model_name") # Retrieve the model name
+    local port
+    port=$(jq_get_value "$CTID" ".vllm_port")
+    local api_url="http://localhost:${port}/v1/chat/completions" # API endpoint for chat completions
     
     # Construct the JSON payload for the test query using jq
     local json_payload
@@ -307,18 +330,23 @@ display_connection_info() {
     local ip_address
     ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1) # Extract IP address from network config
     local model
-    model=$(jq_get_value "$CTID" ".vllm_model") # Retrieve the model name
+    local model
+    model=$(jq_get_value "$CTID" ".vllm_served_model_name") # Retrieve the model name
 
     log_info "============================================================"
     log_info "vLLM API Server is now running and fully operational."
     log_info "============================================================"
     log_info "Connection Details:"
     log_info "  IP Address: $ip_address"
-    log_info "  Port: 8000"
+    local port
+    port=$(jq_get_value "$CTID" ".vllm_port")
+    log_info "  Port: $port"
     log_info "  Model: $model"
     log_info ""
     log_info "Example curl command:"
-    log_info "  curl -X POST \"http://${ip_address}:8000/v1/chat/completions\" \\"
+    local port
+    port=$(jq_get_value "$CTID" ".vllm_port")
+    log_info "  curl -X POST \"http://${ip_address}:${port}/v1/chat/completions\" \\"
     log_info "    -H \"Content-Type: application/json\" \\"
     log_info "    --data '{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a python function to download a file.\"}]}'"
     log_info "============================================================"
@@ -340,8 +368,8 @@ main() {
     verify_vllm_environment # Verify the vLLM installation and environment
     generate_systemd_service_file # Create the systemd service file for vLLM
     manage_vllm_service # Enable and start the vLLM service
-    # perform_health_check # Perform a health check on the API (currently commented out)
-    # validate_api_with_test_query # Validate API with a test query (currently commented out)
+    perform_health_check # Perform a health check on the API (currently commented out)
+    validate_api_with_test_query # Validate API with a test query (currently commented out)
     display_connection_info # Display connection information to the user
     exit_script 0 # Exit successfully
 }
