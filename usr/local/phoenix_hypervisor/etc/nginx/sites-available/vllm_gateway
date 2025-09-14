@@ -5,11 +5,15 @@ js_set $model_name http.get_model;
 
 # Define upstream servers for each vLLM model.
 upstream embedding_service {
-    server 127.0.0.1:8000;
+    server 10.0.0.151:8000;
 }
 
 upstream qwen_service {
     server 10.0.0.150:8000;
+}
+
+upstream qdrant_service {
+    server 10.0.0.152:6333;
 }
 
 # Map the model name to the correct upstream service.
@@ -53,3 +57,9 @@ server {
         proxy_pass http://$target_upstream;
     }
 }
+
+    location /qdrant/ {
+        # This location is for the Qdrant vector database
+        rewrite ^/qdrant/?(.*)$ /$1 break;
+        proxy_pass http://qdrant_service;
+    }
