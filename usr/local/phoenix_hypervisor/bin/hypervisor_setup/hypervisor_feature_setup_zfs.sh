@@ -9,7 +9,7 @@
 # Dependencies: phoenix_hypervisor_common_utils.sh (sourced), lsblk, zpool,
 #               zfs, smartctl (optional), free, awk, wipefs, pvesm, grep, sed.
 # Inputs:
-#   Hardcoded ZFS configuration within this script.
+#   $1 - The path to the hypervisor configuration file (e.g., phoenix_hypervisor_config.json).
 # Outputs:
 #   ZFS pool and dataset creation logs, drive wear statistics, Proxmox storage
 #   additions, log messages to stdout and MAIN_LOG_FILE, exit codes indicating
@@ -29,30 +29,17 @@ check_root # Ensure the script is run with root privileges
 
 log_info "Starting ZFS pools, datasets, and Proxmox storage setup."
 
-# --- ZFS Configuration ---
+# --- Configuration File ---
+HYPERVISOR_CONFIG_FILE="$1"
 
-# ZFS ARC Max Value
-ZFS_ARC_MAX="32212254720"
+# Validate that the configuration file is provided
+if [ -z "$HYPERVISOR_CONFIG_FILE" ]; then
+    log_fatal "Hypervisor configuration file not provided."
+fi
 
-# ZFS Pools Configuration
-# Each element is a string with pool_name, raid_level, and disks separated by semicolons.
-ZFS_POOLS=(
-    "quickOS;mirror;/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y320880M /dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_2TB_S7U6NJ0Y310536X"
-    "fastData;single;/dev/disk/by-id/nvme-Samsung_SSD_990_EVO_Plus_4TB_S7U8NJ0Y402334Y"
-)
-
-# ZFS Datasets Configuration
-# Each element is a string with dataset_name, pool_name, properties, and proxmox settings separated by semicolons.
-ZFS_DATASETS=(
-    "vm-disks;quickOS;recordsize=128K,compression=lz4,sync=standard,quota=800G;zfspool;images"
-    "lxc-disks;quickOS;recordsize=16K,compression=lz4,sync=standard,quota=600G;zfspool;rootdir"
-    "shared-prod-data;quickOS;recordsize=128K,compression=lz4,sync=standard,quota=400G;dir;images"
-    "shared-prod-data-sync;quickOS;recordsize=16K,compression=lz4,sync=always,quota=100G;dir;images"
-    "shared-test-data;fastData;recordsize=128K,compression=lz4,sync=standard,quota=500G;dir;images"
-    "shared-backups;fastData;recordsize=1M,compression=zstd,sync=standard,quota=2T;dir;backup"
-    "shared-iso;fastData;recordsize=1M,compression=lz4,sync=standard,quota=100G;dir;iso,vztmpl"
-    "shared-bulk-data;fastData;recordsize=1M,compression=lz4,sync=standard,quota=1.4T;dir;images"
-)
+if [ ! -f "$HYPERVISOR_CONFIG_FILE" ]; then
+    log_fatal "Hypervisor configuration file not found at $HYPERVISOR_CONFIG_FILE."
+fi
 
 # --- ZFS Pool Creation Functions (adapted from phoenix_setup_zfs_pools.sh) ---
 
@@ -143,17 +130,18 @@ monitor_nvme_wear() {
 #   0 on success, exits with a fatal error if `zfs_arc_max` cannot be set.
 # =====================================================================================
 check_system_ram() {
-    local required_ram=$(($ZFS_ARC_MAX * 2)) # Recommended RAM is twice ARC max
+    local arc_max_gb=$(jq -r '.zfs.arc_max_gb' "$HYPERVISOR_CONFIG_FILE")
+    local zfs_arc_max_bytes=$((arc_max_gb * 1024 * 1024 * 1024))
+    local required_ram=$((zfs_arc_max_bytes * 2)) # Recommended RAM is twice ARC max
     local total_ram=$(free -b | awk '/Mem:/ {print $2}') # Total system RAM in bytes
 
     # Warn if system RAM is less than twice the ZFS ARC max
     if [[ $total_ram -lt $required_ram ]]; then
-        log_warn "System RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is less than twice ZFS_ARC_MAX ($((ZFS_ARC_MAX / 1024 / 1024 / 1024)) GB). This may cause memory issues."
-        # Note: In an automated script, this might be a hard exit depending on policy.
+        log_warn "System RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is less than twice ZFS_ARC_MAX ($arc_max_gb GB). This may cause memory issues."
     fi
     log_info "Verified system RAM ($((total_ram / 1024 / 1024 / 1024)) GB) is sufficient for ZFS_ARC_MAX"
-    echo "$ZFS_ARC_MAX" > /sys/module/zfs/parameters/zfs_arc_max || log_fatal "Failed to set zfs_arc_max to $ZFS_ARC_MAX" # Attempt to set zfs_arc_max
-    log_info "Set zfs_arc_max to $ZFS_ARC_MAX bytes"
+    echo "$zfs_arc_max_bytes" > /sys/module/zfs/parameters/zfs_arc_max || log_fatal "Failed to set zfs_arc_max to $zfs_arc_max_bytes"
+    log_info "Set zfs_arc_max to $zfs_arc_max_bytes bytes ($arc_max_gb GB)"
 }
 
 # create_zfs_pools: Creates ZFS pools based on configuration
@@ -171,15 +159,17 @@ check_system_ram() {
 create_zfs_pools() {
     log_info "Creating ZFS pools..."
 
-    if [ ${#ZFS_POOLS[@]} -eq 0 ]; then
-        log_warn "No ZFS pools configured in the script. Skipping pool creation."
+    local zfs_pools_json=$(jq -c '.zfs.pools[]' "$HYPERVISOR_CONFIG_FILE")
+    if [ -z "$zfs_pools_json" ]; then
+        log_warn "No ZFS pools configured in $HYPERVISOR_CONFIG_FILE. Skipping pool creation."
         return
     fi
 
     local all_drives=()
-    for pool_config in "${ZFS_POOLS[@]}"; do
-        IFS=';' read -r pool_name raid_level disks_str <<< "$pool_config"
-        read -r -a disks_array <<< "$disks_str"
+    while IFS= read -r pool_config; do
+        local pool_name=$(echo "$pool_config" | jq -r '.name')
+        local raid_level=$(echo "$pool_config" | jq -r '.raid_level')
+        local disks_array=($(echo "$pool_config" | jq -r '.disks[]'))
 
         all_drives+=("${disks_array[@]}")
 
@@ -209,7 +199,7 @@ create_zfs_pools() {
 
         retry_command "$create_cmd" || log_fatal "Failed to create $pool_name pool"
         log_info "Created ZFS pool $pool_name on ${disks_array[*]}"
-    done
+    done <<< "$zfs_pools_json"
 
     monitor_nvme_wear "${all_drives[@]}"
     check_system_ram
@@ -231,13 +221,16 @@ create_zfs_pools() {
 create_zfs_datasets() {
     log_info "Creating ZFS datasets..."
 
-    if [ ${#ZFS_DATASETS[@]} -eq 0 ]; then
-        log_warn "No ZFS datasets configured in the script. Skipping dataset creation."
+    local zfs_datasets_json=$(jq -c '.zfs.datasets[]' "$HYPERVISOR_CONFIG_FILE")
+    if [ -z "$zfs_datasets_json" ]; then
+        log_warn "No ZFS datasets configured in $HYPERVISOR_CONFIG_FILE. Skipping dataset creation."
         return
     fi
 
-    for dataset_config in "${ZFS_DATASETS[@]}"; do
-        IFS=';' read -r dataset_name pool_name properties_str proxmox_storage_type proxmox_content_type <<< "$dataset_config"
+    while IFS= read -r dataset_config; do
+        local dataset_name=$(echo "$dataset_config" | jq -r '.name')
+        local pool_name=$(echo "$dataset_config" | jq -r '.pool')
+        local properties_str=$(echo "$dataset_config" | jq -r '.properties')
         
         local full_dataset_path="$pool_name/$dataset_name"
         local mountpoint="/$full_dataset_path" # Standard mountpoint
@@ -262,7 +255,7 @@ create_zfs_datasets() {
             set_zfs_properties "$full_dataset_path" "${props_array[@]}" || log_fatal "Failed to set properties for $full_dataset_path"
             log_info "Updated properties for ZFS dataset: $full_dataset_path"
         fi
-    done
+    done <<< "$zfs_datasets_json"
 }
 
 # --- Proxmox Storage Creation Functions (adapted from phoenix_create_storage.sh and phoenix_setup_zfs_datasets.sh) ---
@@ -302,8 +295,17 @@ add_proxmox_storage() {
     log_info "Adding Proxmox storage entries..."
     check_pvesm
 
-    for dataset_config in "${ZFS_DATASETS[@]}"; do
-        IFS=';' read -r dataset_name pool_name properties_str proxmox_storage_type proxmox_content_type <<< "$dataset_config"
+    local zfs_datasets_json=$(jq -c '.zfs.datasets[]' "$HYPERVISOR_CONFIG_FILE")
+    if [ -z "$zfs_datasets_json" ]; then
+        log_warn "No ZFS datasets configured in $HYPERVISOR_CONFIG_FILE. Skipping Proxmox storage setup."
+        return
+    fi
+
+    while IFS= read -r dataset_config; do
+        local dataset_name=$(echo "$dataset_config" | jq -r '.name')
+        local pool_name=$(echo "$dataset_config" | jq -r '.pool')
+        local proxmox_storage_type=$(echo "$dataset_config" | jq -r '.proxmox_storage_type')
+        local proxmox_content_type=$(echo "$dataset_config" | jq -r '.proxmox_content_type')
 
         local full_dataset_path="$pool_name/$dataset_name"
         local storage_id="${pool_name}-${dataset_name}"
@@ -325,7 +327,7 @@ add_proxmox_storage() {
         else
             log_warn "Unsupported proxmox_storage_type '$proxmox_storage_type' for dataset $full_dataset_path. Skipping."
         fi
-    done
+    done <<< "$zfs_datasets_json"
 }
 
 # Main execution

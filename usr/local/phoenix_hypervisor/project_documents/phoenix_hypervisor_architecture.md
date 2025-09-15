@@ -95,7 +95,7 @@ graph TD
     B --> C[Execute hypervisor_initial_setup.sh];
     C --> D[Iterate through enabled features];
     D --> E{Feature Script Exists?};
-    E -- Yes --> F[Execute Feature Script e.g., setup_zfs.sh (no config passed)];
+    E -- Yes --> F[Execute Feature Script e.g., setup_zfs.sh (config passed)];
     E -- No --> G[Log Fatal Error];
     F --> D;
     G --> H[Stop Execution];
@@ -114,9 +114,9 @@ graph TD
 *   **`hypervisor_initial_setup.sh`**: Performs the first-time setup of the hypervisor, including system updates and package installation.
 *   **`hypervisor_feature_create_admin_user.sh`**: Creates a new administrative user with sudo privileges.
 *   **`hypervisor_feature_install_nvidia.sh`**: Installs the NVIDIA driver on the Proxmox host.
-*   **`hypervisor_feature_setup_nfs.sh`**: Configures NFS shares.
-*   **`hypervisor_feature_setup_samba.sh`**: Configures Samba shares.
-*   **`hypervisor_feature_setup_zfs.sh`**: Creates and configures ZFS pools and datasets.
+*   **`hypervisor_feature_setup_nfs.sh`**: Configures NFS shares based on the central JSON configuration.
+*   **`hypervisor_feature_setup_samba.sh`**: Configures Samba shares based on the central JSON configuration.
+*   **`hypervisor_feature_setup_zfs.sh`**: Creates and configures ZFS pools and datasets based on the central JSON configuration.
 
 ### `/bin/lxc_setup` Directory
 

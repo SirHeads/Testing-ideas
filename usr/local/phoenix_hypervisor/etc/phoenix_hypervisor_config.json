@@ -208,5 +208,26 @@
     "behavior": {
         "rollback_on_failure": false,
         "debug_mode": true
+    },
+    "shared_volumes": {
+        "ssl_certs": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/ssl",
+            "mounts": {
+                "953": "/etc/nginx/ssl",
+                "910": "/certs"
+            }
+        },
+        "portainer_data": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/portainer/data",
+            "mounts": {
+                "910": "/data"
+            }
+        },
+        "nginx_sites": {
+            "host_path": "/usr/local/phoenix_hypervisor/etc/nginx/sites-available",
+            "mounts": {
+                "953": "/etc/nginx/sites-available"
+            }
+        }
     }
 }

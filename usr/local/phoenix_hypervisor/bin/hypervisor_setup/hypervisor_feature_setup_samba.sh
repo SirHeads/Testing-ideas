@@ -8,8 +8,9 @@
 # Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, id, pdbedit,
 #               apt-get, samba, samba-common-bin, smbclient, systemctl, ufw, grep, cp.
 # Inputs:
+#   $1 - The path to the hypervisor configuration file (e.g., phoenix_hypervisor_config.json).
 #   Configuration values from HYPERVISOR_CONFIG_FILE: .users.username, .network.workgroup,
-#   .samba_shares[] (name, path, browsable, read_only, guest_ok, valid_users[]).
+#   .samba.shares[] (name, path, browsable, read_only, guest_ok, valid_users[]).
 # Outputs:
 #   Samba package installation logs, `/etc/samba/smb.conf` modifications, UFW firewall
 #   rule additions, Samba user configuration, log messages to stdout and MAIN_LOG_FILE,
@@ -29,19 +30,19 @@ check_root # Ensure the script is run with root privileges
 
 log_info "Starting Samba server and shares setup."
 
+# Get the configuration file path from the first argument
+if [ -z "$1" ]; then
+    log_fatal "Configuration file path not provided."
+fi
+HYPERVISOR_CONFIG_FILE="$1"
+
 # Read Samba configuration from hypervisor_config.json
 log_info "Reading Samba configuration from $HYPERVISOR_CONFIG_FILE..."
 
 # Assuming a single admin user for Samba for now, or iterating if multiple users are defined with samba access
-SMB_USER=$(jq -r '.users.username // "heads"' "$HYPERVISOR_CONFIG_FILE")
-# Note: The original script prompted for password or used a default.
-# For 1:1 porting, we'll assume the password hash is not directly used for Samba,
-# but the user is expected to be created with a password via hypervisor_feature_create_admin_user.sh
-# and then added to Samba via smbpasswd.
-# For now, we'll use a placeholder and rely on manual `smbpasswd` if not set.
-SMB_PASSWORD_PLACEHOLDER="NOT_SET_VIA_CONFIG" # Samba passwords are set interactively or via pipe
+SMB_USER=$(jq -r '.samba.user // "heads"' "$HYPERVISOR_CONFIG_FILE")
 NETWORK_NAME=$(jq -r '.network.workgroup // "WORKGROUP"' "$HYPERVISOR_CONFIG_FILE")
-MOUNT_POINT_BASE="/mnt/pve" # This is a constant in the new structure
+MOUNT_POINT_BASE=$(jq -r '.mount_point_base // "/mnt/pve"' "$HYPERVISOR_CONFIG_FILE")
 
 # Validate that the configured Samba system user exists
 if ! id "$SMB_USER" >/dev/null 2>&1; then

@@ -86,6 +86,10 @@ install_and_test_vllm() {
     local vllm_dir="/opt/vllm" # Directory for vLLM virtual environment
     local vllm_repo_dir="/opt/vllm_repo" # Directory for vLLM source repository
 
+    # Force re-installation by removing the existing vLLM directory
+    log_info "Removing existing vLLM directory to ensure a clean installation..."
+    pct_exec "$CTID" rm -rf "${vllm_dir}"
+
     # Idempotency Check: Check if vLLM is installed in editable mode.
     # Idempotency Check: Check if vLLM is already installed from source in editable mode
     # Idempotency Check: Check if the vLLM executable exists in the virtual environment.
@@ -116,8 +120,8 @@ install_and_test_vllm() {
 
     # Install PyTorch Nightly
     # Install PyTorch Nightly for CUDA 12.8+ compatibility
-    log_info "Installing PyTorch nightly for CUDA 12.8+..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128 # Install PyTorch
+    log_info "Installing PyTorch nightly for CUDA 12.1+..."
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
     log_info "Cleaning pip cache after PyTorch installation..."
     pct_exec "$CTID" rm -rf /root/.cache/pip # Clean pip cache
 
@@ -136,6 +140,7 @@ install_and_test_vllm() {
     log_info "Building and installing vLLM from source (includes flash-attn)..."
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}" # Install vLLM from source
     log_info "Installing FlashInfer from source..."
+    pct_exec "$CTID" rm -rf /opt/flashinfer
     pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
     log_info "Cleaning pip cache after vLLM installation..."

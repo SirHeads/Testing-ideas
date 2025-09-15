@@ -96,7 +96,7 @@ Make the script executable: `chmod +x /usr/local/phoenix_hypervisor/bin/phoenix_
 Execute the orchestrator script to create, configure, and start the LXC container based on the updated configuration.
 
 ```bash
-/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh --lxc 953 --action create
+/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh --setup-hypervisor
 ```
 
 ## 3. Phase 2: Nginx Configuration

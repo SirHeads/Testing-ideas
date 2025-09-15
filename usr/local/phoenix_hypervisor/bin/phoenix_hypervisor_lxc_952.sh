@@ -29,7 +29,7 @@ docker pull "$QDRANT_IMAGE"
 
 log_info "Starting new Qdrant container..."
 docker run -d --rm \
-    -p 6333:6333 \
+    -p 6335:6333 \
     -p 6334:6334 \
     --name "$QDRANT_CONTAINER_NAME" \
     "$QDRANT_IMAGE"

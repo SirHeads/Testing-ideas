@@ -603,6 +603,34 @@
         },
         "mount_point_base": {
             "type": "string"
+        },
+        "shared_volumes": {
+            "type": "object",
+            "patternProperties": {
+                "^[a-zA-Z0-9_-]+$": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string",
+                            "pattern": "^/(fastData-shared-test-data|fastData-shared-bulk-data|quickOS-shared-prod-data|quickOS-shared-prod-data-sync)/.+"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
+                }
+            },
+            "additionalProperties": false
         }
     },
     "required": [

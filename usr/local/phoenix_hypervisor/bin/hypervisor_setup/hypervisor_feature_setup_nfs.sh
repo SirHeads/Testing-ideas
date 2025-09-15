@@ -10,9 +10,9 @@
 #               nfs-kernel-server, nfs-common, ufw, ip, awk, exportfs, systemctl,
 #               pvesm, showmount, mkdir, cp, grep, sed.
 # Inputs:
-#   --no-reboot: Optional flag to skip the automatic reboot after configuration.
+#   $1 - The path to the hypervisor configuration file (e.g., phoenix_hypervisor_config.json).
 #   Configuration values from HYPERVISOR_CONFIG_FILE: .network.interfaces.address,
-#   .nfs_shares[] (path, clients[], options[]).
+#   .nfs.exports[] (path, clients[], options[]).
 # Outputs:
 #   NFS package installation logs, `/etc/exports` file modifications, UFW firewall
 #   rule additions, Proxmox VE storage additions, log messages to stdout and
@@ -37,8 +37,6 @@ if [ -z "$1" ]; then
     log_fatal "Configuration file path not provided."
 fi
 HYPERVISOR_CONFIG_FILE="$1"
-
-# Parse command-line arguments
 
 # install_nfs_packages: Installs required NFS packages
 # Args: None
@@ -287,6 +285,3 @@ main() {
 }
 
 main "$@" # Call the main function
-
-log_info "Successfully completed hypervisor_feature_setup_nfs.sh"
-exit 0

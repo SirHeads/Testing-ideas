@@ -478,6 +478,149 @@ apply_configurations() {
 }
 
 # =====================================================================================
+# Function: apply_shared_volumes
+# Description: Applies shared volume configurations to all containers.
+# =====================================================================================
+# =====================================================================================
+# Function: ensure_shared_ssl_certs_exist
+# Description: Generates self-signed SSL certificates for services like Portainer
+#              directly on the host's shared volume if they don't already exist.
+# Arguments:
+#   $1 - The host path of the shared SSL volume.
+# =====================================================================================
+ensure_shared_ssl_certs_exist() {
+    local cert_dir="$1"
+    log_info "Ensuring SSL certificates exist in shared volume: $cert_dir"
+
+    # --- Domains to generate certificates for ---
+    local domains=("portainer.phoenix.local" "n8n.phoenix.local")
+
+    # --- Install openssl if not present ---
+    if ! command -v openssl &> /dev/null; then
+        log_info "Installing openssl on the hypervisor..."
+        apt-get update
+        apt-get install -y openssl
+    fi
+
+    # --- Loop through domains and generate certs if they don't exist ---
+    for domain in "${domains[@]}"; do
+        local key_file="${cert_dir}/${domain}.key"
+        local cert_file="${cert_dir}/${domain}.crt"
+
+        if [ -f "$key_file" ] && [ -f "$cert_file" ]; then
+            log_info "SSL certificate for $domain already exists."
+        else
+            log_info "Generating self-signed certificate for $domain..."
+            local openssl_command="openssl req -x509 -newkey rsa:4096 -keyout ${key_file} -out ${cert_file} -sha256 -days 3650 -nodes -subj '/CN=${domain}'"
+            if ! bash -c "$openssl_command"; then
+                log_fatal "Failed to generate self-signed certificate for $domain."
+            fi
+            log_info "Self-signed certificate for $domain generated successfully."
+        fi
+    done
+}
+
+apply_shared_volumes() {
+    log_info "Applying shared volumes..."
+    local shared_volumes
+    shared_volumes=$(jq -c '.shared_volumes // {}' "$VM_CONFIG_FILE")
+    local containers_to_restart=() # Array to hold CTIDs that need a restart
+
+    for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
+        local volume_config
+        volume_config=$(echo "$shared_volumes" | jq -r --arg name "$volume_name" '.[$name]')
+        local host_path
+        host_path=$(echo "$volume_config" | jq -r '.host_path')
+        local mounts
+        mounts=$(echo "$volume_config" | jq -c '.mounts')
+
+        # Idempotently create host directory
+        if [ ! -d "$host_path" ]; then
+            log_info "Creating shared directory on host: $host_path"
+            if ! mkdir -p "$host_path"; then
+                log_fatal "Failed to create host directory: $host_path"
+            fi
+        else
+            log_info "Host directory already exists: $host_path"
+        fi
+
+        # Set baseline ownership
+        log_info "Setting ownership for shared volume: $host_path"
+        if ! chown -R nobody:nogroup "$host_path"; then
+            log_fatal "Failed to set ownership on host directory: $host_path"
+        fi
+
+        # Apply permissions based on volume name
+        log_info "Applying permissions for shared volume: $volume_name"
+        case "$volume_name" in
+            "ssl_certs")
+                ensure_shared_ssl_certs_exist "$host_path"
+                find "$host_path" -type d -exec chmod 755 {} \; || log_fatal "Failed to set directory permissions for ssl_certs"
+                find "$host_path" -type f -exec chmod 644 {} \; || log_fatal "Failed to set file permissions for ssl_certs"
+                ;;
+            "portainer_data")
+                find "$host_path" -type d -exec chmod 770 {} \; || log_fatal "Failed to set directory permissions for portainer_data"
+                find "$host_path" -type f -exec chmod 660 {} \; || log_fatal "Failed to set file permissions for portainer_data"
+                ;;
+            "nginx_sites")
+                find "$host_path" -type d -exec chmod 755 {} \; || log_fatal "Failed to set directory permissions for nginx_sites"
+                find "$host_path" -type f -exec chmod 644 {} \; || log_fatal "Failed to set file permissions for nginx_sites"
+                ;;
+            *)
+                # Default permissions for other shared volumes
+                find "$host_path" -type d -exec chmod 775 {} \; || log_fatal "Failed to set default directory permissions"
+                find "$host_path" -type f -exec chmod 664 {} \; || log_fatal "Failed to set default file permissions"
+                ;;
+        esac
+
+        for ctid in $(echo "$mounts" | jq -r 'keys[]'); do
+            # Check if the container actually exists before trying to configure it
+            if ! pct status "$ctid" > /dev/null 2>&1; then
+                log_warn "Container $ctid does not exist. Skipping shared volume attachment."
+                continue
+            fi
+            
+            local mount_point
+            mount_point=$(echo "$mounts" | jq -r --arg ctid "$ctid" '.[$ctid]')
+            
+            # Idempotently create mount point
+            if ! pct config "$ctid" | grep -q "mp[0-9]*:.*,mp=${mount_point}"; then
+                log_info "Creating mount point for CTID $ctid: $host_path -> $mount_point"
+                local mp_num=0
+                while pct config "$ctid" | grep -q "mp${mp_num}:"; do
+                    mp_num=$((mp_num + 1))
+                done
+                run_pct_command set "$ctid" --mp${mp_num} "${host_path},mp=${mount_point}"
+                
+                # If a change was made, mark the container for restart
+                if [[ ! " ${containers_to_restart[*]} " =~ " ${ctid} " ]]; then
+                    containers_to_restart+=("$ctid")
+                fi
+            else
+                log_info "Mount point already exists for CTID $ctid: $mount_point"
+            fi
+        done
+    done
+
+    # Restart any containers that had their mount points updated
+    if [ ${#containers_to_restart[@]} -gt 0 ]; then
+        log_info "Restarting containers to apply mount point changes: ${containers_to_restart[*]}"
+        for ctid_to_restart in "${containers_to_restart[@]}"; do
+            if pct status "$ctid_to_restart" | grep -q "running"; then
+                log_info "Stopping container $ctid_to_restart..."
+                run_pct_command stop "$ctid_to_restart"
+                log_info "Starting container $ctid_to_restart..."
+                start_container "$ctid_to_restart"
+            else
+                log_info "Container $ctid_to_restart is not running. No restart needed."
+            fi
+        done
+    fi
+
+    log_info "Shared volumes applied successfully."
+}
+
+# =====================================================================================
 # Function: ensure_container_disk_size
 # Description: Ensures the container's root disk size matches the configuration.
 # Arguments:
@@ -694,7 +837,19 @@ run_application_script() {
         log_fatal "Failed to copy application script to container $CTID."
     fi
 
-    # 3b. Copy the LXC config file to the container's temp directory
+    # 3b. Copy http.js if it exists and the app script is for nginx
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
+        local http_js_source_path="${PHOENIX_BASE_DIR}/etc/nginx/scripts/http.js"
+        local http_js_dest_path="${temp_dir_in_container}/http.js"
+        if [ -f "$http_js_source_path" ]; then
+            log_info "Copying http.js to $CTID:$http_js_dest_path..."
+            if ! pct push "$CTID" "$http_js_source_path" "$http_js_dest_path"; then
+                log_fatal "Failed to copy http.js to container $CTID."
+            fi
+        fi
+    fi
+
+    # 3c. Copy the LXC config file to the container's temp directory
     local lxc_config_dest_path="${temp_dir_in_container}/phoenix_lxc_configs.json"
     log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
     if ! pct push "$CTID" "$LXC_CONFIG_FILE" "$lxc_config_dest_path"; then
@@ -1076,14 +1231,9 @@ handle_hypervisor_setup_state() {
         fi
 
         # Execute the hypervisor setup script
-        if [[ "$script_name" == "hypervisor_feature_setup_zfs.sh" ]]; then
-            if ! "$script_path"; then
-                log_error "Hypervisor setup script '$script_name' failed."
-            fi
-        else
-            if ! "$script_path" "$VM_CONFIG_FILE"; then
-                log_error "Hypervisor setup script '$script_name' failed."
-            fi
+        # Execute the hypervisor setup script, passing the config file to all
+        if ! "$script_path" "$VM_CONFIG_FILE"; then
+            log_error "Hypervisor setup script '$script_name' failed."
         fi
     done
 
@@ -1261,6 +1411,7 @@ main() {
     # Dispatch to the appropriate handler function based on the operation mode
     if [ "$SETUP_HYPERVISOR" = true ]; then
         handle_hypervisor_setup_state # Handle hypervisor setup
+        apply_shared_volumes # Apply shared volumes after hypervisor setup
     elif [ "$CREATE_VM" = true ]; then
         create_vm "$VM_NAME" # Create a new VM
     elif [ "$START_VM" = true ]; then
@@ -1287,6 +1438,7 @@ main() {
         log_info "Ensuring container $CTID is correctly configured..."
         ensure_container_disk_size # Ensure disk size is correct
         apply_configurations # Apply configurations to the container
+        apply_shared_volumes # Apply shared volumes to the container
 
         # 3. Ensure Container is Running
         # 3. Ensure Container is Running: Start if not running, otherwise skip

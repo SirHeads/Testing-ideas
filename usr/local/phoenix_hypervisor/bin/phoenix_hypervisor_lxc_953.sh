@@ -5,44 +5,47 @@ set -e
 
 # Update package lists and install Nginx
 apt-get update
-apt-get install -y nginx
+apt-get install -y nginx libnginx-mod-http-js
 
-# Configure Nginx reverse proxy
-cat <<'EOF' > /etc/nginx/sites-available/vllm_proxy
-upstream vllm_backend {
-    server 10.0.0.151:8000;
-}
 
-server {
-    listen 80;
-    server_name _;
-
-    location / {
-        proxy_pass http://vllm_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        proxy_cache api_cache;
-        proxy_cache_valid 200 302 10m;
-        proxy_cache_valid 404 1m;
-        proxy_cache_key "$scheme$request_method$host$request_uri";
-        add_header X-Proxy-Cache $upstream_cache_status;
-    }
-}
-EOF
-
-# Add proxy_cache_path to nginx.conf
-# Check if the line already exists to ensure idempotency
+# Add js_import and proxy_cache_path to nginx.conf
+# Check if the lines already exist to ensure idempotency
+if ! grep -q "js_import http.js;" /etc/nginx/nginx.conf; then
+    sed -i '/http {/a \    js_import http.js;' /etc/nginx/nginx.conf
+fi
 if ! grep -q "proxy_cache_path /var/cache/nginx" /etc/nginx/nginx.conf; then
     sed -i '/http {/a \    proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=api_cache:10m max_size=10g inactive=60m use_temp_path=off;' /etc/nginx/nginx.conf
 fi
-
-# Enable the site
-if [ ! -L /etc/nginx/sites-enabled/vllm_proxy ]; then
-    ln -s /etc/nginx/sites-available/vllm_proxy /etc/nginx/sites-enabled/
+if ! grep -q "log_format vllm_log" /etc/nginx/nginx.conf; then
+    sed -i '/http {/a \    log_format vllm_log ''"''\$remote_addr - \$remote_user [\$time_local] \\"\$request\\" ''"'' ''"''\$status \$body_bytes_sent \\"\$http_referer\\" ''"'' ''"''\\"\$http_user_agent\\" \\"\$http_x_forwarded_for\\" ''"'' ''"''model:\\"\$model_name\\" upstream:\\"\$target_upstream\\""'';' /etc/nginx/nginx.conf
 fi
+
+# Copy the http.js file from the temporary directory
+cp /tmp/phoenix_run/http.js /etc/nginx/http.js
+
+# List of sites to enable
+sites_to_enable=(
+    "vllm_gateway"
+    "n8n_proxy"
+    "portainer_proxy"
+    "vllm_proxy"
+)
+
+# Enable the sites idempotently
+for site in "${sites_to_enable[@]}"; do
+    source_file="/etc/nginx/sites-available/${site}"
+    dest_file="/etc/nginx/sites-enabled/${site}"
+    if [ -f "${source_file}" ]; then
+        if [ ! -L "${dest_file}" ]; then
+            ln -s "${source_file}" "${dest_file}"
+            echo "Enabled site: ${site}"
+        else
+            echo "Site already enabled: ${site}"
+        fi
+    else
+        echo "WARNING: Configuration file not found for site: ${site}"
+    fi
+done
 
 # Remove default site to avoid conflicts
 rm -f /etc/nginx/sites-enabled/default

@@ -174,8 +174,12 @@ setup_portainer() {
             log_info "Portainer server container already exists in CTID $CTID."
         else
             log_info "Deploying Portainer server container in CTID: $CTID"
-            pct_exec "$CTID" docker volume create portainer_data # Create Portainer data volume
-            pct_exec "$CTID" docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce:latest # Deploy server
+            pct_exec "$CTID" docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v portainer_data:/data \
+                -v /certs/portainer.phoenix.local.crt:/certs/portainer.phoenix.local.crt \
+                -v /certs/portainer.phoenix.local.key:/certs/portainer.phoenix.local.key \
+                portainer/portainer-ce:latest --ssl --sslcert /certs/portainer.phoenix.local.crt --sslkey /certs/portainer.phoenix.local.key
         fi
     elif [ "$portainer_role" == "agent" ]; then
         # Check if Portainer agent container already exists

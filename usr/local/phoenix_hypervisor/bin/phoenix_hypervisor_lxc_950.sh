@@ -78,128 +78,68 @@ verify_vllm_environment() {
 }
 
 # =====================================================================================
-# Function: generate_systemd_service_file
-# Description: Dynamically generates and writes a systemd service file for the vLLM API server
-#              into the specified LXC container. It retrieves vLLM configuration parameters
-#              from the central configuration file.
+# Function: launch_vllm_directly
+# Description: Launches the vLLM server directly as a background process, bypassing systemd.
+#              This method is used to replicate the successful manual execution environment.
 # Arguments:
-#   None (uses global CTID and SERVICE_NAME).
+#   None (uses global CTID).
 # Returns:
-#   Exits with a fatal error if the service file cannot be written into the container.
+#   None. Exits with a fatal error if the command fails to launch.
 # =====================================================================================
-generate_systemd_service_file() {
-    log_info "Generating systemd service file for $SERVICE_NAME..."
+launch_vllm_directly() {
+    log_info "Launching vLLM server directly as a background process..."
 
     # --- Retrieve vLLM parameters from the central config ---
     local model
     model=$(jq_get_value "$CTID" ".vllm_model")
-    local served_model_name
-    served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
-
-    # Read the vllm_args array into a bash array
     mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
     if [ ${#vllm_args[@]} -eq 0 ]; then
         log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
     fi
-
     local port
     port=$(jq_get_value "$CTID" ".vllm_port")
- 
-    # --- Construct the ExecStart command ---
-    # Construct the ExecStart command for the vLLM API server
-    local exec_start_cmd="/opt/vllm/bin/vllm serve \"$model\""
+
+    # --- Construct the vLLM serve command ---
+    local exec_cmd="vllm serve \"$model\""
     for arg in "${vllm_args[@]}"; do
-        exec_start_cmd+=" $arg"
+        exec_cmd+=" $arg"
     done
-    exec_start_cmd+=" --host 0.0.0.0 --port $port"
+    exec_cmd+=" --host 0.0.0.0 --port $port"
+    log_info "Constructed vLLM command: $exec_cmd"
 
-    log_info "Constructed vLLM ExecStart command: $exec_start_cmd"
+    # --- Construct the full command to be executed inside the container ---
+    # This command sequence activates the virtual environment, sets the CUDA debug flag,
+    # and launches the vLLM server using nohup to run it in the background.
+    # Output is redirected to /var/log/vllm.log.
+    local full_command
+    full_command=$(cat <<EOF
+export CUDA_LAUNCH_BLOCKING=1;
+source /opt/vllm/bin/activate;
+nohup $exec_cmd > /var/log/vllm.log 2>&1 &
+EOF
+)
 
-    # --- Create the systemd service file content using a single, robust printf command ---
-    local service_file_content
-    service_file_content=$(printf '%s\n' \
-        "[Unit]" \
-        "Description=vLLM API Server" \
-        "After=network.target" \
-        "" \
-        "[Service]" \
-        "User=root" \
-        "WorkingDirectory=/opt/vllm" \
-        "Environment=VLLM_DISABLE_TORCH_COMPILE=1" \
-        "ExecStart=$exec_start_cmd" \
-        "Restart=always" \
-        "RestartSec=10" \
-        "StandardOutput=journal" \
-        "StandardError=journal" \
-        "" \
-        "[Install]" \
-        "WantedBy=multi-user.target")
-
-    # --- Write the service file inside the container using a robust pipe method ---
-    # Define the path for the systemd service file inside the container
-    local service_file_path="/etc/systemd/system/${SERVICE_NAME}.service"
-    log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
-
-    # --- Use a here-doc and pipe it into the container for maximum reliability ---
-    # Use a here-doc and pipe the service file content into the container for maximum reliability
-    if ! echo "${service_file_content}" | tee "${service_file_path}" > /dev/null; then
-        log_fatal "Failed to write systemd service file in CTID $CTID."
+    # --- Execute the command inside the container ---
+    log_info "Executing launch command inside container..."
+    # We use 'bash -c' to execute the multi-line command string
+    if ! bash -c "$full_command"; then
+        log_fatal "Failed to launch vLLM server directly."
     fi
 
-    log_info "Systemd service file generated successfully."
-}
+    # Give the process a moment to start up
+    sleep 5
 
-# =====================================================================================
-# Function: manage_vllm_service
-# Description: Manages the vLLM systemd service within the specified LXC container.
-#              This includes reloading the systemd daemon, enabling the service to start
-#              on boot, and starting/restarting the service. It also provides error
-#              logging and retrieves journalctl logs on service startup failure.
-# Arguments:
-#   None (uses global CTID and SERVICE_NAME).
-# Returns:
-#   Exits with a fatal error if systemd daemon reload, service enable, or service start fails.
-# =====================================================================================
-manage_vllm_service() {
-    log_info "Managing the $SERVICE_NAME service in CTID $CTID..."
-
-    # --- Reload the systemd daemon to recognize the new service ---
-    # Reload the systemd daemon to recognize the newly created service file
-    log_info "Reloading systemd daemon..."
-    if ! systemctl daemon-reload; then
-        log_fatal "Failed to reload systemd daemon in CTID $CTID."
+    # --- Verify the process is running ---
+    log_info "Verifying that the vLLM process is running..."
+    if ! pgrep -f "vllm serve" > /dev/null; then
+        log_error "vLLM process does not appear to be running."
+        log_error "Checking the log file at /var/log/vllm.log for errors..."
+        cat /var/log/vllm.log | log_plain_output
+        log_fatal "vLLM server failed to start. Check logs above."
+    else
+        log_info "vLLM server process has been started successfully in the background."
+        log_info "Log file is available at /var/log/vllm.log inside the container."
     fi
-
-    # --- Enable the service to start on boot ---
-    # Enable the service to ensure it starts automatically on container boot
-    log_info "Enabling $SERVICE_NAME service..."
-    if ! systemctl enable "$SERVICE_NAME"; then
-        log_fatal "Failed to enable $SERVICE_NAME service in CTID $CTID."
-    fi
-
-    # --- Start the service ---
-    # Start (or restart if already running) the vLLM API server service
-    log_info "Starting $SERVICE_NAME service..."
-    if ! systemctl restart "$SERVICE_NAME"; then
-        log_error "$SERVICE_NAME service failed to start. Retrieving logs..."
-        # If the service fails to start, retrieve and log the latest journalctl logs for diagnosis
-        local journal_logs
-        journal_logs=$(journalctl -u "$SERVICE_NAME" --no-pager -n 50)
-        log_error "Recent logs for $SERVICE_NAME:"
-        log_plain_output "$journal_logs" # Log the retrieved journal entries
-        log_fatal "Failed to start $SERVICE_NAME service. See logs above for details."
-    fi
-
-    log_info "$SERVICE_NAME service started successfully."
-
-    log_info "Verifying service file content:"
-    cat "/etc/systemd/system/${SERVICE_NAME}.service" | log_plain_output
-
-    log_info "Checking service status:"
-    systemctl status "$SERVICE_NAME" | log_plain_output
-
-    log_info "Checking running vLLM process:"
-    ps aux | grep vllm | log_plain_output
 }
 
 # =====================================================================================
@@ -366,10 +306,9 @@ display_connection_info() {
 main() {
     parse_arguments "$@" # Parse command-line arguments
     verify_vllm_environment # Verify the vLLM installation and environment
-    generate_systemd_service_file # Create the systemd service file for vLLM
-    manage_vllm_service # Enable and start the vLLM service
-    perform_health_check # Perform a health check on the API (currently commented out)
-    validate_api_with_test_query # Validate API with a test query (currently commented out)
+    launch_vllm_directly # Launch the vLLM server as a background process
+    perform_health_check # Perform a health check on the API
+    validate_api_with_test_query # Validate API with a test query
     display_connection_info # Display connection information to the user
     exit_script 0 # Exit successfully
 }

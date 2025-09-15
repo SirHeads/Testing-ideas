@@ -13,25 +13,24 @@ upstream qwen_service {
 }
 
 upstream qdrant_service {
-    server 10.0.0.152:6333;
+    server 10.0.0.152:6335;
+}
+
+upstream qwen3_coder_service {
+    server 10.0.0.150:8000;
 }
 
 # Map the model name to the correct upstream service.
 map $model_name $target_upstream {
     default embedding_service; # Default to the embedding model for safety
     "Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit" qwen_service;
+    "Qwen3-Coder-30B-A3B-Instruct-AWQ" qwen3_coder_service;
     "text-embedding-ada-002" embedding_service; # Explicitly map embedding model
 }
 
 server {
-    listen 80;
-    server_name api.yourdomain.com;
-
-    # Define a custom log format to include the model name and upstream server
-    log_format vllm_log '$remote_addr - $remote_user [$time_local] "$request" '
-                        '$status $body_bytes_sent "$http_referer" '
-                        '"$http_user_agent" "$http_x_forwarded_for" '
-                        'model:"$model_name" upstream:"$target_upstream"';
+    listen 80 default_server;
+    server_name api.yourdomain.com 10.0.0.153;
 
     # Set the access log to use the custom format
     access_log /var/log/nginx/vllm_access.log vllm_log;
@@ -56,10 +55,9 @@ server {
         # This location is for embedding models
         proxy_pass http://$target_upstream;
     }
+        location /qdrant/ {
+            # This location is for the Qdrant vector database
+            rewrite ^/qdrant/?(.*)$ /$1 break;
+            proxy_pass http://qdrant_service;
+        }
 }
-
-    location /qdrant/ {
-        # This location is for the Qdrant vector database
-        rewrite ^/qdrant/?(.*)$ /$1 break;
-        proxy_pass http://qdrant_service;
-    }
