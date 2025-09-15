@@ -16,87 +16,13 @@
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
 
-# --- Embedded Common Utilities ---
+# --- Source common utilities ---
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
-# --- Shell Settings ---
-set -e # Exit immediately if a command exits with a non-zero status.
-set -o pipefail # Return the exit status of the last command in the pipe that failed.
-
-# --- Global Constants ---
-export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
-export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
-
-# --- Color Codes ---
-COLOR_GREEN='\033[0;32m'
-COLOR_RED='\033[0;31m'
-COLOR_YELLOW='\033[1;33m'
-COLOR_BLUE='\033[0;34m'
-COLOR_RESET='\033[0m'
-
-# --- Logging Functions ---
-log_info() {
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
-}
-
-log_warn() {
-	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-log_error() {
-    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-log_fatal() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
-    exit 1
-}
-
-log_plain_output() {
-    while IFS= read -r line; do
-        echo "    | $line" | tee -a "$MAIN_LOG_FILE"
-    done
-}
-
- # --- Exit Function ---
- exit_script() {
-    local exit_code=$1
-    if [ "$exit_code" -eq 0 ]; then
-        log_info "Script completed successfully."
-    else
-        log_error "Script failed with exit code $exit_code."
-    fi
-    exit "$exit_code"
-}
-
-pct_exec() {
-    # This function is a placeholder when run inside the container.
-    # It executes commands directly.
-    local ctid="$1"
-    shift
-    log_info "Executing in CTID $ctid: $*"
-    if ! "$@"; then
-        log_error "Command failed in CTID $ctid: '$*'"
-        return 1
-    fi
-    return 0
-}
-
-jq_get_value() {
-    local ctid="$1"
-    local jq_query="$2"
-    local value
-    value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
-    if [ "$?" -ne 0 ]; then
-        log_error "jq command failed for CTID $ctid with query '${jq_query}'."
-        return 1
-    elif [ -z "$value" ] || [ "$value" == "null" ]; then
-        return 1
-    fi
-    echo "$value"
-    return 0
-}
-
-# --- End of Embedded Utilities ---
+# --- Source common utilities ---
+# The common_utils.sh script provides shared functions for logging, error handling, etc.
+source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""

@@ -136,9 +136,20 @@
             ],
             "application_script": "phoenix_hypervisor_lxc_950.sh",
             "vllm_model": "cpatonn/Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
+            "vllm_served_model_name": "Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit",
             "vllm_tensor_parallel_size": 2,
-            "vllm_gpu_memory_utilization": 0.85,
-            "vllm_max_model_len": 8192
+            "vllm_gpu_memory_utilization": 0.75,
+            "vllm_max_model_len": 4096,
+            "vllm_port": 8000,
+            "vllm_args": [
+                "--tensor-parallel-size",
+                "2",
+                "--gpu-memory-utilization",
+                "0.75",
+                "--max-model-len",
+                "4096",
+                "--disable-custom-all-reduce"
+            ]
         },
         "951": {
             "name": "vllm-granite-embed-r2",

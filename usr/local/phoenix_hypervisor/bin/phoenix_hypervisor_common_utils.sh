@@ -5,6 +5,8 @@
 #              for all Phoenix Hypervisor shell scripts. This script is designed to be sourced
 #              by other scripts to ensure a consistent execution environment and standardized
 #              logging practices across the hypervisor management system.
+#              It includes context-aware logic to dynamically set the LXC_CONFIG_FILE path
+#              based on whether it is running on the host or inside a container's temporary directory.
 # Dependencies: jq, pct, dpkg-query, ping, ip, zfs, zpool, usermod, exportfs, wget, curl, gpg, apt-get
 # Inputs: PHOENIX_DEBUG (environment variable for debug logging), DRY_RUN (environment variable for dry-run mode),
 #         Various function arguments (e.g., CTID, package names, hostnames, subnets, ZFS pool/dataset names,
@@ -20,9 +22,20 @@ set -o pipefail # Return the exit status of the last command in the pipe that fa
 
 # --- Global Constants ---
 export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
 export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+
+# --- Dynamic LXC_CONFIG_FILE Path ---
+# Determine the directory of the currently executing script.
+SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+    # We are running inside the container's temporary execution environment.
+    export LXC_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_lxc_configs.json"
+else
+    # We are running on the host. Use the standard absolute path.
+    export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+fi
 
 # --- Environment Setup ---
 export LANG="en_US.UTF-8"

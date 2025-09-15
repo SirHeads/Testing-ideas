@@ -48,6 +48,7 @@ The expected outcome of this process is a fully configured, ready-to-use LXC con
 *   **Modular Feature Installation**: The feature installation process is highly modular. Each feature (e.g., `base_setup`, `docker`, `nvidia`) is encapsulated in its own script. This separation of concerns makes it easy to add new features or modify existing ones without affecting the rest of the system.
 *   **Centralized Configuration**: All container definitions and global settings are managed in a set of well-structured JSON files. This provides a single source of truth for the entire system and makes it easy to manage and version-control the infrastructure.
     *   **Note on Hardcoded Dependencies**: While the principle of centralized configuration is paramount, certain critical dependencies, such as NVIDIA driver versions, are intentionally hardcoded within configuration files like `phoenix_lxc_configs.json`. This design choice ensures platform-wide stability and consistency, preventing unintended variations that could arise from dynamic configuration of these specific elements.
+*   **Container-Native Execution**: Application scripts are executed using container-native commands (`systemctl`, `docker`, etc.) rather than host-level `pct exec` commands. This approach enhances portability and reduces dependencies on the host environment.
 
 ## 3. Flow Diagrams
 
@@ -123,7 +124,8 @@ graph TD
 *   **`phoenix_hypervisor_feature_install_docker.sh`**: A feature script that installs and configures Docker Engine within a container.
 *   **`phoenix_hypervisor_feature_install_nvidia.sh`**: A feature script that configures GPU passthrough and installs the NVIDIA driver inside a container.
 *   **`phoenix_hypervisor_feature_install_vllm.sh`**: A feature script that installs the vLLM inference server from source.
-*   **`phoenix_hypervisor_lxc_950.sh`**: An application script that creates and manages a systemd service for the vLLM API server.
+*   **`phoenix_hypervisor_lxc_950.sh`**: An application script that creates and manages a systemd service for the vLLM API server using container-native commands.
+*   **`phoenix_hypervisor_lxc_952.sh`**: An application script that starts the Qdrant Docker container using container-native commands.
 
 ## 5. Observations and Recommendations
 

@@ -61,3 +61,26 @@ test_my_new_feature() {
     start_suite "My New Feature"
     assert_file_exists "/path/to/my/file" "My file exists"
 }
+
+## 6. Container-Native Testing
+
+In addition to host-level testing, it is crucial to verify the functionality of application scripts within the container's native environment. This ensures that all dependencies, paths, and permissions are correctly configured.
+
+### Manual Testing Procedure
+
+1.  **Access the Container Shell**:
+    ```bash
+    pct enter <CTID>
+    ```
+2.  **Navigate to the Script Directory**:
+    Application scripts are typically located in the `/usr/local/bin` directory inside the container.
+3.  **Execute the Script**:
+    Run the script with the appropriate arguments and observe its output for any errors.
+    ```bash
+    /usr/local/bin/your_application_script.sh <arguments>
+    ```
+4.  **Check Logs**:
+    Review the systemd journal or application-specific log files for any errors or unexpected behavior.
+    ```bash
+    journalctl -u <service_name>
+    ```
