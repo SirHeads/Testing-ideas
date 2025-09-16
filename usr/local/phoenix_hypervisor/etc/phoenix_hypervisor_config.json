@@ -213,8 +213,9 @@
         "ssl_certs": {
             "host_path": "/mnt/pve/quickOS/shared-prod-data/ssl",
             "mounts": {
-                "953": "/ssl",
-                "910": "/ssl"
+                "953": "/etc/nginx/ssl",
+                "910": "/certs",
+                "954": "/certs"
             }
         },
         "portainer_data": {

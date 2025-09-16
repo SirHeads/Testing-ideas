@@ -87,7 +87,7 @@ install_and_configure_docker() {
         pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release # Install prerequisites
         pct_exec "$CTID" mkdir -p /etc/apt/keyrings # Create keyrings directory
         if [ ! -f "/etc/apt/keyrings/docker.gpg" ]; then # Check if GPG key exists
-            pct_exec "$CTID" bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg" # Download and dearmor GPG key
+            pct_exec "$CTID" bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg" # Download and dearmor GPG key
             pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg # Set permissions for GPG key
         else
             log_info "Docker GPG key already exists. Skipping download."
@@ -177,8 +177,7 @@ setup_portainer() {
             pct_exec "$CTID" docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 -v portainer_data:/data \
-                -v /certs/portainer.phoenix.local.crt:/certs/portainer.phoenix.local.crt \
-                -v /certs/portainer.phoenix.local.key:/certs/portainer.phoenix.local.key \
+                -v /certs:/certs:ro \
                 portainer/portainer-ce:latest --ssl --sslcert /certs/portainer.phoenix.local.crt --sslkey /certs/portainer.phoenix.local.key
         fi
     elif [ "$portainer_role" == "agent" ]; then

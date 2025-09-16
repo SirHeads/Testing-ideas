@@ -288,6 +288,14 @@
                                     "rules"
                                 ]
                             }
+                        },
+                        "dependencies": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[0-9]+$"
+                            },
+                            "description": "An array of CTIDs that this container depends on. The orchestrator will ensure these containers are running before starting this one."
                         }
                     },
                     "required": [

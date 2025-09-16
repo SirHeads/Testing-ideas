@@ -89,6 +89,25 @@
             "clone_from_ctid": "902",
             "features": [
                 "docker"
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "9443"
+                    }
+                ]
+            },
+            "ports": [
+                "9443:9443",
+                "9001:9001"
+            ],
+            "dependencies": [
+                "953"
             ]
         },
         "920": {
@@ -150,6 +169,21 @@
                 "8192",
                 "--gpu-memory-utilization",
                 "0.80"
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "8000"
+                    }
+                ]
+            },
+            "dependencies": [
+                "953"
             ]
         },
         "951": {
@@ -189,6 +223,21 @@
                 "0.10",
                 "--max-model-len",
                 "1024"
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "8000"
+                    }
+                ]
+            },
+            "dependencies": [
+                "953"
             ]
         },
         "952": {
@@ -230,10 +279,13 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "6334"
+                        "port": "6333"
                     }
                 ]
-            }
+            },
+            "dependencies": [
+                "953"
+            ]
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -288,7 +340,22 @@
             "ports": [
                 "5678:5678"
             ],
-            "pct_options": []
+            "pct_options": [],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "5678"
+                    }
+                ]
+            },
+            "dependencies": [
+                "953"
+            ]
         },
         "955": {
             "name": "ollama-oWUI",

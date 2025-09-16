@@ -1,50 +1,71 @@
-# NGINX Gateway Analysis Plan
+# NGINX Gateway Analysis and Testing Plan
 
-This document outlines the plan for a detailed analysis of the NGINX gateway, focusing on each proxied service individually.
+This document outlines the expected functionality of the services exposed through the nginx gateway at `10.0.0.153`. It serves as a basis for a diagnostic and testing plan.
 
-## Objective
+## NGINX Gateway IP Address
 
-To understand the current configuration, identify areas for improvement, and propose actionable recommendations for each service to enhance security, performance, and reliability.
+The nginx gateway container (`Nginx-VscodeRag`) is configured with the following IP address:
 
-## Services for Analysis
+*   **IP Address:** `10.0.0.153`
 
-*   n8n
-*   Portainer
-*   Ollama
-*   vLLM Gateway (covering chat and embeddings)
-*   Qdrant
+## Service Definitions
 
-## Analysis Framework (per service)
+### 1. qdrant
 
-For each service, we will analyze the following aspects:
+*   **Local Endpoint:** `http://10.0.0.153/qdrant/`
+*   **Key Functionalities:** The qdrant service should be accessible and report a healthy status. The primary functionality is to provide a vector database for AI applications.
+*   **Example `curl` command:** This command checks the health of the qdrant service.
+    ```bash
+    curl -X GET http://10.0.0.153/qdrant/healthz
+    ```
+    **Expected Output:** A successful response indicating the service is healthy.
 
-### 1. Current Configuration (`what are we doing now`)
+### 2. vllm chat (granite)
 
-*   **Routing:** How are requests routed to the backend? (server_name, location blocks)
-*   **Upstream:** How is the backend service defined? (upstream blocks)
-*   **Security:** What security measures are in place? (SSL/TLS, headers)
-*   **Performance:** Are there any performance-related configurations? (caching, http2)
-*   **Logging:** How are requests logged?
+*   **Local Endpoint:** `http://10.0.0.153/v1/chat/completions`
+*   **Key Functionalities:** The vllm chat service should be able to receive a prompt and return a text completion. This service is used for generative AI tasks.
+*   **Example `curl` command:** This command sends a chat completion request to the `granite` model.
+    ```bash
+    curl -X POST http://10.0.0.153/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "granite-3.3-8b-instruct",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hello! What is your name?"
+        }
+      ]
+    }'
+    ```
+    **Expected Output:** A JSON response containing a text completion from the model.
 
-### 2. Areas for Improvement (`what could we be doing better`)
+### 3. vllm embedding
 
-*   **Security Hardening:**
-    *   SSL/TLS best practices (protocols, ciphers).
-    *   Security headers (HSTS, X-Frame-Options, etc.).
-    *   Authentication/Authorization (is it needed?).
-*   **Performance Optimization:**
-    *   Caching strategies.
-    *   Load balancing (if applicable).
-    *   Keepalive connections.
-*   **Reliability and High Availability:**
-    *   Health checks for upstreams.
-    *   Failover mechanisms.
-*   **Maintainability:**
-    *   Configuration clarity and comments.
-    *   Use of variables and maps to reduce duplication.
+*   **Local Endpoint:** `http://10.0.0.153/v1/embeddings`
+*   **Key Functionalities:** The vllm embedding service should be able to receive text and return a vector embedding. This is used for tasks like semantic search and clustering.
+*   **Example `curl` command:** This command sends a request to get an embedding for the input text.
+    ```bash
+    curl -X POST http://10.0.0.153/v1/embeddings \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "ibm-granite/granite-embedding-english-r2",
+      "input": "Hello, world!"
+    }'
+    ```
+    **Expected Output:** A JSON response containing the vector embedding for the input text.
 
-### 3. Actionable Recommendations (`how could we improve`)
+### 4. n8n
 
-*   Specific configuration changes to implement.
-*   Suggestions for new tools or processes.
-*   Documentation updates.
+*   **Local Endpoint:** `http://10.0.0.153/n8n/`
+*   **Key Functionalities:** The n8n service should be accessible and display the n8n workflow automation tool's web interface.
+*   **Example `curl` command:** This command will access the n8n web interface.
+    ```bash
+    curl -L http://10.0.0.153/n8n/
+    ```
+    **Expected Output:** The HTML content of the n8n login page. The `-L` flag is used to follow redirects.
+
+### 5. Portainer
+
+*   **Local Endpoint:** Not accessible via the gateway IP address.
+*   **Key Functionalities:** The Portainer service is configured to be accessed via the hostname `portainer.phoenix.local` and is not directly exposed through the gateway's IP address. Therefore, it cannot be tested from the Proxmox host using the gateway IP.

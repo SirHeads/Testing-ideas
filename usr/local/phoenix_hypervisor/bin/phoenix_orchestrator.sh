@@ -31,7 +31,7 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
 source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
-CTID=""
+CTID_LIST=()
 VM_NAME=""
 VM_ID=""
 DRY_RUN=false # Flag for dry-run mode
@@ -112,14 +112,20 @@ parse_arguments() {
                 log_error "Unknown option: $1"
                 exit_script 2
                 ;;
-            *) # Handle positional argument (CTID for LXC orchestration)
-                # Ensure CTID is not combined with other operation modes
+            *) # Handle positional arguments (CTIDs for LXC orchestration)
                 if [ "$operation_mode_set" = true ]; then
                     log_fatal "Cannot combine CTID with other operation modes (--create-vm, --start-vm, etc.)."
                 fi
-                CTID="$1" # Capture CTID
+                # Append all remaining arguments to the CTID list
+                while [[ "$#" -gt 0 ]] && ! [[ "$1" =~ ^-- ]]; do
+                    CTID_LIST+=("$1")
+                    shift
+                done
                 operation_mode_set=true
-                shift
+                # This allows --dry-run to appear after the CTIDs
+                if [[ "$#" -gt 0 ]]; then
+                   continue
+                fi
                 ;;
         esac
     done
@@ -153,10 +159,10 @@ parse_arguments() {
         fi
         log_info "VM delete mode for VM ID: $VM_ID"
     else
-        if [ -z "$CTID" ]; then # Ensure CTID is provided for LXC orchestration
-            log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID> [--dry-run]"
+        if [ ${#CTID_LIST[@]} -eq 0 ]; then # Ensure at least one CTID is provided
+            log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID>... [--dry-run]"
         fi
-        log_info "Container orchestration mode for CTID: $CTID"
+        log_info "Container orchestration mode for CTIDs: ${CTID_LIST[*]}"
     fi
 
     # Log if dry-run mode is enabled
@@ -180,7 +186,8 @@ parse_arguments() {
 #   None. Exits with a fatal error if inputs are invalid or configuration is missing.
 # =====================================================================================
 validate_inputs() {
-    log_info "Starting input validation..."
+    local CTID="$1"
+    log_info "Starting input validation for CTID $CTID..."
     # Check if LXC_CONFIG_FILE environment variable is set
     if [ -z "$LXC_CONFIG_FILE" ]; then
         log_fatal "LXC_CONFIG_FILE environment variable is not set."
@@ -243,6 +250,7 @@ check_storage_pool_exists() {
 #   None. Exits with a fatal error if the `pct create` command fails.
 # =====================================================================================
 create_container_from_template() {
+    local CTID="$1"
     log_info "Starting creation of container $CTID from template."
 
     # --- Retrieve all necessary parameters from the config file ---
@@ -331,6 +339,7 @@ create_container_from_template() {
 #   None. Exits with a fatal error if pre-flight checks or the `pct clone` command fail.
 # =====================================================================================
 clone_container() {
+    local CTID="$1"
     local source_ctid=$(jq_get_value "$CTID" ".clone_from_ctid") # Retrieve source CTID from config
     log_info "Starting clone of container $CTID from source CTID $source_ctid."
 
@@ -383,6 +392,7 @@ clone_container() {
 #   None. Exits with a fatal error if any `pct set` command fails.
 # =====================================================================================
 apply_configurations() {
+    local CTID="$1"
     log_info "Applying configurations for CTID: $CTID"
 
     # --- Retrieve configuration values ---
@@ -515,6 +525,7 @@ apply_configurations() {
 }
 
 ensure_container_defined() {
+    local CTID="$1"
     log_info "Ensuring container $CTID is defined..."
     if ! pct status "$CTID" > /dev/null 2>&1; then
         log_info "Container $CTID does not exist. Proceeding with creation..."
@@ -522,9 +533,9 @@ ensure_container_defined() {
         clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "")
 
         if [ -n "$clone_from_ctid" ]; then
-            clone_container
+            clone_container "$CTID"
         else
-            create_container_from_template
+            create_container_from_template "$CTID"
         fi
 
         # NEW: Set unprivileged flag immediately after creation if specified in config
@@ -611,10 +622,14 @@ generate_idmap_cycle() {
     local ctid="$1"
     log_info "Performing start/stop cycle for CT $ctid to generate idmap..."
 
-    log_info "Starting container $ctid..."
-    if ! pct start "$ctid"; then
-        log_error "Failed to start container $ctid during idmap generation cycle."
-        return 1
+    if ! pct status "$ctid" | grep -q "running"; then
+        log_info "Starting container $ctid..."
+        if ! pct start "$ctid"; then
+            log_error "Failed to start container $ctid during idmap generation cycle."
+            return 1
+        fi
+    else
+        log_info "Container $ctid is already running. Skipping start."
     fi
 
     log_info "Stopping container $ctid..."
@@ -628,6 +643,7 @@ generate_idmap_cycle() {
 }
 
 apply_shared_volumes() {
+    local CTID="$1"
     log_info "Applying shared volumes for CTID: $CTID..."
     local admin_user
     admin_user=$(jq -r '.users.username' "$VM_CONFIG_FILE")
@@ -729,6 +745,7 @@ apply_shared_volumes() {
 #   None. Exits with a fatal error if the `pct resize` command fails.
 # =====================================================================================
 ensure_container_disk_size() {
+    local CTID="$1"
     log_info "Ensuring correct disk size for CTID: $CTID"
     local storage_size_gb
     storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
@@ -755,6 +772,7 @@ ensure_container_disk_size() {
 #   fails to start after all retries.
 # =====================================================================================
 start_container() {
+    local CTID="$1"
     log_info "Attempting to start container CTID: $CTID with retries..."
     local attempts=0 # Counter for startup attempts
     local max_attempts=3 # Maximum number of startup attempts
@@ -795,6 +813,7 @@ start_container() {
 #   None. Exits with a fatal error if a feature script is not found or fails.
 # =====================================================================================
 apply_features() {
+    local CTID="$1"
     log_info "Applying features for CTID: $CTID"
     local features # Variable to store the list of features
     features=$(jq_get_value "$CTID" ".features[]" || echo "") # Retrieve features as an array from config
@@ -841,6 +860,7 @@ apply_features() {
 #   None. Exits with a fatal error if the application script is not found or fails.
 # =====================================================================================
 run_application_script() {
+    local CTID="$1"
     log_info "Checking for application script for CTID: $CTID"
     local app_script_name # Variable to store the application script name
     app_script_name=$(jq_get_value "$CTID" ".application_script" || echo "") # Retrieve application script name from config
@@ -894,8 +914,20 @@ run_application_script() {
             fi
         fi
     fi
+    
+    # 3c. Copy the vllm_gateway config file if it exists and the app script is for nginx
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
+        local vllm_gateway_source_path="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/vllm_gateway"
+        local vllm_gateway_dest_path="${temp_dir_in_container}/vllm_gateway"
+        if [ -f "$vllm_gateway_source_path" ]; then
+            log_info "Copying vllm_gateway to $CTID:$vllm_gateway_dest_path..."
+            if ! pct push "$CTID" "$vllm_gateway_source_path" "$vllm_gateway_dest_path"; then
+                log_fatal "Failed to copy vllm_gateway to container $CTID."
+            fi
+        fi
+    fi
 
-    # 3c. Copy the LXC config file to the container's temp directory
+    # 3d. Copy the LXC config file to the container's temp directory
     local lxc_config_dest_path="${temp_dir_in_container}/phoenix_lxc_configs.json"
     log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
     if ! pct push "$CTID" "$LXC_CONFIG_FILE" "$lxc_config_dest_path"; then
@@ -928,6 +960,7 @@ run_application_script() {
 # Description: Executes a health check command inside the container if defined in the configuration.
 # =====================================================================================
 run_health_check() {
+    local CTID="$1"
     log_info "Checking for health check for CTID: $CTID"
     local health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
 
@@ -973,6 +1006,7 @@ run_health_check() {
 #   None. Exits with a fatal error if snapshot creation fails.
 # =====================================================================================
 create_template_snapshot() {
+    local CTID="$1"
     log_info "Checking for template snapshot for CTID: $CTID"
     local snapshot_name # Variable to store the template snapshot name
     snapshot_name=$(jq_get_value "$CTID" ".template_snapshot_name" || echo "") # Retrieve snapshot name from config
@@ -1570,9 +1604,10 @@ ensure_host_idmap_configured() {
 }
 
 ensure_container_configured() {
+    local CTID="$1"
     log_info "Ensuring container $CTID is correctly configured..."
-    ensure_container_disk_size
-    apply_configurations
+    ensure_container_disk_size "$CTID"
+    apply_configurations "$CTID"
 }
 
 verify_idmap_exists() {
@@ -1591,39 +1626,62 @@ verify_idmap_exists() {
     log_info "IDMAP verification successful."
 }
 
+ensure_dependencies_running() {
+    local ctid="$1"
+    log_info "Checking dependencies for CTID $ctid..."
+    local dependencies
+    dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
+
+    if [ -z "$dependencies" ]; then
+        log_info "No dependencies found for CTID $ctid."
+        return 0
+    fi
+
+    for dep_ctid in $dependencies; do
+        log_info "Checking status of dependency CTID $dep_ctid..."
+        if ! pct status "$dep_ctid" | grep -q "running"; then
+            log_info "Dependency CTID $dep_ctid is not running. Orchestrating it now..."
+            orchestrate_container_stateless "$dep_ctid"
+        else
+            log_info "Dependency CTID $dep_ctid is already running."
+        fi
+    done
+}
+
 orchestrate_container_stateless() {
-    log_info "Starting stateless orchestration for CTID $CTID..."
+    local ctid_to_orchestrate="$1"
+    log_info "Starting stateless orchestration for CTID $ctid_to_orchestrate..."
+
+    # Ensure dependencies are running before proceeding
+    ensure_dependencies_running "$ctid_to_orchestrate"
 
     # 1. Define the container and set unprivileged flag if needed
-    ensure_container_defined
+    ensure_container_defined "$ctid_to_orchestrate"
 
     # 2. Apply all other configurations, which now includes idmap setup
-    ensure_container_configured
+    ensure_container_configured "$ctid_to_orchestrate"
 
     # 3. Perform start/stop cycle to apply idmap and other settings
-    generate_idmap_cycle "$CTID"
+    generate_idmap_cycle "$ctid_to_orchestrate"
 
     # 4. Verify idmap was created
-    verify_idmap_exists "$CTID"
+    verify_idmap_exists "$ctid_to_orchestrate"
 
     # 5. Apply shared volumes now that idmap is guaranteed to exist
-    apply_shared_volumes
+    apply_shared_volumes "$ctid_to_orchestrate"
 
-    # 6. Apply firewall rules
-    "${SCRIPT_DIR}/phoenix_hypervisor_firewall.sh" "$CTID"
-
-    # 7. Start the container for application setup
-    start_container
+    # 6. Start the container for application setup
+    start_container "$ctid_to_orchestrate"
 
     # 8. Apply features and run application scripts
-    apply_features
-    run_application_script
-    run_health_check
+    apply_features "$ctid_to_orchestrate"
+    run_application_script "$ctid_to_orchestrate"
+    run_health_check "$ctid_to_orchestrate"
 
     # 9. Create snapshot if it's a template
-    create_template_snapshot
+    create_template_snapshot "$ctid_to_orchestrate"
 
-    log_info "Successfully completed stateless orchestration for CTID $CTID."
+    log_info "Successfully completed stateless orchestration for CTID $ctid_to_orchestrate."
 }
 
 # =====================================================================================
@@ -1666,8 +1724,20 @@ main() {
     elif [ "$DELETE_VM" = true ]; then
         delete_vm "$VM_ID" # Delete an existing VM
     else
-        validate_inputs # Validate inputs for LXC container orchestration
-        orchestrate_container_stateless
+        if [ ${#CTID_LIST[@]} -eq 0 ]; then
+            log_fatal "No CTID provided for container orchestration."
+        fi
+
+        # Topologically sort the CTIDs based on dependencies
+        local sorted_ctids
+        sorted_ctids=$(topological_sort "${CTID_LIST[@]}")
+
+        log_info "Orchestration order: $sorted_ctids"
+
+        for ctid in $sorted_ctids; do
+            validate_inputs "$ctid" # Validate inputs for each LXC container
+            orchestrate_container_stateless "$ctid"
+        done
     fi
 
     log_info "============================================================"
@@ -1678,4 +1748,63 @@ main() {
 
 # --- Script Execution ---
 # Call the main function with all command-line arguments to start execution.
+# =====================================================================================
+# Function: topological_sort
+# Description: Performs a topological sort on a list of CTIDs based on their
+#              dependencies defined in the configuration file.
+# Arguments:
+#   $@ - A list of CTIDs to be sorted.
+# Returns:
+#   A space-separated string of sorted CTIDs.
+# =====================================================================================
+topological_sort() {
+    local -a initial_list=("$@")
+    local -A adj_list
+    local -A in_degree
+    local -a queue
+    local -a sorted_list
+    local -A all_nodes
+
+    # Build the adjacency list and in-degree map
+    for ctid in "${initial_list[@]}"; do
+        all_nodes["$ctid"]=1
+        local dependencies
+        dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
+        in_degree["$ctid"]=${in_degree["$ctid"]:-0}
+        for dep in $dependencies; do
+            all_nodes["$dep"]=1
+            adj_list["$dep"]="${adj_list["$dep"]} $ctid"
+            in_degree["$ctid"]=$((in_degree["$ctid"] + 1))
+        done
+    done
+
+    # Initialize the queue with nodes that have an in-degree of 0
+    for ctid in "${!all_nodes[@]}"; do
+        if [ "${in_degree[$ctid]}" -eq 0 ]; then
+            queue+=("$ctid")
+        fi
+    done
+
+    # Process the queue
+    while [ ${#queue[@]} -gt 0 ]; do
+        local u=${queue[0]}
+        queue=("${queue[@]:1}")
+        sorted_list+=("$u")
+
+        for v in ${adj_list[$u]}; do
+            in_degree["$v"]=$((in_degree["$v"] - 1))
+            if [ "${in_degree[$v]}" -eq 0 ]; then
+                queue+=("$v")
+            fi
+        done
+    done
+
+    # Check for cycles
+    if [ ${#sorted_list[@]} -ne ${#all_nodes[@]} ]; then
+        log_fatal "A cycle was detected in the dependency graph. Cannot proceed."
+    fi
+
+    echo "${sorted_list[@]}"
+}
+
 main "$@"
