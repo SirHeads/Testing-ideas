@@ -178,17 +178,18 @@
                 "8000:8000"
             ],
             "vllm_model": "ibm-granite/granite-embedding-english-r2",
+            "vllm_served_model_name": "ibm-granite/granite-embedding-english-r2",
             "vllm_tensor_parallel_size": 1,
-            "vllm_gpu_memory_utilization": 0.15,
-            "vllm_max_model_len": 8192,
+            "vllm_gpu_memory_utilization": 0.10,
+            "vllm_max_model_len": 1024,
             "pct_options": [],
             "vllm_args": [
                 "--tensor-parallel-size",
                 "1",
                 "--gpu-memory-utilization",
-                "0.15",
+                "0.10",
                 "--max-model-len",
-                "8192"
+                "1024"
             ]
         },
         "952": {

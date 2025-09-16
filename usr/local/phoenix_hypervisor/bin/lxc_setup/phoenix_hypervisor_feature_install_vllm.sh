@@ -223,7 +223,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=/opt/vllm
-ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server --model "VLLM_MODEL_PLACEHOLDER" --served-model-name "VLLM_SERVED_MODEL_NAME_PLACEHOLDER" --host 0.0.0.0 --port VLLM_PORT_PLACEHOLDER --dtype float16 --tensor-parallel-size 2 --kv-cache-memory 6171970969 --max-model-len 8192 --trust-remote-code --enforce-eager --disable-custom-all-reduce
+ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server --model "VLLM_MODEL_PLACEHOLDER" --served-model-name "VLLM_SERVED_MODEL_NAME_PLACEHOLDER" --host 0.0.0.0 --port VLLM_PORT_PLACEHOLDER VLLM_ARGS_PLACEHOLDER
 Restart=always
 RestartSec=10
 

@@ -45,52 +45,29 @@ parse_arguments() {
 }
 
 # =====================================================================================
-# Function: generate_vllm_service_file
-# Description: Dynamically creates a systemd service file for the vLLM model server
-#              by reading configuration directly from the JSON file.
+# Function: configure_systemd_service
+# Description: Configures the vLLM systemd service by replacing placeholders.
 # =====================================================================================
-generate_vllm_service_file() {
-    log_info "Generating systemd service file for $VLLM_SERVICE_NAME..."
+configure_systemd_service() {
+    log_info "Configuring vLLM systemd service in CTID: $CTID..."
+    local service_file_path="/etc/systemd/system/vllm_model_server.service"
 
-    # Retrieve core configuration values
+    # --- Retrieve vLLM parameters from the central config ---
     local model=$(jq_get_value "$CTID" ".vllm_model")
-    
-    # Read the vllm_args array into a bash array
-    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
-    if [ ${#vllm_args[@]} -eq 0 ]; then
-        log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
-    fi
+    local served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
+    local port=$(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
 
-    # Construct the ExecStart command from the array
-    local exec_start_cmd="/opt/vllm/bin/vllm serve \"$model\""
+    # --- Replace placeholders in the service file ---
+    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
+    local args_string=""
     for arg in "${vllm_args[@]}"; do
-        exec_start_cmd+=" $arg"
+        args_string+=" $arg"
     done
 
-    local service_file_path="/etc/systemd/system/${VLLM_SERVICE_NAME}.service"
-    log_info "Writing systemd service file to $service_file_path in CTID $CTID..."
-
-    # Use a heredoc to write the service file, now with a data-driven ExecStart
-    if ! bash -c "cat > ${service_file_path}" <<EOF; then
-[Unit]
-Description=vLLM OpenAI-Compatible Model Server
-After=network.target
-
-[Service]
-User=root
-ExecStart=$exec_start_cmd --host 0.0.0.0 --port $(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        log_fatal "Failed to write vLLM systemd service file in CTID $CTID."
-    fi
-
-    log_info "vLLM systemd service file generated successfully."
+    sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
+    sed -i "s|VLLM_SERVED_MODEL_NAME_PLACEHOLDER|$served_model_name|" "$service_file_path"
+    sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
+    sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
 }
 
 # =====================================================================================
@@ -151,7 +128,7 @@ perform_health_check() {
 validate_api_with_test_query() {
     log_info "Performing a final API validation with a test query for embeddings..."
     local model
-    model=$(jq_get_value "$CTID" ".vllm_model")
+    model=$(jq_get_value "$CTID" ".vllm_served_model_name")
     local api_url="http://localhost:8000/v1/embeddings"
     
     # --- Construct the JSON payload for the test query (compact format) ---
@@ -222,7 +199,7 @@ display_connection_info() {
 # =====================================================================================
 main() {
     parse_arguments "$@"
-    generate_vllm_service_file
+    configure_systemd_service
     manage_vllm_service
     if systemctl is-active --quiet "$VLLM_SERVICE_NAME"; then
         perform_health_check

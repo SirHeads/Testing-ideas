@@ -92,9 +92,16 @@ configure_and_start_systemd_service() {
     # --- Replace placeholders in the service file ---
     local served_model_name
     served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
+    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
+    local args_string=""
+    for arg in "${vllm_args[@]}"; do
+        args_string+=" $arg"
+    done
+
     sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
     sed -i "s|VLLM_SERVED_MODEL_NAME_PLACEHOLDER|$served_model_name|" "$service_file_path"
     sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
+    sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
     sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
 
     # --- Reload systemd, enable and start the service ---
