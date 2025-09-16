@@ -170,10 +170,22 @@ pct_exec() {
     shift # Remove ctid from the arguments list
     local cmd_args=("$@")
 
-    log_info "Executing in CTID $ctid: ${cmd_args[*]}"
-    if ! pct exec "$ctid" -- "${cmd_args[@]}"; then
-        log_error "Command failed in CTID $ctid: '${cmd_args[*]}'"
-        return 1
+    # Context-aware execution: check if running inside the container's temp dir
+    if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+        log_info "Executing command inside container: ${cmd_args[*]}"
+        # When inside the container, execute the command directly using bash -c
+        # This is necessary because 'pct' is a host-only command.
+        if ! bash -c "${cmd_args[*]}"; then
+            log_error "Command failed inside container: '${cmd_args[*]}'"
+            return 1
+        fi
+    else
+        # When on the host, use 'pct exec' to run the command inside the container
+        log_info "Executing command from host in CTID $ctid: ${cmd_args[*]}"
+        if ! pct exec "$ctid" -- bash -c "${cmd_args[*]}"; then
+            log_error "Command failed in CTID $ctid: '${cmd_args[*]}'"
+            return 1
+        fi
     fi
     return 0
 }

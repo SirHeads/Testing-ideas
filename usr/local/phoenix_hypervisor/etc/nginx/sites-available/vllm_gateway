@@ -3,37 +3,67 @@
 # Define a javascript function to extract the model from the JSON body.
 js_set $model_name http.get_model;
 
-# Define upstream servers for each vLLM model.
+# Define a custom log format to include model and upstream information
+# Define a custom log format to include model and upstream information
+log_format vllm_log '"$remote_addr - $remote_user [$time_local] \"$request\" '
+                    '$status $body_bytes_sent \"$http_referer\" '
+                    '\"$http_user_agent\" \"$http_x_forwarded_for\" '
+                    'model:\"$model_name\" upstream:\"$target_upstream\"';
+log_format vllm_logs '$remote_addr - $remote_user [$time_local] "$request" '
+                     '$status $body_bytes_sent "$http_referer" '
+                     '"$http_user_agent" "$http_x_forwarded_for" '
+                     'model:"$model_name" upstream:"$target_upstream"';
+
+# Define upstream servers for each service.
 upstream embedding_service {
     server 10.0.0.151:8000;
+    health_check;
 }
 
 upstream qwen_service {
     server 10.0.0.150:8000;
+    health_check;
 }
 
 upstream qdrant_service {
-    server 10.0.0.152:6335;
+    server 10.0.0.152:6334;
+    health_check;
 }
 
-upstream qwen3_coder_service {
-    server 10.0.0.150:8000;
+upstream n8n_service {
+    server 10.0.0.154:5678;
+    health_check;
 }
+
+upstream open_webui_service {
+    server 10.0.0.156:8080;
+    health_check;
+}
+
+upstream ollama_service {
+    server 10.0.0.155:11434;
+    health_check;
+}
+
+upstream llamacpp_service {
+    server 10.0.0.157:8081;
+    health_check;
+}
+
 
 # Map the model name to the correct upstream service.
 map $model_name $target_upstream {
     default embedding_service; # Default to the embedding model for safety
-    "Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit" qwen_service;
-    "Qwen3-Coder-30B-A3B-Instruct-AWQ" qwen3_coder_service;
-    "text-embedding-ada-002" embedding_service; # Explicitly map embedding model
+    "granite" qwen_service;
+    "embedding" embedding_service;
 }
 
 server {
-    listen 80 default_server;
+    listen 80;
     server_name api.yourdomain.com 10.0.0.153;
 
     # Set the access log to use the custom format
-    access_log /var/log/nginx/vllm_access.log vllm_log;
+    access_log /var/log/nginx/vllm_access.log vllm_logs;
 
     # Common proxy settings to avoid repetition
     proxy_set_header Host $host;
@@ -42,22 +72,42 @@ server {
     proxy_set_header X-Forwarded-Proto $scheme;
 
     location /v1/chat/completions {
-        # This location is for chat models
         proxy_pass http://$target_upstream;
     }
 
     location /v1/completions {
-        # This location is for completion models
         proxy_pass http://$target_upstream;
     }
 
     location /v1/embeddings {
-        # This location is for embedding models
         proxy_pass http://$target_upstream;
     }
-        location /qdrant/ {
-            # This location is for the Qdrant vector database
-            rewrite ^/qdrant/?(.*)$ /$1 break;
-            proxy_pass http://qdrant_service;
-        }
+
+    location /qdrant/ {
+        proxy_pass http://qdrant_service/;
+    }
+
+    location /n8n/ {
+        rewrite ^/n8n/?(.*)$ /$1 break;
+        proxy_pass http://n8n_service;
+    }
+
+    location /webui/ {
+        rewrite ^/webui/?(.*)$ /$1 break;
+        proxy_pass http://open_webui_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location /ollama/ {
+        rewrite ^/ollama/?(.*)$ /$1 break;
+        proxy_pass http://ollama_service;
+    }
+
+    location /llamacpp/ {
+        rewrite ^/llamacpp/?(.*)$ /$1 break;
+        proxy_pass http://llamacpp_service;
+    }
+
 }

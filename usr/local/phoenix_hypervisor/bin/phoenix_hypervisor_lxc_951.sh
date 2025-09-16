@@ -78,7 +78,7 @@ After=network.target
 
 [Service]
 User=root
-ExecStart=$exec_start_cmd --host 0.0.0.0 --port 8000
+ExecStart=$exec_start_cmd --host 0.0.0.0 --port $(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
 Restart=always
 RestartSec=10
 StandardOutput=journal

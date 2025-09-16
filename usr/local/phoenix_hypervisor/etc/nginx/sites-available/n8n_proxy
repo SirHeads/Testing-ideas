@@ -1,5 +1,6 @@
 upstream n8n_backend {
-    server 10.0.0.154:5678;
+    server 10.0.0.154:5679; # Intentionally incorrect port for testing
+    health_check;
 }
 
 server {

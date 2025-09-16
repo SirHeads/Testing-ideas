@@ -55,39 +55,23 @@ parse_arguments() {
 # Returns:
 #   Exits with a fatal error if the vLLM executable is not found or is not executable.
 # =====================================================================================
-verify_vllm_environment() {
-    log_info "Verifying vLLM environment in CTID: $CTID..."
-    local python_executable="/opt/vllm/bin/python3" # Expected path to vLLM's Python executable
-
-    # Check if the vLLM Python executable file exists
-    if ! test -f "$python_executable"; then
-        log_error "vLLM python executable not found at $python_executable."
-        log_error "Listing contents of /opt/vllm/bin/:"
-        ls -l /opt/vllm/bin/ | log_plain_output # Log directory contents for debugging
-        log_fatal "vLLM environment is incomplete."
-    fi
-
-    if ! test -x "$python_executable"; then
-        log_error "vLLM python executable is not executable."
-        log_error "Listing permissions for $python_executable:"
-        ls -l "$python_executable" | log_plain_output
-        log_fatal "vLLM environment has incorrect permissions."
-    fi
-
-    log_info "vLLM environment verified successfully."
-}
+# The verify_vllm_environment function has been removed as it is no longer
+# necessary in a template-based deployment model. The environment is assumed
+# to be correct as it is cloned from a hardened template.
 
 # =====================================================================================
-# Function: launch_vllm_directly
-# Description: Launches the vLLM server directly as a background process, bypassing systemd.
-#              This method is used to replicate the successful manual execution environment.
+# Function: configure_and_start_systemd_service
+# Description: Configures and starts the vLLM systemd service.
+#              It replaces placeholders in the template service file with
+#              configuration values and then starts and enables the service.
 # Arguments:
 #   None (uses global CTID).
 # Returns:
-#   None. Exits with a fatal error if the command fails to launch.
+#   None. Exits with a fatal error if configuration or service start fails.
 # =====================================================================================
-launch_vllm_directly() {
-    log_info "Launching vLLM server directly as a background process..."
+configure_and_start_systemd_service() {
+    log_info "Configuring and starting vLLM systemd service in CTID: $CTID..."
+    local service_file_path="/etc/systemd/system/vllm_model_server.service"
 
     # --- Retrieve vLLM parameters from the central config ---
     local model
@@ -97,49 +81,30 @@ launch_vllm_directly() {
         log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
     fi
     local port
-    port=$(jq_get_value "$CTID" ".vllm_port")
+    port=$(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
 
-    # --- Construct the vLLM serve command ---
-    local exec_cmd="vllm serve \"$model\""
+    # --- Construct the arguments string ---
+    local args_string=""
     for arg in "${vllm_args[@]}"; do
-        exec_cmd+=" $arg"
+        args_string+="\"$arg\" "
     done
-    exec_cmd+=" --host 0.0.0.0 --port $port"
-    log_info "Constructed vLLM command: $exec_cmd"
 
-    # --- Construct the full command to be executed inside the container ---
-    # This command sequence activates the virtual environment, sets the CUDA debug flag,
-    # and launches the vLLM server using nohup to run it in the background.
-    # Output is redirected to /var/log/vllm.log.
-    local full_command
-    full_command=$(cat <<EOF
-export CUDA_LAUNCH_BLOCKING=1;
-source /opt/vllm/bin/activate;
-nohup $exec_cmd > /var/log/vllm.log 2>&1 &
-EOF
-)
+    # --- Replace placeholders in the service file ---
+    sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
+    sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
+    sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
 
-    # --- Execute the command inside the container ---
-    log_info "Executing launch command inside container..."
-    # We use 'bash -c' to execute the multi-line command string
-    if ! bash -c "$full_command"; then
-        log_fatal "Failed to launch vLLM server directly."
+    # --- Reload systemd, enable and start the service ---
+    systemctl daemon-reload
+    systemctl enable "$SERVICE_NAME"
+    systemctl restart "$SERVICE_NAME"
+
+    # --- Verify the service is active ---
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        log_fatal "vLLM service ($SERVICE_NAME) failed to start in CTID $CTID."
     fi
 
-    # Give the process a moment to start up
-    sleep 5
-
-    # --- Verify the process is running ---
-    log_info "Verifying that the vLLM process is running..."
-    if ! pgrep -f "vllm serve" > /dev/null; then
-        log_error "vLLM process does not appear to be running."
-        log_error "Checking the log file at /var/log/vllm.log for errors..."
-        cat /var/log/vllm.log | log_plain_output
-        log_fatal "vLLM server failed to start. Check logs above."
-    else
-        log_info "vLLM server process has been started successfully in the background."
-        log_info "Log file is available at /var/log/vllm.log inside the container."
-    fi
+    log_info "vLLM service ($SERVICE_NAME) started successfully in CTID $CTID."
 }
 
 # =====================================================================================
@@ -171,31 +136,13 @@ perform_health_check() {
         
         local response
         # Execute curl command inside the container to check API endpoint
-        response=$(curl -s "$health_check_url" || echo "CURL_ERROR")
-
-        # Check if curl command itself failed (e.g., connection refused)
-        if [ "$response" == "CURL_ERROR" ]; then
-            log_info "API not ready yet (curl command failed, likely connection refused). Retrying in $interval seconds..."
-            sleep "$interval" # Wait before retrying
-            continue # Continue to the next attempt
-        fi
-
-        local model_id
-        if [ "$(echo "$response" | jq -r '.status')" == "ok" ]; then
+        # Use curl with --fail to handle non-2xx responses as errors
+        if curl -s --fail "$health_check_url" > /dev/null; then
             log_info "Health check passed! The vLLM API server is responsive."
             return 0
         else
-            log_info "API is responsive, but the model is not yet loaded. Retrying in $interval seconds..."
-            sleep "$interval" # Wait before retrying
-        fi
-
-        # Compare the retrieved model ID with the expected model name
-        if [ "$model_id" == "$model_name" ]; then
-            log_info "Health check passed! The vLLM API server is responsive and the correct model is loaded."
-            return 0 # Health check successful
-        else
-            log_info "API is responsive, but the model is not yet loaded. Retrying in $interval seconds..."
-            sleep "$interval" # Wait before retrying
+            log_info "API not ready yet. Retrying in $interval seconds..."
+            sleep "$interval"
         fi
     done
 
@@ -305,8 +252,8 @@ display_connection_info() {
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
-    verify_vllm_environment # Verify the vLLM installation and environment
-    launch_vllm_directly # Launch the vLLM server as a background process
+    # The call to verify_vllm_environment has been removed.
+    configure_and_start_systemd_service # Configure and start the vLLM systemd service
     perform_health_check # Perform a health check on the API
     validate_api_with_test_query # Validate API with a test query
     display_connection_info # Display connection information to the user

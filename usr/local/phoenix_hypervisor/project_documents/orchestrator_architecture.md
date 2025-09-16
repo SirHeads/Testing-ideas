@@ -35,6 +35,7 @@ The orchestrator is built around a state machine and a feature-based customizati
 -   **Configuration-Driven:** All container specifications are defined in a central JSON file (`phoenix_lxc_configs.json`). This declarative approach separates the "what" from the "how," making the system easier to manage and scale.
 -   **Feature-Based Customization:** After a container is running, the orchestrator applies a series of modular "feature" scripts based on a `features` array in the configuration. This allows for a compositional approach to building containers.
 -   **Application Runner:** For containers that run persistent services, an optional `application_script` can be defined. This script is executed after all features are applied to launch the final application.
+-   **Health Checks:** The orchestrator can perform health checks on services after they are started. This ensures that the service is running and accessible before the provisioning is marked as complete.
 -   **Idempotency:** Rerunning the script for a container that is already fully provisioned will result in no changes.
 -   **Logging:** Comprehensive logging provides a clear audit trail of the script's execution.
 -   **Dry-Run Mode:** A `--dry-run` flag allows for safe validation of the configuration and script logic without making any actual changes to the system.

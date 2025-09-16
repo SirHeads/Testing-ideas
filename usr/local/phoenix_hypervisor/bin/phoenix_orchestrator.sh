@@ -205,33 +205,6 @@ validate_inputs() {
 }
 
 
-# =====================================================================================
-# Function: handle_defined_state
-# Description: Handles the 'defined' state by creating or cloning the container
-#              based on the configuration.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_defined_state
-# Description: Manages the 'defined' state for an LXC container. It determines
-#              whether to clone an existing container or create a new one from a
-#              template based on the configuration.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None.
-# =====================================================================================
-handle_defined_state() {
-    log_info "Handling 'defined' state for CTID: $CTID"
-    local clone_from_ctid # Variable to store the source CTID for cloning
-    clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "") # Retrieve clone_from_ctid from config
-
-    # If clone_from_ctid is specified, clone the container; otherwise, create from template
-    if [ -n "$clone_from_ctid" ]; then
-        clone_container
-    else
-        create_container_from_template
-    fi
-}
 
 # =====================================================================================
 # Function: create_container_from_template
@@ -394,23 +367,6 @@ clone_container() {
     log_info "Container $CTID cloned from $source_ctid successfully."
 }
 
-# =====================================================================================
-# Function: handle_created_state
-# Description: Handles the 'created' state by applying configurations.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_created_state
-# Description: Manages the 'created' state for an LXC container by applying its
-#              defined configurations.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None.
-# =====================================================================================
-handle_created_state() {
-    log_info "Handling 'created' state for CTID: $CTID"
-    apply_configurations # Call function to apply configurations
-}
 
 # =====================================================================================
 # Function: apply_configurations
@@ -439,6 +395,87 @@ apply_configurations() {
     # Apply core settings: memory and CPU cores
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
+
+    # Apply Phoenix AppArmor profile for unprivileged containers
+    local unprivileged_bool
+    unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
+    if [ "$unprivileged_bool" == "true" ]; then
+        if [[ " ${features[*]} " =~ " docker " ]]; then
+            log_info "Docker feature detected, ensuring AppArmor profile is unconfined."
+            sed -i '/^lxc.apparmor.profile:/d' "/etc/pve/lxc/${CTID}.conf"
+        else
+        log_info "Applying Phoenix AppArmor profile for unprivileged container $CTID..."
+        local conf_file="/etc/pve/lxc/${CTID}.conf"
+        local profile_line="lxc.apparmor.profile: lxc-container-default-with-mounting-phoenix"
+        
+        if [ ! -f "$conf_file" ]; then
+            log_fatal "Container configuration file not found at $conf_file."
+        fi
+
+        # Ensure the profile is set correctly, making the operation idempotent
+        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
+            # If a profile is already set, update it to the correct one
+            if ! grep -qF "$profile_line" "$conf_file"; then
+                log_info "Updating existing AppArmor profile in $conf_file."
+                sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file" || log_fatal "Failed to update AppArmor profile in $conf_file."
+            else
+                log_info "AppArmor profile is already correctly set in $conf_file."
+            fi
+        else
+            # If no profile is set, add it
+            log_info "Adding AppArmor profile to $conf_file."
+            echo "$profile_line" >> "$conf_file" || log_fatal "Failed to add AppArmor profile to $conf_file."
+            # Get phoenix_admin UID and GID
+            local admin_user
+            admin_user=$(jq -r '.users.username' "$VM_CONFIG_FILE")
+            if [ -z "$admin_user" ] || [ "$admin_user" == "null" ]; then
+                log_fatal "Admin user not defined in configuration file."
+            fi
+            local admin_uid
+            admin_uid=$(id -u "$admin_user") || log_fatal "Could not get UID for admin user '$admin_user'."
+            local admin_gid
+            admin_gid=$(id -g "$admin_user") || log_fatal "Could not get GID for admin user '$admin_user'."
+    
+            log_info "Configuring idmap for container $CTID to map container root to host user $admin_user (UID: $admin_uid, GID: $admin_gid)..."
+    
+            # Define idmap lines
+            local idmap_lines=(
+                "lxc.idmap: u 0 $admin_uid 1"
+                "lxc.idmap: g 0 $admin_gid 1"
+                "lxc.idmap: u 1 100001 65534"
+                "lxc.idmap: g 1 100001 65534"
+            )
+    
+            # Remove existing idmap lines to ensure idempotency
+            sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
+    
+            # Add new idmap lines
+            for line in "${idmap_lines[@]}"; do
+                echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
+            done
+    
+            log_info "Successfully configured idmap for container $CTID."
+        fi
+
+        log_info "Configuring full-range idmap for container $CTID..."
+
+        # Define idmap lines for a full 65536 UID/GID mapping
+        local idmap_lines=(
+            "lxc.idmap: u 0 100000 65536"
+            "lxc.idmap: g 0 100000 65536"
+        )
+
+        # Remove existing idmap lines to ensure idempotency
+        sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
+
+        # Add new idmap lines
+        for line in "${idmap_lines[@]}"; do
+            echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
+        done
+
+        log_info "Successfully configured full-range idmap for container $CTID."
+        fi
+    fi
 
    # --- Apply pct options ---
    local pct_options
@@ -475,6 +512,34 @@ apply_configurations() {
     # Apply network configuration
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
     log_info "Configurations applied successfully for CTID $CTID."
+}
+
+ensure_container_defined() {
+    log_info "Ensuring container $CTID is defined..."
+    if ! pct status "$CTID" > /dev/null 2>&1; then
+        log_info "Container $CTID does not exist. Proceeding with creation..."
+        local clone_from_ctid
+        clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "")
+
+        if [ -n "$clone_from_ctid" ]; then
+            clone_container
+        else
+            create_container_from_template
+        fi
+
+        # NEW: Set unprivileged flag immediately after creation if specified in config
+        local unprivileged_bool
+        unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
+        if [ "$unprivileged_bool" == "true" ]; then
+            # This check is for cloned containers, as create_from_template handles this.
+            if ! pct config "$CTID" | grep -q "unprivileged: 1"; then
+                 log_info "Setting container $CTID as unprivileged..."
+                 run_pct_command set "$CTID" --unprivileged 1 || log_fatal "Failed to set container as unprivileged."
+            fi
+        fi
+    else
+        log_info "Container $CTID already exists. Skipping creation."
+    fi
 }
 
 # =====================================================================================
@@ -520,11 +585,59 @@ ensure_shared_ssl_certs_exist() {
     done
 }
 
+get_container_mapped_root_uid() {
+    local container_id="$1"
+    local conf_file="/etc/pve/lxc/${container_id}.conf"
+
+    if [ ! -f "$conf_file" ]; then
+        log_warn "Container config file not found: $conf_file. Cannot get mapped UID."
+        return 1
+    fi
+
+    local idmap_line
+    idmap_line=$(grep "^lxc.idmap:" "$conf_file")
+
+    if [ -z "$idmap_line" ]; then
+        log_warn "No idmap found in $conf_file. The container might not be unprivileged or the idmap has not been generated yet."
+        return 1
+    fi
+
+    local mapped_uid
+    mapped_uid=$(echo "$idmap_line" | awk '{print $3}')
+    echo "$mapped_uid"
+}
+
+generate_idmap_cycle() {
+    local ctid="$1"
+    log_info "Performing start/stop cycle for CT $ctid to generate idmap..."
+
+    log_info "Starting container $ctid..."
+    if ! pct start "$ctid"; then
+        log_error "Failed to start container $ctid during idmap generation cycle."
+        return 1
+    fi
+
+    log_info "Stopping container $ctid..."
+    if ! pct stop "$ctid"; then
+        log_error "Failed to stop container $ctid during idmap generation cycle."
+        return 1
+    fi
+
+    log_info "Start/stop cycle for CT $ctid completed."
+    return 0
+}
+
 apply_shared_volumes() {
-    log_info "Applying shared volumes..."
+    log_info "Applying shared volumes for CTID: $CTID..."
+    local admin_user
+    admin_user=$(jq -r '.users.username' "$VM_CONFIG_FILE")
+    if [ -z "$admin_user" ] || [ "$admin_user" == "null" ]; then
+        log_fatal "Admin user not defined in configuration file."
+    fi
+
     local shared_volumes
     shared_volumes=$(jq -c '.shared_volumes // {}' "$VM_CONFIG_FILE")
-    local containers_to_restart=() # Array to hold CTIDs that need a restart
+    local containers_to_restart=()
 
     for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
         local volume_config
@@ -534,23 +647,22 @@ apply_shared_volumes() {
         local mounts
         mounts=$(echo "$volume_config" | jq -c '.mounts')
 
-        # Idempotently create host directory
+        if ! echo "$mounts" | jq -e --arg ctid "$CTID" '.[$ctid]' > /dev/null; then
+            continue
+        fi
+
         if [ ! -d "$host_path" ]; then
             log_info "Creating shared directory on host: $host_path"
             if ! mkdir -p "$host_path"; then
                 log_fatal "Failed to create host directory: $host_path"
             fi
-        else
-            log_info "Host directory already exists: $host_path"
         fi
 
-        # Set baseline ownership
-        log_info "Setting ownership for shared volume: $host_path"
-        if ! chown -R nobody:nogroup "$host_path"; then
-            log_fatal "Failed to set ownership on host directory: $host_path"
+        log_info "Setting ownership to '100000:100000' for: $host_path"
+        if ! chown -R "100000:100000" "$host_path"; then
+            log_fatal "Failed to set ownership to user '100000' on $host_path"
         fi
 
-        # Apply permissions based on volume name
         log_info "Applying permissions for shared volume: $volume_name"
         case "$volume_name" in
             "ssl_certs")
@@ -567,42 +679,30 @@ apply_shared_volumes() {
                 find "$host_path" -type f -exec chmod 644 {} \; || log_fatal "Failed to set file permissions for nginx_sites"
                 ;;
             *)
-                # Default permissions for other shared volumes
                 find "$host_path" -type d -exec chmod 775 {} \; || log_fatal "Failed to set default directory permissions"
                 find "$host_path" -type f -exec chmod 664 {} \; || log_fatal "Failed to set default file permissions"
                 ;;
         esac
 
-        for ctid in $(echo "$mounts" | jq -r 'keys[]'); do
-            # Check if the container actually exists before trying to configure it
-            if ! pct status "$ctid" > /dev/null 2>&1; then
-                log_warn "Container $ctid does not exist. Skipping shared volume attachment."
-                continue
-            fi
+        local mount_point
+        mount_point=$(echo "$mounts" | jq -r --arg ctid "$CTID" '.[$ctid]')
+        
+        if ! pct config "$CTID" | grep -q "mp[0-9]*:.*,mp=${mount_point}"; then
+            log_info "Creating mount point for CTID $CTID: $host_path -> $mount_point"
+            local mp_num=0
+            while pct config "$CTID" | grep -q "mp${mp_num}:"; do
+                mp_num=$((mp_num + 1))
+            done
+            run_pct_command set "$CTID" --mp${mp_num} "${host_path},mp=${mount_point}"
             
-            local mount_point
-            mount_point=$(echo "$mounts" | jq -r --arg ctid "$ctid" '.[$ctid]')
-            
-            # Idempotently create mount point
-            if ! pct config "$ctid" | grep -q "mp[0-9]*:.*,mp=${mount_point}"; then
-                log_info "Creating mount point for CTID $ctid: $host_path -> $mount_point"
-                local mp_num=0
-                while pct config "$ctid" | grep -q "mp${mp_num}:"; do
-                    mp_num=$((mp_num + 1))
-                done
-                run_pct_command set "$ctid" --mp${mp_num} "${host_path},mp=${mount_point}"
-                
-                # If a change was made, mark the container for restart
-                if [[ ! " ${containers_to_restart[*]} " =~ " ${ctid} " ]]; then
-                    containers_to_restart+=("$ctid")
-                fi
-            else
-                log_info "Mount point already exists for CTID $ctid: $mount_point"
+            if [[ ! " ${containers_to_restart[*]} " =~ " ${CTID} " ]]; then
+                containers_to_restart+=("$CTID")
             fi
-        done
+        else
+            log_info "Mount point already exists for CTID $CTID: $mount_point"
+        fi
     done
 
-    # Restart any containers that had their mount points updated
     if [ ${#containers_to_restart[@]} -gt 0 ]; then
         log_info "Restarting containers to apply mount point changes: ${containers_to_restart[*]}"
         for ctid_to_restart in "${containers_to_restart[@]}"; do
@@ -617,7 +717,7 @@ apply_shared_volumes() {
         done
     fi
 
-    log_info "Shared volumes applied successfully."
+    log_info "Shared volumes applied successfully for CTID: $CTID."
 }
 
 # =====================================================================================
@@ -639,23 +739,6 @@ ensure_container_disk_size() {
     log_info "Disk size for CTID $CTID set to ${storage_size_gb}G."
 }
 
-# =====================================================================================
-# Function: handle_configured_state
-# Description: Handles the 'configured' state by starting the container.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_configured_state
-# Description: Manages the 'configured' state for an LXC container by initiating
-#              the container startup process.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None.
-# =====================================================================================
-handle_configured_state() {
-    log_info "Handling 'configured' state for CTID: $CTID"
-    start_container # Call function to start the container
-}
 
 # =====================================================================================
 # Function: start_container
@@ -695,24 +778,6 @@ start_container() {
     log_fatal "Container $CTID failed to start after $max_attempts attempts."
 }
 
-# =====================================================================================
-# Function: handle_running_state
-# Description: Handles the 'running' state. This is the final state, so no
-#              action is taken.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_running_state
-# Description: Manages the 'running' state for an LXC container by applying
-#              any defined feature scripts.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None.
-# =====================================================================================
-handle_running_state() {
-    log_info "Handling 'running' state for CTID: $CTID"
-    apply_features # Call function to apply features
-}
 
 # =====================================================================================
 # Function: apply_features
@@ -759,25 +824,6 @@ apply_features() {
     log_info "All features applied successfully for CTID $CTID."
 }
 
-# =====================================================================================
-# Function: handle_customizing_state
-# Description: Handles the 'customizing' state. This is the final state after
-#              all features have been applied.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_customizing_state
-# Description: Manages the 'customizing' state for an LXC container, which is reached
-#              after all feature scripts have been applied. It then proceeds to run
-#              any defined application script.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None.
-# =====================================================================================
-handle_customizing_state() {
-    log_info "Container $CTID has been fully customized."
-    run_application_script # Call function to run the application script
-}
 
 # =====================================================================================
 # Function: run_application_script
@@ -875,6 +921,41 @@ run_application_script() {
     fi
 
     log_info "Application script executed successfully for CTID $CTID."
+}
+
+# =====================================================================================
+# Function: run_health_check
+# Description: Executes a health check command inside the container if defined in the configuration.
+# =====================================================================================
+run_health_check() {
+    log_info "Checking for health check for CTID: $CTID"
+    local health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
+
+    if [ -z "$health_check_command" ]; then
+        log_info "No health check to run for CTID $CTID."
+        return 0
+    fi
+
+    log_info "Executing health check command inside container: $health_check_command"
+    local attempts=0
+    local max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
+    local interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        if pct exec "$CTID" -- $health_check_command; then
+            log_info "Health check passed successfully for CTID $CTID."
+            return 0
+        else
+            attempts=$((attempts + 1))
+            log_error "WARNING: Health check command '$health_check_command' failed for CTID $CTID (Attempt $attempts/$max_attempts)."
+            if [ "$attempts" -lt "$max_attempts" ]; then
+                log_info "Retrying in $interval seconds..."
+                sleep "$interval"
+            fi
+        fi
+    done
+
+    log_fatal "Health check failed for CTID $CTID after $max_attempts attempts."
 }
 
 # =====================================================================================
@@ -1175,6 +1256,70 @@ delete_vm() {
 }
 
 # =====================================================================================
+# Function: setup_phoenix_apparmor_profile
+# Description: Creates and loads a custom AppArmor profile for Phoenix unprivileged containers.
+#              This profile is based on lxc-default-with-mounting but is managed by Phoenix.
+# =====================================================================================
+setup_phoenix_apparmor_profile() {
+    log_info "Setting up Phoenix AppArmor profile..."
+    local source_profile="/etc/apparmor.d/lxc/lxc-default-with-mounting"
+    local dest_profile_path="/etc/apparmor.d/lxc/lxc-default-with-mounting-phoenix"
+    local original_profile_name_in_file="lxc-container-default-with-mounting"
+    local dest_profile_name_in_file="lxc-container-default-with-mounting-phoenix"
+
+    if [ ! -f "$dest_profile_path" ]; then
+        log_info "Phoenix AppArmor profile not found. Creating from template..."
+        if [ ! -f "$source_profile" ]; then
+            log_fatal "AppArmor source profile '$source_profile' not found. Cannot create Phoenix profile."
+        fi
+        
+        if ! cp "$source_profile" "$dest_profile_path"; then
+            log_fatal "Failed to copy AppArmor profile to '$dest_profile_path'."
+        fi
+        
+        # The profile name inside the file needs to be updated to be unique.
+        if ! sed -i "s/profile ${original_profile_name_in_file}/profile ${dest_profile_name_in_file}/" "$dest_profile_path"; then
+            log_fatal "Failed to update profile name in '$dest_profile_path'."
+        fi
+        
+        log_info "Phoenix AppArmor profile created at '$dest_profile_path'."
+    else
+        log_info "Phoenix AppArmor profile already exists."
+    fi
+
+    # Ensure the profile allows mounting proc, sysfs, and cgroup, which are necessary for idmap generation.
+    local required_mount_rules=(
+        "  mount fstype=proc,"
+        "  mount fstype=sysfs,"
+        "  mount fstype=cgroup,"
+    )
+    
+    local profile_changed=false
+    for rule in "${required_mount_rules[@]}"; do
+        if ! grep -qF -- "$rule" "$dest_profile_path"; then
+            log_info "Adding required mount rule to Phoenix AppArmor profile: $rule"
+            # Insert the rule before the final closing brace '}' of the profile definition.
+            sed -i '$i\'"$rule"'' "$dest_profile_path" || log_fatal "Failed to add mount rule to AppArmor profile."
+            profile_changed=true
+        else
+            log_info "Required mount rule already exists in the profile: $rule"
+        fi
+    done
+
+    if [ "$profile_changed" = true ]; then
+        log_info "Mount rules added successfully."
+    fi
+
+    log_info "Reloading AppArmor profiles to load Phoenix profile..."
+    # Use apparmor_parser to reload all profiles. -r is replace.
+    if ! apparmor_parser -r /etc/apparmor.d/*; then
+        log_warn "Failed to reload AppArmor profiles. This might cause issues if the profile is new."
+    else
+        log_info "AppArmor profiles reloaded successfully."
+    fi
+}
+
+# =====================================================================================
 # Function: handle_hypervisor_setup_state
 # Description: Orchestrates the execution of hypervisor setup scripts.
 # =====================================================================================
@@ -1208,8 +1353,15 @@ handle_hypervisor_setup_state() {
     fi
     log_info "Hypervisor configuration validated successfully."
 
+    setup_phoenix_apparmor_profile
+
     # Execute hypervisor feature scripts in a predefined sequence
     log_info "Executing hypervisor setup feature scripts..."
+
+    log_info "Setting execute permissions for setup scripts..."
+    chmod -R +x "${SCRIPT_DIR}/hypervisor_setup/"
+    chmod -R +x "${SCRIPT_DIR}/lxc_setup/"
+    chmod -R +x "${SCRIPT_DIR}/tests/"
 
     local hypervisor_scripts=(
         "hypervisor_initial_setup.sh"
@@ -1383,6 +1535,98 @@ check_dependencies() {
 }
 
 # =====================================================================================
+# Function: ensure_host_idmap_configured
+# Description: Checks for the existence of /etc/subuid and /etc/subgid files, which are
+#              critical for unprivileged container user namespace mapping. If the files
+#              are missing, it creates them with a default mapping for the root user.
+#              This is a mandatory pre-flight check.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if file creation fails.
+# =====================================================================================
+ensure_host_idmap_configured() {
+    log_info "Performing host prerequisite check for idmap configuration..."
+    local subuid_file="/etc/subuid"
+    local subgid_file="/etc/subgid"
+    local required_content="root:100000:65536"
+    
+    # Ensure files exist
+    touch "$subuid_file" "$subgid_file"
+
+    # Check /etc/subuid
+    if ! grep -qF "$required_content" "$subuid_file"; then
+        log_warn "Required root mapping not found in $subuid_file. Adding it now."
+        echo "$required_content" >> "$subuid_file" || log_fatal "Failed to configure $subuid_file."
+    fi
+
+    # Check /etc/subgid
+    if ! grep -qF "$required_content" "$subgid_file"; then
+        log_warn "Required root mapping not found in $subgid_file. Adding it now."
+        echo "$required_content" >> "$subgid_file" || log_fatal "Failed to configure $subgid_file."
+    fi
+
+    log_info "Host idmap configuration check passed."
+}
+
+ensure_container_configured() {
+    log_info "Ensuring container $CTID is correctly configured..."
+    ensure_container_disk_size
+    apply_configurations
+}
+
+verify_idmap_exists() {
+    local ctid="$1"
+    local conf_file="/etc/pve/lxc/${ctid}.conf"
+    log_info "Verifying idmap existence in $conf_file..."
+
+    if [ ! -f "$conf_file" ]; then
+        log_fatal "Container config file not found: $conf_file."
+    fi
+
+    if ! grep -q "^lxc.idmap:" "$conf_file"; then
+        log_fatal "IDMAP VERIFICATION FAILED: No idmap found in $conf_file after generation cycle."
+    fi
+
+    log_info "IDMAP verification successful."
+}
+
+orchestrate_container_stateless() {
+    log_info "Starting stateless orchestration for CTID $CTID..."
+
+    # 1. Define the container and set unprivileged flag if needed
+    ensure_container_defined
+
+    # 2. Apply all other configurations, which now includes idmap setup
+    ensure_container_configured
+
+    # 3. Perform start/stop cycle to apply idmap and other settings
+    generate_idmap_cycle "$CTID"
+
+    # 4. Verify idmap was created
+    verify_idmap_exists "$CTID"
+
+    # 5. Apply shared volumes now that idmap is guaranteed to exist
+    apply_shared_volumes
+
+    # 6. Apply firewall rules
+    "${SCRIPT_DIR}/phoenix_hypervisor_firewall.sh" "$CTID"
+
+    # 7. Start the container for application setup
+    start_container
+
+    # 8. Apply features and run application scripts
+    apply_features
+    run_application_script
+    run_health_check
+
+    # 9. Create snapshot if it's a template
+    create_template_snapshot
+
+    log_info "Successfully completed stateless orchestration for CTID $CTID."
+}
+
+# =====================================================================================
 # Function: main
 # Description: The main entry point for the Phoenix Orchestrator script. It sets up
 #              logging, parses arguments, and then dispatches to appropriate handler
@@ -1397,6 +1641,7 @@ check_dependencies() {
 main() {
     # Initial Setup: Configure logging and redirect stdout/stderr
     setup_logging
+    ensure_host_idmap_configured
     exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
 
 
@@ -1422,45 +1667,7 @@ main() {
         delete_vm "$VM_ID" # Delete an existing VM
     else
         validate_inputs # Validate inputs for LXC container orchestration
-        # Stateless Orchestration Workflow for LXC Containers
-        log_info "Starting stateless orchestration for CTID $CTID..."
-
-        # 1. Ensure Container Exists
-        # 1. Ensure Container Exists: Create if it doesn't, otherwise skip
-        if ! pct status "$CTID" > /dev/null 2>&1; then
-            log_info "Container $CTID does not exist. Proceeding with creation..."
-            handle_defined_state # Create or clone the container
-        else
-            log_info "Container $CTID already exists. Skipping creation."
-        fi
-
-        # 2. Ensure Container is Configured: Apply configurations (idempotent)
-        log_info "Ensuring container $CTID is correctly configured..."
-        ensure_container_disk_size # Ensure disk size is correct
-        apply_configurations # Apply configurations to the container
-        apply_shared_volumes # Apply shared volumes to the container
-
-        # 3. Ensure Container is Running
-        # 3. Ensure Container is Running: Start if not running, otherwise skip
-        if ! pct status "$CTID" | grep -q "running"; then
-            log_info "Container $CTID is not running. Attempting to start..."
-            start_container # Start the container
-        else
-            log_info "Container $CTID is already running."
-        fi
-
-        # 4. Apply Features: Execute feature scripts (designed to be idempotent)
-        log_info "Applying all features to container $CTID..."
-        apply_features # Apply feature scripts
-
-        # 5. Run Application Script: Execute application script (should be idempotent)
-        log_info "Executing application script for container $CTID..."
-        run_application_script # Run the application script
-
-        # 6. Create Template Snapshot: Create a snapshot if the container is a template
-        create_template_snapshot # Create a template snapshot
-
-        log_info "Stateless orchestration for CTID $CTID completed."
+        orchestrate_container_stateless
     fi
 
     log_info "============================================================"

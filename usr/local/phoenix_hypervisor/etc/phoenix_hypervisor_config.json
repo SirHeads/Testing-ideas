@@ -1,8 +1,8 @@
 {
-    "version": "0.01.02",
+    "version": "1.0.0",
     "author": "Heads, Qwen3-coder, Roo",
     "users": {
-        "username": "heads",
+        "username": "phoenix_admin",
         "password_hash": "NOT_SET",
         "sudo_access": true,
         "ssh_public_key": ""
@@ -213,14 +213,14 @@
         "ssl_certs": {
             "host_path": "/mnt/pve/quickOS/shared-prod-data/ssl",
             "mounts": {
-                "953": "/etc/nginx/ssl",
-                "910": "/certs"
+                "953": "/ssl",
+                "910": "/ssl"
             }
         },
         "portainer_data": {
             "host_path": "/mnt/pve/quickOS/shared-prod-data/portainer/data",
             "mounts": {
-                "910": "/data"
+                "910": "/portainer/data"
             }
         },
         "nginx_sites": {
@@ -228,6 +228,48 @@
             "mounts": {
                 "953": "/etc/nginx/sites-available"
             }
+        },
+        "nginx_logs": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/logs/nginx",
+            "mounts": {
+                "953": "/logs/nginx"
+            }
+        },
+        "qdrant_data": {
+            "host_path": "/mnt/pve/fastData/shared-prod-data/qdrant",
+            "mounts": {
+                "952": "/qdrant"
+            }
+        },
+        "n8n_data": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/n8n",
+            "mounts": {
+                "954": "/n8n"
+            }
+        },
+        "ollama_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/ollama_models",
+            "mounts": {
+                "955": "/ollama_models"
+            }
+        },
+        "llamacpp_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/llamacpp_models",
+            "mounts": {
+                "957": "/llamacpp_models"
+            }
+        },
+        "vllm_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/vllm_models",
+            "mounts": {
+                "950": "/vllm_models",
+                "951": "/vllm_models"
+            }
+        },
+        "firewall": {
+            "enabled": true,
+            "default_input_policy": "DROP",
+            "default_output_policy": "ACCEPT"
         }
     }
 }

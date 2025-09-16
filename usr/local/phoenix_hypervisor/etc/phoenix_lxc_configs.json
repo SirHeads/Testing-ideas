@@ -107,7 +107,7 @@
             "gpu_assignment": "0,1",
             "unprivileged": true,
             "portainer_role": "none",
-            "template_snapshot_name": "vllm-base-snapshot",
+            "template_snapshot_name": "vllm-base-snapshot-v2",
             "clone_from_ctid": "901",
             "features": [
                 "vllm"
@@ -135,6 +135,9 @@
                 "vllm"
             ],
             "application_script": "phoenix_hypervisor_lxc_950.sh",
+            "ports": [
+                "8000:8000"
+            ],
             "vllm_model": "ibm-granite/granite-3.3-8b-instruct",
             "vllm_served_model_name": "granite-3.3-8b-instruct",
             "vllm_port": 8000,
@@ -173,6 +176,9 @@
                 "vllm"
             ],
             "application_script": "phoenix_hypervisor_lxc_951.sh",
+            "ports": [
+                "8000:8000"
+            ],
             "vllm_model": "ibm-granite/granite-embedding-english-r2",
             "vllm_tensor_parallel_size": 1,
             "vllm_gpu_memory_utilization": 0.15,
@@ -208,7 +214,28 @@
                 "docker"
             ],
             "application_script": "phoenix_hypervisor_lxc_952.sh",
-            "pct_options": []
+            "ports": [
+                "6333:6333",
+                "6334:6334"
+            ],
+            "health_check": {
+                "command": "curl -s --fail http://localhost:6333",
+                "retries": 5,
+                "interval": 5
+            },
+            "pct_options": [],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "6334"
+                    }
+                ]
+            }
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -234,7 +261,10 @@
             "pct_options": [
                 "nesting=1"
             ],
-            "application_script": "phoenix_hypervisor_lxc_953.sh"
+            "application_script": "phoenix_hypervisor_lxc_953.sh",
+            "firewall": {
+                "enabled": true
+            }
         },
         "954": {
             "name": "n8n-phoenix",
@@ -257,6 +287,9 @@
                 "docker"
             ],
             "application_script": "phoenix_hypervisor_lxc_954.sh",
+            "ports": [
+                "5678:5678"
+            ],
             "pct_options": []
         },
         "955": {
@@ -277,9 +310,13 @@
             "portainer_role": "none",
             "clone_from_ctid": "901",
             "features": [
-                "nvidia"
+                "nvidia",
+                "ollama"
             ],
             "application_script": "phoenix_hypervisor_lxc_955.sh",
+            "ports": [
+                "11434:11434"
+            ],
             "pct_options": []
         },
         "956": {
@@ -302,7 +339,10 @@
             "features": [
                 "docker"
             ],
-            "application_script": "phoenix_hypervisor_lxc_956.sh"
+            "application_script": "phoenix_hypervisor_lxc_956.sh",
+            "ports": [
+                "8080:8080"
+            ]
         },
         "957": {
             "name": "llamacpp",
@@ -324,7 +364,10 @@
             "features": [
                 "nvidia"
             ],
-            "application_script": "phoenix_hypervisor_lxc_957.sh"
+            "application_script": "phoenix_hypervisor_lxc_957.sh",
+            "ports": [
+                "8081:8081"
+            ]
         }
     }
 }

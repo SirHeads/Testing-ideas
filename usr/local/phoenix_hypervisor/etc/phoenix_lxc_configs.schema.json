@@ -26,7 +26,7 @@
             "type": "object",
             "description": "A map of LXC container configurations, keyed by container ID.",
             "patternProperties": {
-                "^(90[0-3]|910|920|950|999)$": {
+                "^[0-9]+$": {
                     "type": "object",
                     "properties": {
                         "name": {
@@ -39,6 +39,10 @@
                             "minimum": 512,
                             "maximum": 131072,
                             "description": "The amount of RAM allocated to the container in megabytes. For AI workloads, values typically range from 2048-32768 MB depending on model size"
+                        },
+                        "swap_mb": {
+                            "type": "integer",
+                            "description": "The amount of swap allocated to the container in megabytes."
                         },
                         "cores": {
                             "type": "integer",
@@ -108,11 +112,6 @@
                             },
                             "description": "An array of feature scripts to apply to the container."
                         },
-                        "static_ip": {
-                            "type": "string",
-                            "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/([0-9]|[1-2][0-9]|3[0-2])$",
-                            "description": "Static IP address with CIDR notation for container (redundant with network_config.ip?)"
-                        },
                         "mac_address": {
                             "type": "string",
                             "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
@@ -128,7 +127,8 @@
                             "enum": [
                                 "server",
                                 "agent",
-                                "none"
+                                "none",
+                                "infrastructure"
                             ],
                             "description": "Role of the container within the Portainer management system"
                         },
@@ -143,18 +143,43 @@
                             ],
                             "description": "Path to the specific AI model this container is configured to serve using vLLM"
                         },
+                        "vllm_served_model_name": {
+                            "type": "string",
+                            "description": "The name of the model served by vLLM."
+                        },
+                        "vllm_port": {
+                            "type": "integer",
+                            "description": "The port vLLM is listening on."
+                        },
                         "vllm_tensor_parallel_size": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 8,
                             "description": "Degree of tensor parallelism used by vLLM for the assigned model"
                         },
+                        "vllm_gpu_memory_utilization": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1,
+                            "description": "GPU memory utilization for vLLM."
+                        },
+                        "vllm_max_model_len": {
+                            "type": "integer",
+                            "description": "Maximum model length for vLLM."
+                        },
+                        "vllm_args": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Additional arguments for vLLM."
+                        },
                         "template_snapshot_name": {
                             "type": "string",
                             "minLength": 1,
                             "description": "The name of the snapshot this template container should create."
                         },
-                        "clone_from_template_ctid": {
+                        "clone_from_ctid": {
                             "type": "string",
                             "pattern": "^[0-9]+$",
                             "description": "The Container ID of the template to clone from when creating this container."
@@ -163,13 +188,112 @@
                             "type": "string",
                             "minLength": 1,
                             "description": "Optional script to run after all features are applied to launch a persistent service."
+                        },
+                        "pct_options": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Additional options for the pct command."
+                        },
+                        "ports": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "pattern": "^[0-9]+:[0-9]+$"
+                            },
+                            "description": "An array of port mappings in the format 'host:container'."
+                        },
+                        "health_check": {
+                            "type": "object",
+                            "properties": {
+                                "command": {
+                                    "type": "string"
+                                },
+                                "retries": {
+                                    "type": "integer"
+                                },
+                                "interval": {
+                                    "type": "integer"
+                                }
+                            },
+                            "required": [
+                                "command"
+                            ]
+                        },
+                        "firewall": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                },
+                                "rules": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "in",
+                                                    "out"
+                                                ]
+                                            },
+                                            "action": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "ACCEPT",
+                                                    "DROP",
+                                                    "REJECT"
+                                                ]
+                                            },
+                                            "source": {
+                                                "type": "string",
+                                                "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+                                            },
+                                            "dest": {
+                                                "type": "string",
+                                                "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+                                            },
+                                            "proto": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "tcp",
+                                                    "udp"
+                                                ]
+                                            },
+                                            "port": {
+                                                "type": "string",
+                                                "pattern": "^[0-9]+$"
+                                            }
+                                        },
+                                        "required": [
+                                            "type",
+                                            "action",
+                                            "proto",
+                                            "port"
+                                        ]
+                                    }
+                                }
+                            },
+                            "if": {
+                                "properties": {
+                                    "enabled": {
+                                        "const": true
+                                    }
+                                }
+                            },
+                            "then": {
+                                "required": [
+                                    "rules"
+                                ]
+                            }
                         }
                     },
                     "required": [
                         "name",
                         "memory_mb",
                         "cores",
-                        "template",
                         "storage_pool",
                         "storage_size_gb",
                         "network_config",

@@ -49,6 +49,7 @@ The expected outcome of this process is a fully configured, ready-to-use LXC con
 *   **Centralized Configuration**: All container definitions and global settings are managed in a set of well-structured JSON files. This provides a single source of truth for the entire system and makes it easy to manage and version-control the infrastructure.
     *   **Note on Hardcoded Dependencies**: While the principle of centralized configuration is paramount, certain critical dependencies, such as NVIDIA driver versions, are intentionally hardcoded within configuration files like `phoenix_lxc_configs.json`. This design choice ensures platform-wide stability and consistency, preventing unintended variations that could arise from dynamic configuration of these specific elements.
 *   **Container-Native Execution**: Application scripts are executed using container-native commands (`systemctl`, `docker`, etc.) rather than host-level `pct exec` commands. This approach enhances portability and reduces dependencies on the host environment.
+*   **Dynamic NGINX Configuration**: The NGINX gateway configuration is generated dynamically from the `phoenix_lxc_configs.json` file. This ensures that the gateway is always in sync with the container configurations and eliminates the risk of configuration drift.
 
 ## 3. Flow Diagrams
 

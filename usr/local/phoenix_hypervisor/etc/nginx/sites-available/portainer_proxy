@@ -1,5 +1,6 @@
 upstream portainer_backend {
     server 10.0.0.99:9443;
+    health_check;
 }
 
 server {
