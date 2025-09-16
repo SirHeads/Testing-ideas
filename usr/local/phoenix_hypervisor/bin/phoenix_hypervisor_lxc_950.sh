@@ -90,7 +90,10 @@ configure_and_start_systemd_service() {
     done
 
     # --- Replace placeholders in the service file ---
+    local served_model_name
+    served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
     sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
+    sed -i "s|VLLM_SERVED_MODEL_NAME_PLACEHOLDER|$served_model_name|" "$service_file_path"
     sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
     sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
 
@@ -218,7 +221,7 @@ display_connection_info() {
     ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1) # Extract IP address from network config
     local model
     local model
-    model=$(jq_get_value "$CTID" ".vllm_served_model_name") # Retrieve the model name
+    model=$(jq_get_value "$CTID" ".vllm_model") # Retrieve the model name
 
     log_info "============================================================"
     log_info "vLLM API Server is now running and fully operational."
