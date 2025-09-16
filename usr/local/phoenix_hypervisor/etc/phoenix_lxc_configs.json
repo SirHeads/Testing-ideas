@@ -148,9 +148,8 @@
                 "2",
                 "--max-model-len",
                 "8192",
-                "--trust-remote-code",
-                "--enforce-eager",
-                "--disable-custom-all-reduce"
+                "--gpu-memory-utilization",
+                "0.80"
             ]
         },
         "951": {
