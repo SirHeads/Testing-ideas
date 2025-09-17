@@ -1769,6 +1769,8 @@ topological_sort() {
     for ctid in "${initial_list[@]}"; do
         all_nodes["$ctid"]=1
         local dependencies
+        # Add explicit dependencies
+        local dependencies
         dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
         in_degree["$ctid"]=${in_degree["$ctid"]:-0}
         for dep in $dependencies; do
@@ -1776,6 +1778,15 @@ topological_sort() {
             adj_list["$dep"]="${adj_list["$dep"]} $ctid"
             in_degree["$ctid"]=$((in_degree["$ctid"] + 1))
         done
+
+        # Add implicit clone dependency
+        local clone_from_ctid
+        clone_from_ctid=$(jq_get_value "$ctid" ".clone_from_ctid" || echo "")
+        if [ -n "$clone_from_ctid" ]; then
+            all_nodes["$clone_from_ctid"]=1
+            adj_list["$clone_from_ctid"]="${adj_list["$clone_from_ctid"]} $ctid"
+            in_degree["$ctid"]=$((in_degree["$ctid"] + 1))
+        fi
     done
 
     # Initialize the queue with nodes that have an in-degree of 0
