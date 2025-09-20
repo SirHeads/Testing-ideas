@@ -1791,7 +1791,7 @@ topological_sort() {
 
     # Initialize the queue with nodes that have an in-degree of 0
     for ctid in "${!all_nodes[@]}"; do
-        if [ "${in_degree[$ctid]}" -eq 0 ]; then
+        if [ -z "${in_degree[$ctid]}" ] || [ "${in_degree[$ctid]}" -eq 0 ]; then
             queue+=("$ctid")
         fi
     done
