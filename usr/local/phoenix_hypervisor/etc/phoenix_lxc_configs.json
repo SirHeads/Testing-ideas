@@ -134,7 +134,7 @@
             "pct_options": []
         },
         "950": {
-            "name": "vllm-granite-3b",
+            "name": "vllm-qwen2.5-7b-awq",
             "memory_mb": 72000,
             "cores": 12,
             "storage_pool": "quickOS-lxc-disks",
@@ -157,18 +157,42 @@
             "ports": [
                 "8000:8000"
             ],
-            "vllm_model": "ibm-granite/granite-3.3-8b-instruct",
-            "vllm_served_model_name": "granite-3.3-8b-instruct",
+            "vllm_model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+            "vllm_quantization": "awq_marlin",
+            "vllm_max_model_len": 8192,
+            "vllm_gpu_memory_utilization": 0.85,
+            "vllm_tensor_parallel_size": 1,
+            "vllm_served_model_name": "qwen2.5-7b-awq",
             "vllm_port": 8000,
+            "vllm_trust_remote_code": true,
+            "vllm_parameters": {
+                "dtype": "float16",
+                "kv_cache_dtype": "auto",
+                "max_model_len": 4096,
+                "gpu_memory_utilization": 0.85,
+                "max_num_batched_tokens": 8192,
+                "max_num_seqs": 1
+            },
             "vllm_args": [
-                "--dtype",
-                "float16",
-                "--tensor-parallel-size",
-                "2",
+                "--quantization",
+                "awq_marlin",
                 "--max-model-len",
                 "8192",
                 "--gpu-memory-utilization",
-                "0.80"
+                "0.85",
+                "--tensor-parallel-size",
+                "1",
+                "--served-model-name",
+                "qwen2.5-7b-awq",
+                "--trust-remote-code",
+                "--dtype",
+                "float16",
+                "--kv-cache-dtype",
+                "auto",
+                "--max-num-batched-tokens",
+                "8192",
+                "--max-num-seqs",
+                "1"
             ],
             "firewall": {
                 "enabled": true,

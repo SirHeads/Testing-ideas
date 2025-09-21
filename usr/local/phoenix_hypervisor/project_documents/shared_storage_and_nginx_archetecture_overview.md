@@ -122,7 +122,7 @@ graph TD
     subgraph "Backend Services"
         subgraph "vLLM Services"
             Embedding["LXC 951 - Embedding Service"]
-            Granite["LXC 950 - Granite Service"]
+            Granite["LXC 950 - Qwen2.5-7B Service"]
         end
         Qdrant["LXC 952 - Qdrant"]
         N8N["LXC 954 - n8n"]
@@ -140,7 +140,7 @@ graph TD
     User -- "/llamacpp/" --> NGINX
 
     NGINX -- "model=embedding" --> Embedding
-    NGINX -- "model=granite-3.3-8b-instruct" --> Granite
+    NGINX -- "model=Qwen/Qwen2.5-7B-Instruct-AWQ" --> Granite
     NGINX -- "/qdrant/" --> Qdrant
     NGINX -- "/n8n/" --> N8N
     NGINX -- "/webui/" --> WebUI

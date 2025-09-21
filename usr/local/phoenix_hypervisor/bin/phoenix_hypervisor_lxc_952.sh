@@ -41,8 +41,8 @@ port_args=""
 for mapping in $port_mappings; do
     port_args="$port_args -p $mapping"
 done
-log_info "docker run -d --rm --network $DOCKER_NETWORK_NAME $port_args --name \"$QDRANT_CONTAINER_NAME\" \"$QDRANT_IMAGE\""
-docker run -d --rm \
+log_info "docker run -d --restart always --network $DOCKER_NETWORK_NAME $port_args --name \"$QDRANT_CONTAINER_NAME\" \"$QDRANT_IMAGE\""
+docker run -d --restart always \
     --network "$DOCKER_NETWORK_NAME" \
     $port_args \
     --name "$QDRANT_CONTAINER_NAME" \

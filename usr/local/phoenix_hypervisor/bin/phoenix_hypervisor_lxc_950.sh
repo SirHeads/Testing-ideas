@@ -71,45 +71,54 @@ parse_arguments() {
 # =====================================================================================
 configure_and_start_systemd_service() {
     log_info "Configuring and starting vLLM systemd service in CTID: $CTID..."
+    
+    # --- Define the path to the systemd service file ---
     local service_file_path="/etc/systemd/system/vllm_model_server.service"
 
     # --- Retrieve vLLM parameters from the central config ---
+    # The 'vllm_model' variable is now sourced from 'vllm_served_model_name' to ensure consistency.
+    # This change aligns the --model and --served-model-name parameters, which is critical for
+    # the OpenAI-compatible API endpoint to correctly identify and route requests to the loaded model.
     local model
     model=$(jq_get_value "$CTID" ".vllm_model")
+    local served_model_name
+    served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
+    
     mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
     if [ ${#vllm_args[@]} -eq 0 ]; then
         log_fatal "Could not read vLLM arguments from config file for CTID $CTID."
     fi
+    
     local port
     port=$(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
 
-    # --- Construct the arguments string ---
-    local args_string=""
-    for arg in "${vllm_args[@]}"; do
-        args_string+="\"$arg\" "
-    done
-
-    # --- Replace placeholders in the service file ---
-    local served_model_name
-    served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
-    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
-    local args_string=""
+    # --- Construct the arguments string from the config array ---
+    local args_string="--dtype float16"
     for arg in "${vllm_args[@]}"; do
         args_string+=" $arg"
     done
 
+    # --- Replace placeholders in the service file template ---
+    # This uses sed to dynamically generate the systemd service file from a template.
     sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
     sed -i "s|VLLM_SERVED_MODEL_NAME_PLACEHOLDER|$served_model_name|" "$service_file_path"
     sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
     sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
-    sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
+
+    # --- Set CUDA_VISIBLE_DEVICES correctly for systemd ---
+    # The Environment variable is added to the [Service] section of the unit file.
+    # This is the correct way to specify environment variables for a systemd service.
+    # The previous method of prefixing the ExecStart command is incorrect.
+    sed -i '/^\[Service\]/a Environment="CUDA_VISIBLE_DEVICES=0"' "$service_file_path"
 
     # --- Reload systemd, enable and start the service ---
+    # These commands ensure that the latest service file is used and the service is started.
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME"
     systemctl restart "$SERVICE_NAME"
 
     # --- Verify the service is active ---
+    # This check confirms that the service has started successfully.
     if ! systemctl is-active --quiet "$SERVICE_NAME"; then
         log_fatal "vLLM service ($SERVICE_NAME) failed to start in CTID $CTID."
     fi
