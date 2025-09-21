@@ -146,7 +146,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:67:89:B0",
-            "gpu_assignment": "0,1",
+            "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "920",
@@ -223,7 +223,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:67:89:B1",
-            "gpu_assignment": "0,1",
+            "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "920",
