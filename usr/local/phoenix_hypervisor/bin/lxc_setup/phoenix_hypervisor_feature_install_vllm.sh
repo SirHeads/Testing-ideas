@@ -262,6 +262,7 @@ main() {
     parse_arguments "$@" # Parse command-line arguments
     install_and_test_vllm # Install and test vLLM
     create_vllm_systemd_service # Create the systemd service file
+    
     exit_script 0 # Exit successfully
 }
 

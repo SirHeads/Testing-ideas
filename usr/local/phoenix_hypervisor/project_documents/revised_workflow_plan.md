@@ -1,143 +1,169 @@
----
-title: Revised Workflow Plan for LXC Container Creation
-summary: This document outlines a revised architectural workflow for the LXC container
-  creation process within the Phoenix Hypervisor system, focusing on refactoring existing
-  logic to delegate responsibilities to specialized helper scripts for improved modularity
-  and maintainability.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
-version: 1.0.0
-author: Phoenix Hypervisor Team
-owner: Team/Individual Name
-tags:
-- LXC Container
-- Workflow Plan
-- Phoenix Hypervisor
-- Refactoring
-- Orchestrator
-- Modularity
-- Container Creation
-- Cloning
-- Provisioning
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
----
-This document outlines a revised architectural workflow for the LXC container creation process within the Phoenix Hypervisor system. The primary goal is to refactor the existing logic to address a critical segmentation fault in `phoenix_establish_hypervisor.sh` by delegating responsibilities to specialized helper scripts. This new design simplifies the main orchestrator, improves modularity, and enhances maintainability.
+# Revised Workflow for vLLM Integration Testing
 
-## 1. Introduction
+This document outlines the architectural changes required to fix the critical failure in the vLLM integration testing workflow.
 
-This document outlines a revised architectural workflow for the LXC container creation process within the Phoenix Hypervisor system. The primary goal is to refactor the existing logic to address a critical segmentation fault in `phoenix_establish_hypervisor.sh` by delegating responsibilities to specialized helper scripts. This new design simplifies the main orchestrator, improves modularity, and enhances maintainability.
+## 1. The Problem: Incorrect Test Execution Order
 
-## 2. Proposed High-Level Workflow
+The root cause of the failure is that the integration tests are executed by the `phoenix_hypervisor_feature_install_vllm.sh` script immediately after the vLLM software is installed. However, the vLLM service itself is only configured and started much later by the container-specific application script, `phoenix_hypervisor_lxc_950.sh`.
 
-The `phoenix_establish_hypervisor.sh` script will be repurposed as a lean orchestrator. Its sole responsibility will be to iterate through the container configurations and make high-level decisions, delegating the actual work of creation, cloning, and provisioning to other scripts.
-
-The revised, step-by-step process is as follows:
-
-1.  **Initialization**: The orchestrator loads and validates all necessary configuration files.
-2.  **Iteration**: It iterates through each container defined in `phoenix_lxc_configs.json`, ordered by CTID.
-3.  **Identify**: For each container, it determines the required state.
-4.  **Check Existence**: It verifies if the container (LXC) already exists and has a `configured-state` snapshot. If so, it skips to the next container.
-5.  **Check for Clone Source**: If the container does not exist, it checks if a suitable snapshot is available to be cloned from. This is determined by the `clone_from_template_ctid` or by an intelligent selection based on required features (GPU, Docker, etc.).
-6.  **Delegate Creation/Cloning**:
-    *   If a suitable snapshot exists, it calls the `phoenix_hypervisor_clone_lxc.sh` script.
-    *   If no suitable snapshot exists (i.e., it's a base template), it calls the `phoenix_hypervisor_create_lxc.sh` script.
-7.  **Delegate Provisioning**: After the container is successfully created or cloned and is running, the orchestrator executes the corresponding `phoenix_hypervisor_lxc_9##.sh` script to apply its specific configuration.
-8.  **Finalize State**: The orchestrator calls a utility function to shut down the container, create a `configured-state` snapshot, and restart it.
-
-## 3. Visual Representation (Mermaid Diagram)
+### Current Flawed Workflow
 
 ```mermaid
 graph TD
-    A[Start: phoenix_establish_hypervisor.sh] --> B{Load & Validate Configs};
-    B --> C{For Each Container in Config};
-    C --> D{Container Exists with 'configured-state' Snapshot?};
-    D -- Yes --> C;
-    D -- No --> E{Suitable Snapshot for Cloning Exists?};
-    E -- Yes --> F[Call phoenix_hypervisor_clone_lxc.sh];
-    E -- No --> G[Call phoenix_hypervisor_create_lxc.sh];
-    F --> H{Wait for Container Ready};
-    G --> H;
-    H --> I[Call phoenix_hypervisor_lxc_9##.sh for Provisioning];
-    I --> J{Finalize State: Shutdown, Snapshot, Restart};
-    J --> C;
+    A[phoenix_orchestrator.sh] --> B{Apply Features};
+    B --> C[feature_install_vllm.sh];
+    C --> D[Install vLLM];
+    C --> E[Create systemd Template];
+    C --> F[run_vllm_integration_tests.sh];
+    F --> G((Tests Fail));
+    A --> H{Run Application Script};
+    H --> I[lxc_950.sh];
+    I --> J[Configure & Start vLLM Service];
+    J --> K[Perform Health Check];
+    K --> L((Service is Healthy));
+
+    style G fill:#f00,stroke:#333,stroke-width:2px;
+    style L fill:#0f0,stroke:#333,stroke-width:2px;
 ```
 
-## 4. Script Responsibilities and Modifications
+## 2. The Solution: Orchestrator-Managed Testing
 
-### 4.1. `phoenix_establish_hypervisor.sh` (Orchestrator)
+The solution is to move the responsibility of running integration tests from the feature script to the main orchestrator. The tests will be triggered only *after* the application script has successfully started the service and the health check has passed.
 
-This script will be significantly simplified. Its primary loop will contain the logic to call the other scripts.
+This creates a more logical and robust workflow with a clear separation of concerns.
 
-**Key Responsibilities:**
+### Proposed Corrected Workflow
 
-*   Load and validate `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json`.
-*   Iterate through all defined LXC containers.
-*   For each container, perform the checks (existence, clone source) and then call the appropriate helper script.
+```mermaid
+graph TD
+    A[phoenix_orchestrator.sh] --> B{Apply Features};
+    B --> C[feature_install_vllm.sh];
+    C --> D[Install vLLM];
+    C --> E[Create systemd Template];
+    
+    A --> F{Run Application Script};
+    F --> G[lxc_950.sh];
+    G --> H[Configure & Start vLLM Service];
+    H --> I[Perform Health Check];
+    I -- Success --> J{Run Health Check};
+    J -- Success --> K[run_vllm_integration_tests.sh];
+    K --> L((Tests Pass));
 
-**Proposed Function Calls:**
+    style L fill:#0f0,stroke:#333,stroke-width:2px;
+```
+
+This revised architecture ensures that tests are only executed against a confirmed healthy and operational service, resolving the core issue.
+
+
+## 3. Implementation Steps
+
+### Step 3.1: Modify `phoenix_hypervisor_feature_install_vllm.sh`
+
+The call to `run_vllm_integration_tests.sh` must be removed from this script. The script's sole responsibility should be to install the vLLM feature.
+
+**File to Edit:** `usr/local/phoenix_hypervisor/bin/lxc_setup/phoenix_hypervisor_feature_install_vllm.sh`
+
+**Action:** Remove the following lines from the `main` function:
+
+```diff
+-     # Run integration tests if vLLM was installed
+-     log_info "Running vLLM integration tests..."
+-     /usr/local/phoenix_hypervisor/bin/tests/run_vllm_integration_tests.sh "$CTID"
+```
+
+
+### Step 3.2: Modify `phoenix_orchestrator.sh`
+
+The orchestrator needs a new function to handle the execution of integration tests. This function will read the test script's path from the container's configuration, making the solution generic and reusable for other containers.
+
+**File to Edit:** `usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh`
+
+**Action 1: Add the new `run_integration_tests` function.**
+
+This function should be added after the `run_health_check` function.
 
 ```bash
-# Inside the main loop for each CTID
-if ! container_is_configured "$ctid"; then
-    if should_clone "$ctid" "$config_block"; then
-        # Call the clone script
-        /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_clone_lxc.sh "$source_ctid" "$source_snapshot" "$ctid" "$LXC_CONFIG_FILE" "$config_block"
-    else
-        # Call the create script
-        /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_create_lxc.sh "$ctid"
+# =====================================================================================
+# Function: run_integration_tests
+# Description: Executes integration tests for a container if defined in the configuration.
+# =====================================================================================
+run_integration_tests() {
+    local CTID="$1"
+    log_info "Checking for integration tests for CTID: $CTID"
+    local test_script_name
+    test_script_name=$(jq_get_value "$CTID" ".integration_tests.script" || echo "")
+
+    if [ -z "$test_script_name" ]; then
+        log_info "No integration tests to run for CTID $CTID."
+        return 0
     fi
 
-    # Wait for container to be ready
-    wait_for_lxc_ready "$ctid"
+    local test_script_path="${PHOENIX_BASE_DIR}/bin/tests/${test_script_name}"
+    log_info "Executing integration tests: $test_script_name"
 
-    # Call the provisioning script
-    /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_${ctid}.sh "$ctid"
+    if [ ! -f "$test_script_path" ]; then
+        log_fatal "Integration test script not found at $test_script_path."
+    fi
 
-    # Finalize the container state
-    finalize_container_state "$ctid"
-fi
+    if ! "$test_script_path" "$CTID"; then
+        log_fatal "Integration test script '$test_script_name' failed for CTID $CTID."
+    fi
+
+    log_info "Integration tests completed successfully for CTID $CTID."
+}
 ```
 
-### 4.2. `phoenix_hypervisor_clone_lxc.sh` (Cloning Script)
+**Action 2: Update the `orchestrate_container_stateless` function.**
 
-This script will be responsible for cloning an LXC container from a ZFS snapshot.
+Call the new `run_integration_tests` function after the `run_health_check` has successfully completed.
 
-**No major modifications are required** to this script's core logic, as it already accepts the necessary parameters. However, it must be robust and provide clear exit codes to the orchestrator.
-
-**Function Signature (as called by orchestrator):**
-
-```bash
-./phoenix_hypervisor_clone_lxc.sh <SOURCE_CTID> <SOURCE_SNAPSHOT_NAME> <TARGET_CTID> <LXC_CONFIG_FILE> <TARGET_CONFIG_BLOCK_JSON>
+```diff
+# ... inside orchestrate_container_stateless function ...
+     apply_features "$ctid_to_orchestrate"
+     run_application_script "$ctid_to_orchestrate"
+     run_health_check "$ctid_to_orchestrate"
++    run_integration_tests "$ctid_to_orchestrate"
+ 
+     # 9. Create snapshot if it's a template
+     create_template_snapshot "$ctid_to_orchestrate"
+# ...
 ```
 
-### 4.3. `phoenix_hypervisor_create_lxc.sh` (Creation Script)
 
-This script will be responsible for creating a new LXC container from a base image.
+### Step 3.3: Update LXC Configuration
 
-**No major modifications are required** to this script's core logic. It should remain idempotent, exiting gracefully if the container already exists.
+To enable the new functionality, the `phoenix_lxc_configs.json` file must be updated to include a new `integration_tests` object for the relevant container (e.g., CTID 950).
 
-**Function Signature (as called by orchestrator):**
+**File to Edit:** `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`
 
-```bash
-LXC_CONFIG_FILE="/path/to/config.json" ./phoenix_hypervisor_create_lxc.sh <CTID>
+**Action:** Add the `integration_tests` key to the configuration for CTID 950.
+
+```diff
+  "950": {
+    "name": "vllm-api-server",
+    "clone_from_ctid": "900",
+    "storage_pool": "fastdata",
+    "memory_mb": 16384,
+    "cores": 4,
+    "features": ["vllm"],
+    "application_script": "phoenix_hypervisor_lxc_950.sh",
+    "health_check": {
+      "command": "/usr/local/bin/health_check_950.sh",
+      "retries": 30,
+      "interval": 10
+    },
++   "integration_tests": {
++     "script": "run_vllm_integration_tests.sh"
++   },
+    "vllm_model": "teknium/OpenHermes-2.5-Mistral-7B",
+    "vllm_served_model_name": "OpenHermes-2.5-Mistral-7B",
+    "vllm_port": "8000",
+    "vllm_args": [
+      "--tensor-parallel-size 1",
+      "--gpu-memory-utilization 0.90",
+      "--max-model-len 4096"
+    ]
+  }
 ```
 
-### 4.4. `phoenix_hypervisor_lxc_9##.sh` (Provisioning Scripts)
-
-These scripts will handle the specific setup for each container *after* it has been created or cloned. This includes installing packages, configuring services, and for templates, creating their specific template snapshots (e.g., `base-snapshot`, `gpu-snapshot`).
-
-**Required Modifications:**
-
-*   These scripts must be idempotent. If a `configured-state` snapshot does not exist but the template-specific snapshot *does* (e.g., `base-snapshot`), the script should recognize this and exit gracefully.
-*   They should focus solely on their specific provisioning tasks. Any logic related to container creation or cloning should be removed.
-
-**Function Signature (as called by orchestrator):**
-
-```bash
-./phoenix_hypervisor_lxc_9##.sh <CTID>
-```
-
-## 5. Conclusion
-
-This revised architecture decouples the main orchestration logic from the implementation details of container creation, cloning, and provisioning. This will make the system more robust, easier to debug, and simpler to maintain. The `phoenix_establish_hypervisor.sh` script will become a true orchestrator, leading to a more stable and predictable container creation process.
+This completes the architectural plan. The proposed changes create a robust, reusable, and correctly ordered workflow for running integration tests.

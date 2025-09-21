@@ -992,6 +992,31 @@ run_health_check() {
 }
 
 # =====================================================================================
+# Function: run_post_deployment_validation
+# Description: Executes post-deployment validation tests for a container if enabled.
+# =====================================================================================
+run_post_deployment_validation() {
+    local CTID="$1"
+    log_info "Checking for post-deployment validation for CTID: $CTID"
+    local run_tests
+    run_tests=$(jq_get_value "$CTID" ".run_integration_tests" || echo "false")
+
+    if [ "$run_tests" != "true" ]; then
+        log_info "Post-deployment validation skipped for CTID $CTID (run_integration_tests is not true)."
+        return 0
+    fi
+
+    log_info "Starting post-deployment validation for CTID $CTID..."
+    local test_script_path="/usr/local/phoenix_hypervisor/bin/tests/run_vllm_integration_tests.sh"
+
+    if ! "$test_script_path" "$CTID"; then
+        log_fatal "Post-deployment validation failed for CTID $CTID."
+    fi
+
+    log_info "Post-deployment validation completed successfully for CTID $CTID."
+}
+
+# =====================================================================================
 # Function: create_template_snapshot
 # Description: Creates a snapshot of a container if it is designated as a template
 #              in the configuration file.
@@ -1677,6 +1702,7 @@ orchestrate_container_stateless() {
     apply_features "$ctid_to_orchestrate"
     run_application_script "$ctid_to_orchestrate"
     run_health_check "$ctid_to_orchestrate"
+    run_post_deployment_validation "$ctid_to_orchestrate"
 
     # 9. Create snapshot if it's a template
     create_template_snapshot "$ctid_to_orchestrate"

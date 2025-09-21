@@ -4,7 +4,8 @@ import argparse
 
 # 1. Set up argument parser
 parser = argparse.ArgumentParser(description="Test the context window of a local vLLM model.")
-parser.add_argument("--model", type=str, default="qwen2.5-7b-awq", help="The name of the model to test.")
+parser.add_argument("--model-name", type=str, required=True, help="The name of the model to test.")
+parser.add_argument("--max-model-len", type=int, required=True, help="The maximum model length to test.")
 args = parser.parse_args()
 
 # 2. Configure the OpenAI client to connect to the local vLLM server
@@ -19,11 +20,12 @@ print(f"Needle: {needle}")
 
 # 4. Construct the "haystack"
 # A simple way to estimate token count is that one token is approximately 4 characters.
-# We want about 4,000 tokens, so we need about 16,000 characters.
+# We want to construct a haystack that is close to the max_model_len.
 # The phrase "This is a test sentence to fill the context window. " is 55 characters long.
-# 16000 / 55 = ~290 repetitions
+num_chars = args.max_model_len * 4
 haystack_phrase = "This is a test sentence to fill the context window. "
-haystack = haystack_phrase * 290
+repetitions = int(num_chars / len(haystack_phrase))
+haystack = haystack_phrase * repetitions
 
 # 5. Place the "needle" at the very beginning of the "haystack"
 context_text = needle + "\n\n" + haystack
@@ -41,13 +43,13 @@ Here is a long text. Please read it carefully and answer the question at the end
 Based on the text provided, what is the secret keyword mentioned at the beginning of this text?
 """
 
-print(f"\nSending prompt to the model: {args.model}...")
+print(f"\nSending prompt to the model: {args.model_name}...")
 start_time = time.time()
 
 try:
     # 7. Send the prompt to the chat completions endpoint
     response = client.chat.completions.create(
-        model=args.model,
+        model=args.model_name,
         messages=[
             {"role": "user", "content": prompt}
         ],

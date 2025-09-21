@@ -296,6 +296,10 @@
                                 "pattern": "^[0-9]+$"
                             },
                             "description": "An array of CTIDs that this container depends on. The orchestrator will ensure these containers are running before starting this one."
+                        },
+                        "run_integration_tests": {
+                            "type": "boolean",
+                            "description": "If true, runs post-deployment integration tests after the container's health check passes."
                         }
                     },
                     "required": [

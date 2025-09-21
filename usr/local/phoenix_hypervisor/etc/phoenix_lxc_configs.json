@@ -159,7 +159,7 @@
             ],
             "vllm_model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
             "vllm_quantization": "awq_marlin",
-            "vllm_max_model_len": 8192,
+            "vllm_max_model_len": 32768,
             "vllm_gpu_memory_utilization": 0.85,
             "vllm_tensor_parallel_size": 1,
             "vllm_served_model_name": "qwen2.5-7b-awq",
@@ -168,7 +168,7 @@
             "vllm_parameters": {
                 "dtype": "float16",
                 "kv_cache_dtype": "auto",
-                "max_model_len": 4096,
+                "max_model_len": 32768,
                 "gpu_memory_utilization": 0.85,
                 "max_num_batched_tokens": 8192,
                 "max_num_seqs": 1
@@ -177,7 +177,7 @@
                 "--quantization",
                 "awq_marlin",
                 "--max-model-len",
-                "8192",
+                "32768",
                 "--gpu-memory-utilization",
                 "0.85",
                 "--tensor-parallel-size",
@@ -208,7 +208,11 @@
             },
             "dependencies": [
                 "953"
-            ]
+            ],
+            "integration_tests": {
+                "script": "run_vllm_integration_tests.sh"
+            },
+            "run_integration_tests": true
         },
         "951": {
             "name": "vllm-granite-embed-r2",
