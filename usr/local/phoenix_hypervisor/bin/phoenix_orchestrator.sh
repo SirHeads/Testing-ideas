@@ -40,9 +40,12 @@ CREATE_VM=false
 START_VM=false
 STOP_VM=false
 DELETE_VM=false
+RECONFIGURE=false
+LETSGO=false
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.json"
+LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 
 
 
@@ -67,7 +70,7 @@ VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.
 parse_arguments() {
     # Display usage and exit if no arguments are provided
     if [ "$#" -eq 0 ]; then
-        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run]"
+        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo"
         exit_script 2
     fi
 
@@ -108,12 +111,21 @@ parse_arguments() {
                 operation_mode_set=true
                 shift 2
                 ;;
+            --reconfigure)
+                RECONFIGURE=true
+                shift
+                ;;
+            --LetsGo)
+                LETSGO=true
+                operation_mode_set=true
+                shift
+                ;;
             -*) # Handle unknown flags
                 log_error "Unknown option: $1"
                 exit_script 2
                 ;;
             *) # Handle positional arguments (CTIDs for LXC orchestration)
-                if [ "$operation_mode_set" = true ]; then
+                if [ "$operation_mode_set" = true ] && [ "$LETSGO" = false ]; then
                     log_fatal "Cannot combine CTID with other operation modes (--create-vm, --start-vm, etc.)."
                 fi
                 # Append all remaining arguments to the CTID list
@@ -158,6 +170,8 @@ parse_arguments() {
             log_fatal "Missing VM ID for --delete-vm. Usage: $0 --delete-vm <vm_id>"
         fi
         log_info "VM delete mode for VM ID: $VM_ID"
+    elif [ "$LETSGO" = true ]; then
+        log_info "LetsGo mode enabled. Orchestrating all containers based on boot order."
     else
         if [ ${#CTID_LIST[@]} -eq 0 ]; then # Ensure at least one CTID is provided
             log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID>... [--dry-run]"
@@ -210,6 +224,7 @@ validate_inputs() {
     fi
     log_info "Input validation passed."
 }
+
 
 
 
@@ -348,10 +363,12 @@ clone_container() {
     # --- Pre-flight checks for cloning ---
     # Perform pre-flight checks: ensure source container exists and snapshot is present
     if ! pct status "$source_ctid" > /dev/null 2>&1; then
-        log_fatal "Source container $source_ctid does not exist."
+        log_warn "Source container $source_ctid does not exist yet. Will retry."
+        return 1
     fi
     if ! pct listsnapshot "$source_ctid" | grep -q "$source_snapshot_name"; then
-        log_fatal "Snapshot '$source_snapshot_name' not found on source container $source_ctid."
+        log_warn "Snapshot '$source_snapshot_name' not found on source container $source_ctid yet. Will retry."
+        return 1
     fi
 
     local hostname=$(jq_get_value "$CTID" ".name") # New hostname for the cloned container
@@ -400,14 +417,20 @@ apply_configurations() {
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
     local features=$(jq_get_value "$CTID" ".features[]" || echo "") # Retrieve features as an array
-
-    # --- Apply core settings ---
-    # Apply core settings: memory and CPU cores
+    local start_at_boot=$(jq_get_value "$CTID" ".start_at_boot")
+    local boot_order=$(jq_get_value "$CTID" ".boot_order")
+    local boot_delay=$(jq_get_value "$CTID" ".boot_delay")
+    local start_at_boot_val=$([ "$start_at_boot" == "true" ] && echo "1" || echo "0")
+ 
+     # --- Apply core settings ---
+     # Apply core settings: memory and CPU cores
     run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
-
-    # Apply Phoenix AppArmor profile for unprivileged containers
-    local unprivileged_bool
+    run_pct_command set "$CTID" --onboot "${start_at_boot_val}" || log_fatal "Failed to set onboot."
+    run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
+ 
+     # Apply Phoenix AppArmor profile for unprivileged containers
+     local unprivileged_bool
     unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
     if [ "$unprivileged_bool" == "true" ]; then
         if [[ " ${features[*]} " =~ " docker " ]]; then
@@ -527,17 +550,21 @@ apply_configurations() {
 ensure_container_defined() {
     local CTID="$1"
     log_info "Ensuring container $CTID is defined..."
-    if ! pct status "$CTID" > /dev/null 2>&1; then
-        log_info "Container $CTID does not exist. Proceeding with creation..."
-        local clone_from_ctid
-        clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "")
-
-        if [ -n "$clone_from_ctid" ]; then
-            clone_container "$CTID"
-        else
-            create_container_from_template "$CTID"
+    if pct status "$CTID" > /dev/null 2>&1; then
+        log_info "Container $CTID already exists. Skipping creation."
+        return 0
+    fi
+    log_info "Container $CTID does not exist. Proceeding with creation..."
+    local clone_from_ctid
+    clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "")
+    if [ -n "$clone_from_ctid" ]; then
+        if ! clone_container "$CTID"; then
+            return 1
         fi
-
+    else
+        create_container_from_template "$CTID"
+    fi
+ 
         # NEW: Set unprivileged flag immediately after creation if specified in config
         local unprivileged_bool
         unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
@@ -548,9 +575,6 @@ ensure_container_defined() {
                  run_pct_command set "$CTID" --unprivileged 1 || log_fatal "Failed to set container as unprivileged."
             fi
         fi
-    else
-        log_info "Container $CTID already exists. Skipping creation."
-    fi
 }
 
 # =====================================================================================
@@ -737,6 +761,40 @@ apply_shared_volumes() {
 }
 
 # =====================================================================================
+# Function: apply_dedicated_volumes
+# Description: Creates and attaches dedicated storage volumes to a container.
+# =====================================================================================
+apply_dedicated_volumes() {
+    local CTID="$1"
+    log_info "Applying dedicated volumes for CTID: $CTID..."
+
+    local volumes
+    volumes=$(jq_get_value "$CTID" ".volumes // [] | .[]" || echo "")
+    if [ -z "$volumes" ]; then
+        log_info "No dedicated volumes to apply for CTID $CTID."
+        return 0
+    fi
+
+    local volume_index=0
+    for volume_config in $(echo "$volumes" | jq -c '.'); do
+        local volume_name=$(echo "$volume_config" | jq -r '.name')
+        local storage_pool=$(echo "$volume_config" | jq -r '.pool')
+        local size_gb=$(echo "$volume_config" | jq -r '.size_gb')
+        local mount_point=$(echo "$volume_config" | jq -r '.mount_point')
+        local volume_id="mp${volume_index}"
+
+        # Check if the volume is already configured
+        if pct config "$CTID" | grep -q "${volume_id}:.*,mp=${mount_point}"; then
+            log_info "Volume '${volume_name}' (${volume_id}) already exists for CTID $CTID."
+        else
+            log_info "Creating and attaching volume '${volume_name}' to CTID $CTID..."
+            run_pct_command set "$CTID" --"${volume_id}" "${storage_pool}:${size_gb},mp=${mount_point}" || log_fatal "Failed to create volume '${volume_name}'."
+        fi
+        volume_index=$((volume_index + 1))
+    done
+}
+
+# =====================================================================================
 # Function: ensure_container_disk_size
 # Description: Ensures the container's root disk size matches the configuration.
 # Arguments:
@@ -773,7 +831,15 @@ ensure_container_disk_size() {
 # =====================================================================================
 start_container() {
     local CTID="$1"
-    log_info "Attempting to start container CTID: $CTID with retries..."
+    log_info "Attempting to start container CTID: $CTID..."
+
+    # Check if the container is already running
+    if pct status "$CTID" | grep -q "status: running"; then
+        log_info "Container $CTID is already running. Skipping start attempt."
+        return 0
+    fi
+
+    log_info "Container $CTID is not running. Proceeding with start..."
     local attempts=0 # Counter for startup attempts
     local max_attempts=3 # Maximum number of startup attempts
     local interval=5 # Delay between retries in seconds
@@ -1050,10 +1116,66 @@ create_template_snapshot() {
 
     log_info "Creating snapshot '$snapshot_name' for template container $CTID..."
     # Execute the `pct snapshot` command
-    if ! run_pct_command snapshot "$CTID" "$snapshot_name"; then
-        log_fatal "Failed to create snapshot '$snapshot_name' for CTID $CTID."
+    local snapshot_output
+    if ! snapshot_output=$(run_pct_command snapshot "$CTID" "$snapshot_name" 2>&1); then
+        if [[ "$snapshot_output" == *"snapshot feature is not available"* ]]; then
+            log_warn "[WARNING] Snapshot feature is not available for CTID $CTID. Skipping snapshot creation."
+        else
+            log_fatal "Failed to create snapshot '$snapshot_name' for CTID $CTID. Error: $snapshot_output"
+        fi
+    else
+        log_info "Snapshot '$snapshot_name' created successfully."
     fi
-    log_info "Snapshot '$snapshot_name' created successfully."
+}
+
+create_pre_configured_snapshot() {
+    local CTID="$1"
+    local snapshot_name="pre-configured"
+    log_info "Checking for pre-configured snapshot for CTID: $CTID"
+
+    if pct listsnapshot "$CTID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for CTID $CTID. Deleting and recreating."
+        if ! run_pct_command delsnapshot "$CTID" "$snapshot_name"; then
+            log_fatal "Failed to delete existing snapshot '$snapshot_name' for CTID $CTID."
+        fi
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for container $CTID..."
+    local snapshot_output
+    if ! snapshot_output=$(run_pct_command snapshot "$CTID" "$snapshot_name" 2>&1); then
+        if [[ "$snapshot_output" == *"snapshot feature is not available"* ]]; then
+            log_warn "[WARNING] Snapshot feature is not available for CTID $CTID. Skipping snapshot creation."
+        else
+            log_fatal "Failed to create snapshot '$snapshot_name' for CTID $CTID. Error: $snapshot_output"
+        fi
+    else
+        log_info "Snapshot '$snapshot_name' created successfully."
+    fi
+}
+
+create_final_form_snapshot() {
+    local CTID="$1"
+    local snapshot_name="final-form"
+    log_info "Checking for final-form snapshot for CTID: $CTID"
+
+    if pct listsnapshot "$CTID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for CTID $CTID. Deleting and recreating."
+        if ! run_pct_command delsnapshot "$CTID" "$snapshot_name"; then
+            log_fatal "Failed to delete existing snapshot '$snapshot_name' for CTID $CTID."
+        fi
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for container $CTID..."
+    local snapshot_output
+    if ! snapshot_output=$(run_pct_command snapshot "$CTID" "$snapshot_name" 2>&1); then
+        if [[ "$snapshot_output" == *"snapshot feature is not available"* ]]; then
+            log_warn "[WARNING] Snapshot feature is not available for CTID $CTID. Skipping snapshot creation."
+        else
+            log_fatal "Failed to create snapshot '$snapshot_name' for CTID $CTID. Error: $snapshot_output"
+        fi
+    else
+        log_info "Snapshot '$snapshot_name' created successfully."
+    fi
 }
 
 # =====================================================================================
@@ -1300,14 +1422,10 @@ delete_vm() {
         return 0
     fi
 
-    # Ensure VM is stopped before deleting
-    # Ensure the VM is stopped before attempting deletion
-    if qm status "$vm_id" | grep -q "running"; then
-        log_info "VM ID $vm_id is running. Attempting to stop before deletion."
-        stop_vm "$vm_id" # Call stop_vm function
-    fi
+    # Ensure the VM is stopped before deleting
+    stop_vm "$vm_id"
 
-    # Execute the `qm destroy` command to delete the VM
+    # Execute the `qm destroy` command
     if ! run_qm_command destroy "$vm_id"; then
         log_fatal "'qm destroy' command failed for VM ID $vm_id."
     fi
@@ -1315,533 +1433,123 @@ delete_vm() {
 }
 
 # =====================================================================================
-# Function: setup_phoenix_apparmor_profile
-# Description: Creates and loads a custom AppArmor profile for Phoenix unprivileged containers.
-#              This profile is based on lxc-default-with-mounting but is managed by Phoenix.
+# Function: setup_hypervisor
+# Description: Executes the initial hypervisor setup script.
 # =====================================================================================
-setup_phoenix_apparmor_profile() {
-    log_info "Setting up Phoenix AppArmor profile..."
-    local source_profile="/etc/apparmor.d/lxc/lxc-default-with-mounting"
-    local dest_profile_path="/etc/apparmor.d/lxc/lxc-default-with-mounting-phoenix"
-    local original_profile_name_in_file="lxc-container-default-with-mounting"
-    local dest_profile_name_in_file="lxc-container-default-with-mounting-phoenix"
-
-    if [ ! -f "$dest_profile_path" ]; then
-        log_info "Phoenix AppArmor profile not found. Creating from template..."
-        if [ ! -f "$source_profile" ]; then
-            log_fatal "AppArmor source profile '$source_profile' not found. Cannot create Phoenix profile."
-        fi
-        
-        if ! cp "$source_profile" "$dest_profile_path"; then
-            log_fatal "Failed to copy AppArmor profile to '$dest_profile_path'."
-        fi
-        
-        # The profile name inside the file needs to be updated to be unique.
-        if ! sed -i "s/profile ${original_profile_name_in_file}/profile ${dest_profile_name_in_file}/" "$dest_profile_path"; then
-            log_fatal "Failed to update profile name in '$dest_profile_path'."
-        fi
-        
-        log_info "Phoenix AppArmor profile created at '$dest_profile_path'."
-    else
-        log_info "Phoenix AppArmor profile already exists."
-    fi
-
-    # Ensure the profile allows mounting proc, sysfs, and cgroup, which are necessary for idmap generation.
-    local required_mount_rules=(
-        "  mount fstype=proc,"
-        "  mount fstype=sysfs,"
-        "  mount fstype=cgroup,"
-    )
-    
-    local profile_changed=false
-    for rule in "${required_mount_rules[@]}"; do
-        if ! grep -qF -- "$rule" "$dest_profile_path"; then
-            log_info "Adding required mount rule to Phoenix AppArmor profile: $rule"
-            # Insert the rule before the final closing brace '}' of the profile definition.
-            sed -i '$i\'"$rule"'' "$dest_profile_path" || log_fatal "Failed to add mount rule to AppArmor profile."
-            profile_changed=true
-        else
-            log_info "Required mount rule already exists in the profile: $rule"
-        fi
-    done
-
-    if [ "$profile_changed" = true ]; then
-        log_info "Mount rules added successfully."
-    fi
-
-    log_info "Reloading AppArmor profiles to load Phoenix profile..."
-    # Use apparmor_parser to reload all profiles. -r is replace.
-    if ! apparmor_parser -r /etc/apparmor.d/*; then
-        log_warn "Failed to reload AppArmor profiles. This might cause issues if the profile is new."
-    else
-        log_info "AppArmor profiles reloaded successfully."
-    fi
-}
-
-# =====================================================================================
-# Function: handle_hypervisor_setup_state
-# Description: Orchestrates the execution of hypervisor setup scripts.
-# =====================================================================================
-# =====================================================================================
-# Function: handle_hypervisor_setup_state
-# Description: Orchestrates the execution of hypervisor setup scripts. It reads and
-#              validates the hypervisor configuration, then sequentially executes
-#              a predefined list of setup feature scripts.
-# Arguments:
-#   None (uses global HYPERVISOR_CONFIG_FILE, HYPERVISOR_CONFIG_SCHEMA_FILE).
-# Returns:
-#   None. Exits with a fatal error if configuration validation fails or any
-#   setup script is not found or fails.
-# =====================================================================================
-handle_hypervisor_setup_state() {
-    log_info "Starting hypervisor setup orchestration."
-
-    # 1. Read and validate hypervisor_config.json
-    # Read and validate hypervisor_config.json against its schema
-    log_info "Reading and validating hypervisor configuration from $VM_CONFIG_FILE..."
-    if [ ! -f "$VM_CONFIG_FILE" ]; then
-        log_fatal "Hypervisor configuration file not found at $VM_CONFIG_FILE."
-    fi
-    if [ ! -f "$VM_CONFIG_SCHEMA_FILE" ]; then
-        log_fatal "Hypervisor configuration schema file not found at $VM_CONFIG_SCHEMA_FILE."
-    fi
-
-    # Validate the configuration file using `ajv` against its schema
-    if ! ajv validate -s "$VM_CONFIG_SCHEMA_FILE" -d "$VM_CONFIG_FILE"; then
-        log_fatal "Hypervisor configuration validation failed. Please check $VM_CONFIG_FILE against $VM_CONFIG_SCHEMA_FILE."
-    fi
-    log_info "Hypervisor configuration validated successfully."
-
-    setup_phoenix_apparmor_profile
-
-    # Execute hypervisor feature scripts in a predefined sequence
-    log_info "Executing hypervisor setup feature scripts..."
-
-    log_info "Setting execute permissions for setup scripts..."
-    chmod -R +x "${SCRIPT_DIR}/hypervisor_setup/"
-    chmod -R +x "${SCRIPT_DIR}/lxc_setup/"
-    chmod -R +x "${SCRIPT_DIR}/tests/"
-
-    local hypervisor_scripts=(
+setup_hypervisor() {
+    log_info "Starting hypervisor setup..."
+    local setup_scripts=(
         "hypervisor_initial_setup.sh"
         "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_install_nvidia.sh"
-        "hypervisor_feature_create_admin_user.sh"
+        "hypervisor_feature_setup_firewall.sh"
         "hypervisor_feature_setup_nfs.sh"
         "hypervisor_feature_setup_samba.sh"
+        "hypervisor_feature_create_admin_user.sh"
     )
 
-    for script_name in "${hypervisor_scripts[@]}"; do # Iterate through each script name
-        local script_path="$(dirname "$0")/hypervisor_setup/$script_name" # Construct full script path
-        log_info "Executing hypervisor script: $script_name"
-
-        # Check if the script file exists
+    for script in "${setup_scripts[@]}"; do
+        local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
+        log_info "Executing setup script: $script..."
         if [ ! -f "$script_path" ]; then
-            log_error "Hypervisor setup script not found at $script_path."
-            continue # Skip to the next script
+            log_fatal "Hypervisor setup script not found at $script_path."
         fi
-
-        # Execute the hypervisor setup script
-        # Execute the hypervisor setup script, passing the config file to all
         if ! "$script_path" "$VM_CONFIG_FILE"; then
-            log_error "Hypervisor setup script '$script_name' failed."
+            log_fatal "Hypervisor setup script '$script' failed."
         fi
     done
 
-    echo "------------------------------------------------------------"
-    echo "Running post-setup verification tests..."
-    echo "------------------------------------------------------------"
-    /usr/local/phoenix_hypervisor/bin/tests/phoenix_hypervisor_tests.sh 2>&1 | tee -a "$LOG_FILE"
-    log_info "Hypervisor setup verification complete. Please review the test output above."
-
-    log_info "All hypervisor setup scripts executed successfully."
+    log_info "Hypervisor setup completed successfully."
 }
 
 # =====================================================================================
-# Function: setup_logging
-# Description: Sets up the logging by creating the log directory and file.
-# =====================================================================================
-# =====================================================================================
-# Function: setup_logging
-# Description: Initializes the logging environment by creating the log directory
-#              and the main log file if they do not already exist.
+# Function: orchestrate_container
+# Description: Main state machine for orchestrating a single LXC container.
 # Arguments:
-#   None (uses global LOG_FILE).
-# Returns:
-#   None. Exits with a fatal error if log directory or file creation fails.
+#   $1 - The CTID of the container to orchestrate.
 # =====================================================================================
-setup_logging() {
-    local log_dir # Variable to store the log directory path
-    log_dir=$(dirname "$LOG_FILE") # Extract directory from LOG_FILE path
-    # Create log directory if it doesn't exist
-    if [ ! -d "$log_dir" ]; then
-        if ! mkdir -p "$log_dir"; then
-            echo "FATAL: Failed to create log directory at $log_dir." >&2
-            exit 1
-        fi
-    fi
-    # Create log file if it doesn't exist
-    if ! touch "$LOG_FILE"; then
-        echo "FATAL: Failed to create log file at $LOG_FILE." >&2
-        exit 1
-    fi
-}
-
-# =====================================================================================
-# Function: check_dependencies
-# Description: Checks for necessary command-line tools and installs them if missing.
-# =====================================================================================
-# =====================================================================================
-# Function: disable_proxmox_enterprise_repos
-# Description: Temporarily disables Proxmox enterprise repositories to prevent apt update failures.
-# =====================================================================================
-disable_proxmox_enterprise_repos() {
-    local repo_dir="/etc/apt/sources.list.d"
-    log_info "Disabling Proxmox enterprise and Ceph repositories..."
-
-    # Loop through all files in the repository directory
-    for file in "$repo_dir"/*; do
-        # Check if the file is a regular file and not already disabled
-        if [ -f "$file" ] && [[ "$file" != *.disabled ]]; then
-            # Check if the filename contains 'pve-enterprise' or 'ceph'
-            if [[ "$file" =~ pve-enterprise ]] || [[ "$file" =~ ceph ]]; then
-                local disabled_file="${file}.disabled"
-                log_info "Disabling repository: $file -> $disabled_file"
-                mv "$file" "$disabled_file" || log_fatal "Failed to disable repository $file."
-            fi
-        fi
-    done
-    log_info "Proxmox enterprise and Ceph repositories disabled."
-}
-
-# =====================================================================================
-# Function: enable_proxmox_enterprise_repos
-# Description: Re-enables Proxmox enterprise and Ceph repositories.
-# =====================================================================================
-enable_proxmox_enterprise_repos() {
-    local repo_dir="/etc/apt/sources.list.d"
-    log_info "Enabling Proxmox enterprise and Ceph repositories..."
-
-    # Loop through all files in the repository directory
-    for file in "$repo_dir"/*; do
-        # Check if the file is a regular file and ends with '.disabled'
-        if [ -f "$file" ] && [[ "$file" == *.disabled ]]; then
-            # Check if the filename contains 'pve-enterprise' or 'ceph'
-            if [[ "$file" =~ pve-enterprise ]] || [[ "$file" =~ ceph ]]; then
-                local enabled_file="${file%.disabled}"
-                log_info "Enabling repository: $file -> $enabled_file"
-                mv "$file" "$enabled_file" || log_fatal "Failed to enable repository $file."
-            fi
-        fi
-    done
-    log_info "Proxmox enterprise and Ceph repositories enabled."
-}
-
-# =====================================================================================
-# Function: check_dependencies
-# Description: Checks for necessary command-line tools and installs them if missing.
-# =====================================================================================
-check_dependencies() {
-    log_info "Checking for dependencies..."
-    local dependencies=("jq" "pct" "qm" "ajv")
-    local missing_dependencies=()
-
-    for cmd in "${dependencies[@]}"; do
-        if ! command -v "$cmd" &> /dev/null; then
-            missing_dependencies+=("$cmd")
-        fi
-    done
-
-    if [ ${#missing_dependencies[@]} -ne 0 ]; then
-        log_info "Missing dependencies: ${missing_dependencies[*]}. Attempting to install..."
-        
-        # Temporarily disable enterprise repos to avoid apt update failures
-        disable_proxmox_enterprise_repos
-        
-        if ! apt-get update; then
-            log_fatal "Failed to update apt repositories. Please check your internet connection and repository configuration."
-        fi
-
-        for cmd in "${missing_dependencies[@]}"; do
-            case "$cmd" in
-                jq)
-                    if ! apt-get install -y jq; then
-                        log_fatal "Failed to install jq. Please install it manually."
-                    fi
-                    ;;
-                ajv)
-                    if ! command -v node > /dev/null || ! command -v npm > /dev/null; then
-                        log_info "Node.js or npm not found. Attempting to install..."
-                        if ! apt-get install -y nodejs npm; then
-                            log_fatal "Failed to install Node.js and npm. Please install them manually."
-                        fi
-                        log_info "Node.js and npm installed successfully."
-                    fi
-                    if ! npm install -g ajv-cli; then
-                        log_fatal "Failed to install ajv-cli. Please ensure you have Node.js and npm installed and that the installation is working correctly."
-                    fi
-                    ;;
-                # pct and qm are part of Proxmox, so we don't install them here.
-                # If they are missing, something is seriously wrong with the environment.
-            esac
-        done
-        
-        # Re-enable enterprise repos
-        enable_proxmox_enterprise_repos
-    else
-        log_info "All dependencies are satisfied."
-    fi
-}
-
-# =====================================================================================
-# Function: ensure_host_idmap_configured
-# Description: Checks for the existence of /etc/subuid and /etc/subgid files, which are
-#              critical for unprivileged container user namespace mapping. If the files
-#              are missing, it creates them with a default mapping for the root user.
-#              This is a mandatory pre-flight check.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if file creation fails.
-# =====================================================================================
-ensure_host_idmap_configured() {
-    log_info "Performing host prerequisite check for idmap configuration..."
-    local subuid_file="/etc/subuid"
-    local subgid_file="/etc/subgid"
-    local required_content="root:100000:65536"
-    
-    # Ensure files exist
-    touch "$subuid_file" "$subgid_file"
-
-    # Check /etc/subuid
-    if ! grep -qF "$required_content" "$subuid_file"; then
-        log_warn "Required root mapping not found in $subuid_file. Adding it now."
-        echo "$required_content" >> "$subuid_file" || log_fatal "Failed to configure $subuid_file."
-    fi
-
-    # Check /etc/subgid
-    if ! grep -qF "$required_content" "$subgid_file"; then
-        log_warn "Required root mapping not found in $subgid_file. Adding it now."
-        echo "$required_content" >> "$subgid_file" || log_fatal "Failed to configure $subgid_file."
-    fi
-
-    log_info "Host idmap configuration check passed."
-}
-
-ensure_container_configured() {
+orchestrate_container() {
     local CTID="$1"
-    log_info "Ensuring container $CTID is correctly configured..."
-    ensure_container_disk_size "$CTID"
-    apply_configurations "$CTID"
-}
-
-verify_idmap_exists() {
-    local ctid="$1"
-    local conf_file="/etc/pve/lxc/${ctid}.conf"
-    log_info "Verifying idmap existence in $conf_file..."
-
-    if [ ! -f "$conf_file" ]; then
-        log_fatal "Container config file not found: $conf_file."
-    fi
-
-    if ! grep -q "^lxc.idmap:" "$conf_file"; then
-        log_fatal "IDMAP VERIFICATION FAILED: No idmap found in $conf_file after generation cycle."
-    fi
-
-    log_info "IDMAP verification successful."
-}
-
-ensure_dependencies_running() {
-    local ctid="$1"
-    log_info "Checking dependencies for CTID $ctid..."
-    local dependencies
-    dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
-
-    if [ -z "$dependencies" ]; then
-        log_info "No dependencies found for CTID $ctid."
-        return 0
-    fi
-
-    for dep_ctid in $dependencies; do
-        log_info "Checking status of dependency CTID $dep_ctid..."
-        if ! pct status "$dep_ctid" | grep -q "running"; then
-            log_info "Dependency CTID $dep_ctid is not running. Orchestrating it now..."
-            orchestrate_container_stateless "$dep_ctid"
+    log_info "Starting orchestration for CTID: $CTID"
+ 
+    if [ "$RECONFIGURE" = true ]; then
+        log_info "Reconfigure flag is set. Rolling back to pre-configured state."
+        if pct listsnapshot "$CTID" | grep -q "pre-configured"; then
+            run_pct_command stop "$CTID" || log_warn "Container $CTID was not running."
+            run_pct_command snapshot-rollback "$CTID" "pre-configured" || log_fatal "Failed to rollback to pre-configured snapshot."
         else
-            log_info "Dependency CTID $dep_ctid is already running."
+            log_fatal "No 'pre-configured' snapshot found for CTID $CTID. Cannot reconfigure."
         fi
-    done
-}
+    fi
+ 
+    validate_inputs "$CTID"
+    if ! ensure_container_defined "$CTID"; then
+        return 1
+    fi
+    apply_configurations "$CTID"
+    apply_shared_volumes "$CTID"
+    apply_dedicated_volumes "$CTID"
+    ensure_container_disk_size "$CTID"
+    start_container "$CTID"
+    apply_features "$CTID"
+    create_pre_configured_snapshot "$CTID"
+    run_application_script "$CTID"
+    run_health_check "$CTID"
+    create_final_form_snapshot "$CTID"
+    run_post_deployment_validation "$CTID"
 
-orchestrate_container_stateless() {
-    local ctid_to_orchestrate="$1"
-    log_info "Starting stateless orchestration for CTID $ctid_to_orchestrate..."
-
-    # Ensure dependencies are running before proceeding
-    ensure_dependencies_running "$ctid_to_orchestrate"
-
-    # 1. Define the container and set unprivileged flag if needed
-    ensure_container_defined "$ctid_to_orchestrate"
-
-    # 2. Apply all other configurations, which now includes idmap setup
-    ensure_container_configured "$ctid_to_orchestrate"
-
-    # 3. Perform start/stop cycle to apply idmap and other settings
-    generate_idmap_cycle "$ctid_to_orchestrate"
-
-    # 4. Verify idmap was created
-    verify_idmap_exists "$ctid_to_orchestrate"
-
-    # 5. Apply shared volumes now that idmap is guaranteed to exist
-    apply_shared_volumes "$ctid_to_orchestrate"
-
-    # 6. Start the container for application setup
-    start_container "$ctid_to_orchestrate"
-
-    # 8. Apply features and run application scripts
-    apply_features "$ctid_to_orchestrate"
-    run_application_script "$ctid_to_orchestrate"
-    run_health_check "$ctid_to_orchestrate"
-    run_post_deployment_validation "$ctid_to_orchestrate"
-
-    # 9. Create snapshot if it's a template
-    create_template_snapshot "$ctid_to_orchestrate"
-
-    log_info "Successfully completed stateless orchestration for CTID $ctid_to_orchestrate."
+    log_info "Orchestration for CTID $CTID completed successfully."
 }
 
 # =====================================================================================
-# Function: main
-# Description: The main entry point for the Phoenix Orchestrator script. It sets up
-#              logging, parses arguments, and then dispatches to appropriate handler
-#              functions based on the requested operation mode (hypervisor setup,
-#              VM management, or LXC container orchestration).
-# Arguments:
-#   $@ - All command-line arguments passed to the script.
-# Returns:
-#   Exits with status 0 on successful completion, or a non-zero status on failure
-#   (handled by exit_script).
+# Main Execution
 # =====================================================================================
 main() {
-    # Initial Setup: Configure logging and redirect stdout/stderr
-    setup_logging
-    ensure_host_idmap_configured
-    exec &> >(tee -a "$LOG_FILE") # Redirect stdout/stderr to screen and log file
+    setup_logging "$LOG_FILE"
+    parse_arguments "$@"
 
-
-    check_dependencies
-
-    log_info "============================================================"
-    log_info "Phoenix Orchestrator Started"
-    log_info "============================================================"
-
-    parse_arguments "$@" # Parse command-line arguments
-
-    # Dispatch to the appropriate handler function based on the operation mode
     if [ "$SETUP_HYPERVISOR" = true ]; then
-        handle_hypervisor_setup_state # Handle hypervisor setup
-        apply_shared_volumes # Apply shared volumes after hypervisor setup
+        setup_hypervisor
     elif [ "$CREATE_VM" = true ]; then
-        create_vm "$VM_NAME" # Create a new VM
+        create_vm "$VM_NAME"
     elif [ "$START_VM" = true ]; then
-        start_vm "$VM_ID" # Start an existing VM
+        start_vm "$VM_ID"
     elif [ "$STOP_VM" = true ]; then
-        stop_vm "$VM_ID" # Stop an existing VM
+        stop_vm "$VM_ID"
     elif [ "$DELETE_VM" = true ]; then
-        delete_vm "$VM_ID" # Delete an existing VM
-    else
-        if [ ${#CTID_LIST[@]} -eq 0 ]; then
-            log_fatal "No CTID provided for container orchestration."
+        delete_vm "$VM_ID"
+    elif [ "$LETSGO" = true ]; then
+        log_info "LetsGo mode: Orchestrating all containers with dependency resolution."
+        local pending_ctids
+        pending_ctids=($(jq -r '.lxc_configs | keys | .[]' "$LXC_CONFIG_FILE"))
+        local successfully_processed_in_pass=1
+        while [ ${#pending_ctids[@]} -gt 0 ] && [ $successfully_processed_in_pass -gt 0 ]; do
+            successfully_processed_in_pass=0
+            local remaining_ctids=()
+            log_info "--- Starting orchestration pass. Pending: ${pending_ctids[*]} ---"
+            for ctid in "${pending_ctids[@]}"; do
+                if orchestrate_container "$ctid"; then
+                    log_info "Successfully orchestrated CTID $ctid."
+                    successfully_processed_in_pass=$((successfully_processed_in_pass + 1))
+                else
+                    log_warn "Could not orchestrate CTID $ctid in this pass. Will retry."
+                    remaining_ctids+=("$ctid")
+                fi
+            done
+            pending_ctids=("${remaining_ctids[@]}")
+        done
+        if [ ${#pending_ctids[@]} -gt 0 ]; then
+            log_fatal "Could not orchestrate all containers. Remaining: ${pending_ctids[*]}. Check for circular dependencies or other fatal errors."
         fi
-
-        # Topologically sort the CTIDs based on dependencies
-        local sorted_ctids
-        sorted_ctids=$(topological_sort "${CTID_LIST[@]}")
-
-        log_info "Orchestration order: $sorted_ctids"
-
-        for ctid in $sorted_ctids; do
-            validate_inputs "$ctid" # Validate inputs for each LXC container
-            orchestrate_container_stateless "$ctid"
+    else
+        for ctid in "${CTID_LIST[@]}"; do
+            orchestrate_container "$ctid" || log_fatal "Failed to orchestrate container $ctid."
         done
     fi
 
-    log_info "============================================================"
-    log_info "Phoenix Orchestrator Finished"
-    log_info "============================================================"
+    log_info "Phoenix Orchestrator finished."
     exit_script 0
 }
 
-# --- Script Execution ---
-# Call the main function with all command-line arguments to start execution.
-# =====================================================================================
-# Function: topological_sort
-# Description: Performs a topological sort on a list of CTIDs based on their
-#              dependencies defined in the configuration file.
-# Arguments:
-#   $@ - A list of CTIDs to be sorted.
-# Returns:
-#   A space-separated string of sorted CTIDs.
-# =====================================================================================
-topological_sort() {
-    local -a initial_list=("$@")
-    local -A adj_list
-    local -A in_degree
-    local -a queue
-    local -a sorted_list
-    local -A all_nodes
-
-    # Build the adjacency list and in-degree map
-    for ctid in "${initial_list[@]}"; do
-        all_nodes["$ctid"]=1
-        local dependencies
-        # Add explicit dependencies
-        local dependencies
-        dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
-        in_degree["$ctid"]=${in_degree["$ctid"]:-0}
-        for dep in $dependencies; do
-            all_nodes["$dep"]=1
-            adj_list["$dep"]="${adj_list["$dep"]} $ctid"
-            in_degree["$ctid"]=$((in_degree["$ctid"] + 1))
-        done
-
-        # Add implicit clone dependency
-        local clone_from_ctid
-        clone_from_ctid=$(jq_get_value "$ctid" ".clone_from_ctid" || echo "")
-        if [ -n "$clone_from_ctid" ]; then
-            all_nodes["$clone_from_ctid"]=1
-            adj_list["$clone_from_ctid"]="${adj_list["$clone_from_ctid"]} $ctid"
-            in_degree["$ctid"]=$((in_degree["$ctid"] + 1))
-        fi
-    done
-
-    # Initialize the queue with nodes that have an in-degree of 0
-    for ctid in "${!all_nodes[@]}"; do
-        if [ -z "${in_degree[$ctid]}" ] || [ "${in_degree[$ctid]}" -eq 0 ]; then
-            queue+=("$ctid")
-        fi
-    done
-
-    # Process the queue
-    while [ ${#queue[@]} -gt 0 ]; do
-        local u=${queue[0]}
-        queue=("${queue[@]:1}")
-        sorted_list+=("$u")
-
-        for v in ${adj_list[$u]}; do
-            in_degree["$v"]=$((in_degree["$v"] - 1))
-            if [ "${in_degree[$v]}" -eq 0 ]; then
-                queue+=("$v")
-            fi
-        done
-    done
-
-    # Check for cycles
-    if [ ${#sorted_list[@]} -ne ${#all_nodes[@]} ]; then
-        log_fatal "A cycle was detected in the dependency graph. Cannot proceed."
-    fi
-
-    echo "${sorted_list[@]}"
-}
-
+# --- Start execution ---
 main "$@"

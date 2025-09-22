@@ -83,22 +83,20 @@ install_and_configure_docker() {
     else
         # Add Docker Official Repository
         log_info "Adding Docker official repository in CTID: $CTID"
-        pct_exec "$CTID" apt-get update # Update package lists
-        pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release # Install prerequisites
-        pct_exec "$CTID" mkdir -p /etc/apt/keyrings # Create keyrings directory
-        if [ ! -f "/etc/apt/keyrings/docker.gpg" ]; then # Check if GPG key exists
-            pct_exec "$CTID" bash -c "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg" # Download and dearmor GPG key
-            pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg # Set permissions for GPG key
-        else
-            log_info "Docker GPG key already exists. Skipping download."
-        fi
-        pct_exec "$CTID" bash -c "echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null" # Add Docker repository
-        pct_exec "$CTID" apt-get update # Update package lists again
+        pct_exec "$CTID" apt-get update
+        pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release
+        pct_exec "$CTID" mkdir -p /etc/apt/keyrings
+        pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
+        pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
+        pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
+        pct_exec "$CTID" rm /tmp/docker.gpg
+        pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+        pct_exec "$CTID" apt-get update
 
         # Install Docker Engine
         # Install Docker Engine components
         log_info "Installing Docker Engine in CTID: $CTID"
-        pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin # Install Docker
+        pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     fi
 
     # --- Conditional NVIDIA Container Toolkit Installation ---
@@ -109,11 +107,11 @@ install_and_configure_docker() {
         ensure_nvidia_repo_is_configured "$CTID" # Ensure NVIDIA repository is configured
 
         # Check if NVIDIA Container Toolkit is already installed
-        if pct_exec "$CTID" dpkg -l | grep -q nvidia-container-toolkit; then
+        if pct_exec "$CTID" bash -c "dpkg -l | grep -q nvidia-container-toolkit"; then
             log_info "NVIDIA Container Toolkit already installed in CTID $CTID."
         else
             log_info "Installing NVIDIA Container Toolkit in CTID: $CTID"
-            pct_exec "$CTID" apt-get install -y nvidia-container-toolkit # Install toolkit
+            pct_exec "$CTID" apt-get install -y nvidia-container-toolkit
         fi
 
         # --- Safely merge NVIDIA runtime configuration using jq ---
@@ -124,7 +122,7 @@ install_and_configure_docker() {
 
         # Ensure the /etc/docker directory and daemon.json file exist
         # Ensure the /etc/docker directory and daemon.json file exist
-        pct_exec "$CTID" bash -c "mkdir -p /etc/docker && touch $docker_daemon_config_file" # Create directory and file
+        pct_exec "$CTID" bash -c "mkdir -p /etc/docker && touch $docker_daemon_config_file"
 
         # Merge the new config with the existing one, handling empty file case
         pct_exec "$CTID" bash -c "jq -s 'if (.[0] | type) == \"null\" then {} else .[0] end * .[1]' '$docker_daemon_config_file' <(echo '$nvidia_runtime_config') > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '$docker_daemon_config_file'"
@@ -135,8 +133,8 @@ install_and_configure_docker() {
     # Start and enable Docker service
     # Start and enable Docker service
     log_info "Starting and enabling Docker service in CTID: $CTID"
-    pct_exec "$CTID" systemctl restart docker # Restart Docker service
-    pct_exec "$CTID" systemctl enable docker # Enable Docker service on boot
+    pct_exec "$CTID" systemctl restart docker
+    pct_exec "$CTID" systemctl enable docker
 
     log_info "Docker installation and configuration complete for CTID $CTID."
 }
@@ -170,7 +168,7 @@ setup_portainer() {
     # Deploy Portainer server or agent based on the configured role
     if [ "$portainer_role" == "server" ]; then
         # Check if Portainer server container already exists
-        if pct_exec "$CTID" docker ps -a --format '{{.Names}}' | grep -q "^portainer$"; then
+        if pct_exec "$CTID" bash -c "docker ps -a --format '{{.Names}}' | grep -q \"^portainer$\""; then
             log_info "Portainer server container already exists in CTID $CTID."
         else
             log_info "Deploying Portainer server container in CTID: $CTID"
@@ -182,7 +180,7 @@ setup_portainer() {
         fi
     elif [ "$portainer_role" == "agent" ]; then
         # Check if Portainer agent container already exists
-        if pct_exec "$CTID" docker ps -a --format '{{.Names}}' | grep -q "^portainer_agent$"; then
+        if pct_exec "$CTID" bash -c "docker ps -a --format '{{.Names}}' | grep -q \"^portainer_agent$\""; then
             log_info "Portainer agent container already exists in CTID $CTID."
         else
             log_info "Deploying Portainer agent container in CTID: $CTID"
@@ -192,7 +190,11 @@ setup_portainer() {
             portainer_agent_port=$(jq_get_value "$CTID" ".portainer_agent_port") # Retrieve agent port from config
             local agent_cluster_addr="tcp://${portainer_server_ip}:${portainer_agent_port}" # Construct agent cluster address
 
-            pct_exec "$CTID" docker run -d -p 9001:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes -e AGENT_CLUSTER_ADDR="$agent_cluster_addr" portainer/agent
+            pct_exec "$CTID" docker run -d -p 9001:9001 --name portainer_agent --restart=always \
+                -v /var/run/docker.sock:/var/run/docker.sock \
+                -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+                -e AGENT_CLUSTER_ADDR="$agent_cluster_addr" \
+                portainer/agent
         fi
     fi
 }

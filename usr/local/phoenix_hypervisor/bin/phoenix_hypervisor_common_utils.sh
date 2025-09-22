@@ -134,6 +134,25 @@ log_fatal() {
 }
 
 # =====================================================================================
+# Function: setup_logging
+# Description: Ensures the log directory exists and the log file is available.
+# Arguments:
+#   $1 - The full path to the log file.
+# =====================================================================================
+setup_logging() {
+    local log_file="$1"
+    local log_dir
+    log_dir=$(dirname "$log_file")
+
+    if [ ! -d "$log_dir" ]; then
+        # Create the log directory if it doesn't exist
+        mkdir -p "$log_dir" || log_fatal "Failed to create log directory: $log_dir"
+    fi
+    # Touch the log file to ensure it exists
+    touch "$log_file" || log_fatal "Failed to create log file: $log_file"
+}
+ 
+# =====================================================================================
 # Function: log_plain_output
 # Description: Logs multi-line output from a variable or command, preserving formatting.
 #              Designed to be used with pipes.
@@ -175,15 +194,15 @@ pct_exec() {
         log_info "Executing command inside container: ${cmd_args[*]}"
         # When inside the container, execute the command directly using bash -c
         # This is necessary because 'pct' is a host-only command.
-        if ! bash -c "${cmd_args[*]}"; then
-            log_error "Command failed inside container: '${cmd_args[*]}'"
+        if ! "${cmd_args[@]}"; then
+            log_error "Command failed inside container: '${cmd_args[@]}'"
             return 1
         fi
     else
         # When on the host, use 'pct exec' to run the command inside the container
-        log_info "Executing command from host in CTID $ctid: ${cmd_args[*]}"
-        if ! pct exec "$ctid" -- bash -c "${cmd_args[*]}"; then
-            log_error "Command failed in CTID $ctid: '${cmd_args[*]}'"
+        log_info "Executing command from host in CTID $ctid: ${cmd_args[@]}"
+        if ! pct exec "$ctid" -- "${cmd_args[@]}"; then
+            log_error "Command failed in CTID $ctid: '${cmd_args[@]}'"
             return 1
         fi
     fi
@@ -204,6 +223,9 @@ jq_get_value() {
     local ctid="$1"
     local jq_query="$2"
     local value
+
+    # Log the exact query for debugging purposes
+    log_debug "Executing jq query for CTID $ctid: .lxc_configs[\$ctid | tostring] | ${jq_query}"
 
     # Execute jq to query the LXC config file for the specified CTID and query
     value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
@@ -308,9 +330,13 @@ ensure_nvidia_repo_is_configured() {
     log_info "Ensuring NVIDIA CUDA repository is configured in CTID $ctid..."
 
     # Check if the NVIDIA CUDA repository is already configured
-    if pct_exec "$ctid" [ -f /etc/apt/sources.list.d/cuda.list ]; then
+    # Check if the NVIDIA CUDA repository is already configured.
+    # The command will return a non-zero exit code if the file does not exist, which is the expected behavior.
+    if pct_exec "$ctid" test -f /etc/apt/sources.list.d/cuda.list; then
         log_info "NVIDIA CUDA repository already configured. Skipping."
         return 0
+    else
+        log_info "NVIDIA CUDA repository not found. Proceeding with configuration."
     fi
 
     # Retrieve NVIDIA repository URL from LXC config file
@@ -322,9 +348,9 @@ ensure_nvidia_repo_is_configured() {
     # Download and install CUDA repository pin
     pct_exec "$ctid" wget -qO /etc/apt/preferences.d/cuda-repository-pin-600 "$cuda_pin_url"
     # Download and install CUDA public key
-    pct_exec "$ctid" curl -fsSL "$cuda_key_url" | pct_exec "$ctid" gpg --dearmor -o "$cuda_keyring_path"
+    pct_exec "$ctid" bash -c "curl -fsSL \"$cuda_key_url\" | gpg --dearmor -o \"$cuda_keyring_path\""
     # Add CUDA repository to sources list
-    pct_exec "$ctid" bash -c "echo \"deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /\" > /etc/apt/sources.list.d/cuda.list"
+    pct_exec "$ctid" bash -c "echo 'deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /' > /etc/apt/sources.list.d/cuda.list"
     # Update apt package list
     pct_exec "$ctid" apt-get update
 }

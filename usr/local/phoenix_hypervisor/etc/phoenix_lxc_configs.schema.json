@@ -29,6 +29,20 @@
                 "^[0-9]+$": {
                     "type": "object",
                     "properties": {
+                        "start_at_boot": {
+                            "type": "boolean",
+                            "description": "Specifies whether the container should start at boot."
+                        },
+                        "boot_order": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "The boot order priority for the container."
+                        },
+                        "boot_delay": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "The delay in seconds before starting the next container in the boot order."
+                        },
                         "name": {
                             "type": "string",
                             "minLength": 1,
@@ -146,6 +160,14 @@
                         "vllm_served_model_name": {
                             "type": "string",
                             "description": "The name of the model served by vLLM."
+                        },
+                        "vllm_model_type": {
+                            "type": "string",
+                            "enum": [
+                                "chat",
+                                "embedding"
+                            ],
+                            "description": "Specifies the type of the vLLM model."
                         },
                         "vllm_port": {
                             "type": "integer",

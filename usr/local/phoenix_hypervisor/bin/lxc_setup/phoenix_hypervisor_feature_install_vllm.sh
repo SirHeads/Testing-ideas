@@ -79,17 +79,17 @@ install_proxy_ca_certificate() {
         log_info "Proxy CA certificate found on the hypervisor. Proceeding with installation."
 
         # Ensure the target directory exists in the container
-        pct_exec "$CTID" "mkdir -p $container_cert_dir"
+        pct_exec "$CTID" mkdir -p "$container_cert_dir"
 
         # Push the certificate to the container
         pct push "$CTID" "$hypervisor_cert_path" "$container_cert_path"
 
         # Check if the certificate was successfully copied
-        if pct_exec "$CTID" bash -c "[ -f '$container_cert_path' ]"; then
+        if pct_exec "$CTID" test -f "$container_cert_path"; then
             log_info "Successfully copied proxy CA certificate to CTID $CTID."
             # Update the certificate store in the container
             log_info "Updating CA certificates in CTID $CTID..."
-            pct_exec "$CTID" "update-ca-certificates"
+            pct_exec "$CTID" update-ca-certificates
             log_info "CA certificates updated successfully."
         else
             log_error "Failed to copy proxy CA certificate to CTID $CTID."
@@ -130,7 +130,7 @@ install_and_test_vllm() {
 
     # Idempotency Check for Template-Based Deployments
     log_info "Checking for existing vLLM installation..."
-    if pct_exec "$CTID" bash -c "[ -f '${vllm_dir}/bin/vllm' ]"; then
+    if pct_exec "$CTID" test -f "${vllm_dir}/bin/vllm"; then
         log_info "Existing vLLM installation found (vllm executable exists). Skipping feature installation."
         log_info "This is expected when deploying from a pre-built template."
         return 0
@@ -140,53 +140,53 @@ install_and_test_vllm() {
     # Install Python, build tools, and git
     # Install Python 3.11, build tools, and git
     log_info "Installing Python 3.11, build tools, and git in CTID $CTID..."
-    pct_exec "$CTID" apt-get update # Update package lists
-    pct_exec "$CTID" apt-get install -y software-properties-common # Install software-properties-common
-    pct_exec "$CTID" add-apt-repository -y ppa:deadsnakes/ppa # Add deadsnakes PPA for Python 3.11
-    pct_exec "$CTID" apt-get update # Update package lists again
-    pct_exec "$CTID" apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git ninja-build # Install Python 3.11 and development tools
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y software-properties-common
+    pct_exec "$CTID" add-apt-repository -y ppa:deadsnakes/ppa
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git ninja-build
 
     # Create vLLM virtual environment
     # Create vLLM Python virtual environment
     log_info "Creating vLLM virtual environment in ${vllm_dir} for CTID $CTID..."
-    pct_exec "$CTID" mkdir -p "$vllm_dir" # Create virtual environment directory
-    pct_exec "$CTID" python3.11 -m venv "$vllm_dir" # Create virtual environment
+    pct_exec "$CTID" mkdir -p "$vllm_dir"
+    pct_exec "$CTID" python3.11 -m venv "$vllm_dir"
 
     # Upgrade pip
     # Upgrade pip within the new virtual environment
     log_info "Upgrading pip in the new virtual environment..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --upgrade pip # Upgrade pip
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --upgrade pip
 
     # Install PyTorch Nightly
     # Install PyTorch Nightly for CUDA 12.8+ compatibility
     log_info "Installing PyTorch nightly for CUDA 12.1+..."
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
     log_info "Cleaning pip cache after PyTorch installation..."
-    pct_exec "$CTID" rm -rf /root/.cache/pip # Clean pip cache
+    pct_exec "$CTID" rm -rf /root/.cache/pip
 
     # Clone vLLM Repository
     # Clone vLLM Repository or pull latest changes if it exists
     log_info "Cloning vLLM repository..."
-    if pct_exec "$CTID" bash -c "[ -d '${vllm_repo_dir}' ]"; then # Check if repository already exists
+    if pct_exec "$CTID" test -d "${vllm_repo_dir}"; then
         log_info "vLLM repository already exists. Fetching latest changes and checking out known-good commit."
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" fetch --all # Fetch all remote changes
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861 # Checkout known-good commit
+        pct_exec "$CTID" git -C "${vllm_repo_dir}" fetch --all
+        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
     else
-        pct_exec "$CTID" git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}" # Clone repository
+        pct_exec "$CTID" git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
         log_info "Checking out known-good vLLM commit..."
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861 # Checkout known-good commit
+        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
     fi
 
     # Build and Install vLLM from Source
     # Build and Install vLLM from Source in editable mode (includes flash-attn)
     log_info "Building and installing vLLM from source (includes flash-attn)..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}" # Install vLLM from source
+    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
     log_info "Installing FlashInfer from source..."
     pct_exec "$CTID" rm -rf /opt/flashinfer
     pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
     log_info "Cleaning pip cache after vLLM installation..."
-    pct_exec "$CTID" rm -rf /root/.cache/pip # Clean pip cache
+    pct_exec "$CTID" rm -rf /root/.cache/pip
 
     # Verification
     # Verification: Check vLLM installation by importing and printing its version
@@ -238,7 +238,7 @@ EOF
     rm "$temp_service_file"
 
     # Verify that the file was created
-    if ! pct_exec "$CTID" bash -c "[ -f \"$service_file_path\" ]"; then
+    if ! pct_exec "$CTID" test -f "$service_file_path"; then
         log_fatal "Failed to create systemd service file in CTID $CTID."
     fi
 

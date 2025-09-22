@@ -69,37 +69,30 @@ perform_base_os_setup() {
     log_info "Performing base OS setup in CTID: $CTID"
 
     # --- Idempotency Check & Package Installation ---
-    # Idempotency Check & Package Installation
     log_info "Checking for essential packages in CTID $CTID..."
-    local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui" "gnupg" "locales") # List of essential packages
-    local packages_to_install=() # Array to hold packages that need to be installed
+    local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui" "gnupg" "locales")
+    local packages_to_install=()
 
-    # Check each essential package for installation status
     for pkg in "${essential_packages[@]}"; do
-        if ! pct_exec "$CTID" dpkg -l | grep -q " ${pkg} "; then # Check if package is installed
-            packages_to_install+=("$pkg") # Add to list if not installed
+        if ! pct_exec "$CTID" bash -c "dpkg -l | grep -q \" ${pkg} \""; then
+            packages_to_install+=("$pkg")
         fi
     done
 
-    # Install missing packages if any are identified
     if [ ${#packages_to_install[@]} -gt 0 ]; then
         log_info "Installing missing packages: ${packages_to_install[*]}"
-        pct_exec "$CTID" apt-get update # Update package lists inside container
-        pct_exec "$CTID" apt-get install -y "${packages_to_install[@]}" # Install packages
+        pct_exec "$CTID" apt-get update
+        pct_exec "$CTID" apt-get install -y "${packages_to_install[@]}"
     else
         log_info "All essential packages are already installed."
     fi
 
-    # --- Idempotency Check for Locale ---
-    # Idempotency Check for Locale: Configure locale if not already set
-    if pct_exec "$CTID" locale | grep -q "LANG=en_US.UTF-8"; then
-        log_info "Locale is already correctly set."
-    else
-        log_info "Configuring locale..."
-        pct_exec "$CTID" bash -c "echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen" # Add locale to generation file
-        pct_exec "$CTID" locale-gen # Generate locale
-        pct_exec "$CTID" update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 # Update system locale
-    fi
+    # --- Locale Configuration ---
+    log_info "Configuring locale to en_US.UTF-8..."
+    pct_exec "$CTID" sed -i 's/^# *\\(en_US.UTF-8\\)/\\1/' /etc/locale.gen
+    pct_exec "$CTID" locale-gen en_US.UTF-8
+    pct_exec "$CTID" update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+    log_info "Locale configuration complete."
 
     log_info "Base OS setup complete for CTID $CTID."
 }

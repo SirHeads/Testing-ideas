@@ -6,6 +6,9 @@
     "lxc_configs": {
         "900": {
             "name": "Template-Base",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
@@ -21,13 +24,16 @@
             "gpu_assignment": "none",
             "portainer_role": "none",
             "unprivileged": true,
-            "template_snapshot_name": "base-snapshot",
             "features": [
                 "base_setup"
-            ]
+            ],
+            "template_snapshot_name": "pre-configured"
         },
         "901": {
             "name": "Template-GPU",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
@@ -42,14 +48,17 @@
             "gpu_assignment": "0,1",
             "portainer_role": "none",
             "unprivileged": true,
-            "template_snapshot_name": "gpu-snapshot",
             "clone_from_ctid": "900",
             "features": [
                 "nvidia"
-            ]
+            ],
+            "template_snapshot_name": "pre-configured"
         },
         "902": {
             "name": "Template-Docker",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
@@ -64,11 +73,11 @@
             "gpu_assignment": "none",
             "portainer_role": "none",
             "unprivileged": true,
-            "template_snapshot_name": "docker-snapshot",
             "clone_from_ctid": "900",
             "features": [
                 "docker"
-            ]
+            ],
+            "template_snapshot_name": "pre-configured"
         },
         "910": {
             "name": "Portainer",
@@ -108,10 +117,24 @@
             ],
             "dependencies": [
                 "953"
-            ]
+            ],
+            "volumes": [
+                {
+                    "name": "portainer_data",
+                    "pool": "quickOS-shared-prod-data-volumes",
+                    "size_gb": 10,
+                    "mount_point": "/data"
+                }
+            ],
+            "start_at_boot": true,
+            "boot_order": 4,
+            "boot_delay": 5
         },
         "920": {
             "name": "Template-VLLM",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
             "memory_mb": 72000,
             "cores": 12,
             "storage_pool": "quickOS-lxc-disks",
@@ -126,12 +149,12 @@
             "gpu_assignment": "0,1",
             "unprivileged": true,
             "portainer_role": "none",
-            "template_snapshot_name": "vllm-base-snapshot-v2",
             "clone_from_ctid": "901",
             "features": [
                 "vllm"
             ],
-            "pct_options": []
+            "pct_options": [],
+            "template_snapshot_name": "pre-configured"
         },
         "950": {
             "name": "vllm-qwen2.5-7b-awq",
@@ -153,7 +176,7 @@
             "features": [
                 "vllm"
             ],
-            "application_script": "phoenix_hypervisor_lxc_950.sh",
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
             "ports": [
                 "8000:8000"
             ],
@@ -163,6 +186,7 @@
             "vllm_gpu_memory_utilization": 0.85,
             "vllm_tensor_parallel_size": 1,
             "vllm_served_model_name": "qwen2.5-7b-awq",
+            "vllm_model_type": "chat",
             "vllm_port": 8000,
             "vllm_trust_remote_code": true,
             "vllm_parameters": {
@@ -209,6 +233,9 @@
             "dependencies": [
                 "953"
             ],
+            "start_at_boot": true,
+            "boot_order": 3,
+            "boot_delay": 5,
             "integration_tests": {
                 "script": "run_vllm_integration_tests.sh"
             },
@@ -234,12 +261,13 @@
             "features": [
                 "vllm"
             ],
-            "application_script": "phoenix_hypervisor_lxc_951.sh",
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
             "ports": [
                 "8000:8000"
             ],
             "vllm_model": "ibm-granite/granite-embedding-english-r2",
             "vllm_served_model_name": "ibm-granite/granite-embedding-english-r2",
+            "vllm_model_type": "embedding",
             "vllm_tensor_parallel_size": 1,
             "vllm_gpu_memory_utilization": 0.10,
             "vllm_max_model_len": 1024,
@@ -266,7 +294,10 @@
             },
             "dependencies": [
                 "953"
-            ]
+            ],
+            "start_at_boot": true,
+            "boot_order": 3,
+            "boot_delay": 5
         },
         "952": {
             "name": "qdrant-VSCodeRag",
@@ -313,7 +344,18 @@
             },
             "dependencies": [
                 "953"
-            ]
+            ],
+            "volumes": [
+                {
+                    "name": "qdrant_data",
+                    "pool": "quickOS-shared-prod-data-volumes",
+                    "size_gb": 20,
+                    "mount_point": "/qdrant/storage"
+                }
+            ],
+            "start_at_boot": true,
+            "boot_order": 3,
+            "boot_delay": 5
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -342,7 +384,10 @@
             "application_script": "phoenix_hypervisor_lxc_953.sh",
             "firewall": {
                 "enabled": true
-            }
+            },
+            "start_at_boot": true,
+            "boot_order": 1,
+            "boot_delay": 5
         },
         "954": {
             "name": "n8n-phoenix",
@@ -383,7 +428,18 @@
             },
             "dependencies": [
                 "953"
-            ]
+            ],
+            "volumes": [
+                {
+                    "name": "n8n_data",
+                    "pool": "quickOS-shared-prod-data-volumes",
+                    "size_gb": 10,
+                    "mount_point": "/home/node/.n8n"
+                }
+            ],
+            "start_at_boot": true,
+            "boot_order": 3,
+            "boot_delay": 5
         },
         "955": {
             "name": "ollama-oWUI",
@@ -410,7 +466,13 @@
             "ports": [
                 "11434:11434"
             ],
-            "pct_options": []
+            "pct_options": [],
+            "dependencies": [
+                "953"
+            ],
+            "start_at_boot": true,
+            "boot_order": 2,
+            "boot_delay": 5
         },
         "956": {
             "name": "openWebUI-phoenix",
@@ -435,7 +497,14 @@
             "application_script": "phoenix_hypervisor_lxc_956.sh",
             "ports": [
                 "8080:8080"
-            ]
+            ],
+            "dependencies": [
+                "953",
+                "955"
+            ],
+            "start_at_boot": true,
+            "boot_order": 3,
+            "boot_delay": 5
         },
         "957": {
             "name": "llamacpp",
@@ -460,7 +529,13 @@
             "application_script": "phoenix_hypervisor_lxc_957.sh",
             "ports": [
                 "8081:8081"
-            ]
+            ],
+            "dependencies": [
+                "953"
+            ],
+            "start_at_boot": true,
+            "boot_order": 2,
+            "boot_delay": 5
         }
     }
 }

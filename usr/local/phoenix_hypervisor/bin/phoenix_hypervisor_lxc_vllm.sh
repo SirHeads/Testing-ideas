@@ -1,35 +1,25 @@
 #!/bin/bash
 #
-# File: phoenix_hypervisor_lxc_951.sh
-# Description: Manages the deployment and lifecycle of a vLLM API server within an LXC container (CTID 951).
+# File: phoenix_hypervisor_lxc_vllm.sh
+# Description: Manages the deployment and lifecycle of a vLLM API server within an LXC container.
 #              This script handles environment verification, dynamic systemd service file generation,
-#              service management (enable/start), and health checks to ensure the vLLM server
-#              is running correctly and serving the specified model for embeddings.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, systemctl, curl, journalctl.
-#               Note: This script is executed inside the container and must not use host-level
-#               commands like 'pct' or 'qm'.
+#              service management, and health checks to ensure the vLLM server is running correctly.
+# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq.
 # Inputs:
 #   $1 (CTID) - The container ID for the vLLM server.
-#   Configuration values from LXC_CONFIG_FILE: .vllm_model, .vllm_tensor_parallel_size,
-#   .vllm_gpu_memory_utilization, .vllm_max_model_len, .network_config.ip.
+#   Configuration values from LXC_CONFIG_FILE: .vllm_model, .vllm_model_type, etc.
 # Outputs:
-#   Systemd service file for vLLM API server, log messages to stdout and MAIN_LOG_FILE,
-#   API responses from health checks and validation queries, exit codes indicating success or failure.
+#   Systemd service file for vLLM API server, log messages, API responses, exit codes.
 # Version: 1.0.0
-# Author: Phoenix Hypervisor Team
+# Author: Roo
 
 # --- Source common utilities ---
-# --- Determine script's absolute directory ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-
-# --- Source common utilities ---
-# The common_utils.sh script provides shared functions for logging, error handling, etc.
 source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
-SERVICE_NAME="embedding_api_server"
-VLLM_SERVICE_NAME="vllm_model_server"
+SERVICE_NAME="vllm_model_server"
 
 # =====================================================================================
 # Function: parse_arguments
@@ -52,12 +42,10 @@ configure_systemd_service() {
     log_info "Configuring vLLM systemd service in CTID: $CTID..."
     local service_file_path="/etc/systemd/system/vllm_model_server.service"
 
-    # --- Retrieve vLLM parameters from the central config ---
     local model=$(jq_get_value "$CTID" ".vllm_model")
     local served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
     local port=$(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
 
-    # --- Replace placeholders in the service file ---
     mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
     local args_string=""
     for arg in "${vllm_args[@]}"; do
@@ -75,18 +63,15 @@ configure_systemd_service() {
 # Description: Enables and starts the vLLM model server systemd service.
 # =====================================================================================
 manage_vllm_service() {
-    log_info "Managing the $VLLM_SERVICE_NAME service in CTID $CTID..."
-
-    # --- Reload, enable, and restart the vLLM service ---
+    log_info "Managing the $SERVICE_NAME service in CTID $CTID..."
     systemctl daemon-reload
-    systemctl enable "$VLLM_SERVICE_NAME"
-    if ! systemctl restart "$VLLM_SERVICE_NAME"; then
-        log_error "$VLLM_SERVICE_NAME service failed to start. Retrieving logs..."
-        journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
-        log_fatal "Failed to start $VLLM_SERVICE_NAME service."
+    systemctl enable "$SERVICE_NAME"
+    if ! systemctl restart "$SERVICE_NAME"; then
+        log_error "$SERVICE_NAME service failed to start. Retrieving logs..."
+        journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
+        log_fatal "Failed to start $SERVICE_NAME service."
     fi
-
-    log_info "$VLLM_SERVICE_NAME service started successfully."
+    log_info "$SERVICE_NAME service started successfully."
 }
 
 # =====================================================================================
@@ -95,16 +80,14 @@ manage_vllm_service() {
 # =====================================================================================
 perform_health_check() {
     log_info "Performing health check on the vLLM API server..."
-    local max_attempts=10
+    local max_attempts=20
     local attempt=0
-    local interval=10 # seconds
+    local interval=10
     local health_check_url="http://localhost:8000/health"
 
     while [ "$attempt" -lt "$max_attempts" ]; do
         attempt=$((attempt + 1))
         log_info "Health check attempt $attempt/$max_attempts..."
-        
-        # Use curl's --fail option to handle HTTP errors and connection issues
         if curl -s --fail "$health_check_url" > /dev/null; then
             log_info "Health check passed! The vLLM API server is responsive."
             return 0
@@ -114,58 +97,62 @@ perform_health_check() {
         fi
     done
 
-    log_error "Health check failed after $max_attempts attempts. The API server is not responsive."
-    log_error "Retrieving latest service logs for diagnosis..."
-    log_error "Recent logs for $VLLM_SERVICE_NAME:"
-    journalctl -u "$VLLM_SERVICE_NAME" --no-pager -n 50 | log_plain_output
+    log_error "Health check failed after $max_attempts attempts."
+    journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
     log_fatal "vLLM service health check failed."
 }
 
 # =====================================================================================
 # Function: validate_api_with_test_query
-# Description: Sends a test query to the API to confirm the model is loaded and working for embeddings.
+# Description: Sends a test query to the API to confirm the model is loaded and working.
 # =====================================================================================
 validate_api_with_test_query() {
-    log_info "Performing a final API validation with a test query for embeddings..."
-    local model
-    model=$(jq_get_value "$CTID" ".vllm_served_model_name")
-    local api_url="http://localhost:8000/v1/embeddings"
-    
-    # --- Construct the JSON payload for the test query (compact format) ---
-    local json_payload
-    json_payload=$(jq -c -n --arg model "$model" \
-        '{"model": $model, "input": "This is a test sentence for embedding."}')
+    log_info "Performing a final API validation with a test query..."
+    local model_type=$(jq_get_value "$CTID" ".vllm_model_type")
+    local model=$(jq_get_value "$CTID" ".vllm_served_model_name")
+    local api_url=""
+    local json_payload=""
+    local curl_cmd=""
+    local api_response=""
 
-    # --- Execute the curl command inside the container using bash -c for robust quoting ---
-    local api_response
-    local curl_cmd="curl -s -X POST '$api_url' -H 'Content-Type: application/json' -d '$json_payload'"
-    log_info "Executing in CTID $CTID via bash: $curl_cmd"
+    if [ "$model_type" == "chat" ]; then
+        api_url="http://localhost:8000/v1/chat/completions"
+        json_payload=$(jq -c -n --arg model "$model" \
+            '{"model": $model, "messages": [{"role": "user", "content": "What is the capital of France?"}]}')
+    elif [ "$model_type" == "embedding" ]; then
+        api_url="http://localhost:8000/v1/embeddings"
+        json_payload=$(jq -c -n --arg model "$model" \
+            '{"model": $model, "input": "This is a test sentence for embedding."}')
+    else
+        log_fatal "Invalid vllm_model_type: $model_type"
+    fi
+
+    curl_cmd="curl -s -X POST '$api_url' -H 'Content-Type: application/json' -d '$json_payload'"
     api_response=$(bash -c "$curl_cmd")
 
-    # --- Check for empty response ---
     if [ -z "$api_response" ]; then
-        log_error "API validation failed. Received an empty response from the server."
-        log_fatal "The embedding model is not responding correctly."
+        log_fatal "API validation failed. Received an empty response."
     fi
 
-    # --- Check if the response contains an error ---
     if echo "$api_response" | jq -e 'has("error")' > /dev/null; then
         log_error "API validation failed. The server returned an error."
-        log_error "API Response:"
         echo "$api_response" | log_plain_output
-        log_fatal "The embedding model appears to have failed to load correctly."
+        log_fatal "The vLLM model failed to load correctly."
     fi
 
-    # --- Check if the response contains a valid embedding data structure ---
-    if ! echo "$api_response" | jq -e '.data[0].embedding | length > 0' > /dev/null; then
-        log_error "API validation failed. The response format was unexpected or embedding is empty."
-        log_error "API Response:"
-        echo "$api_response" | log_plain_output
-        log_fatal "The embedding model is not responding with valid embeddings."
+    if [ "$model_type" == "chat" ]; then
+        if ! echo "$api_response" | jq -e '.choices[0].message.content' > /dev/null; then
+            log_fatal "API validation failed. Unexpected response format for chat model."
+        fi
+        log_info "Test query response snippet: $(echo "$api_response" | jq -r '.choices[0].message.content' | head -c 100)..."
+    elif [ "$model_type" == "embedding" ]; then
+        if ! echo "$api_response" | jq -e '.data[0].embedding | length > 0' > /dev/null; then
+            log_fatal "API validation failed. Unexpected response format for embedding model."
+        fi
+        log_info "Test query response snippet: $(echo "$api_response" | jq -r '.data[0].embedding[0:5]' | tr -d '\n')..."
     fi
 
-    log_info "API validation successful! The embedding model is loaded and generating responses."
-    log_info "Test query response snippet: $(echo "$api_response" | jq -r '.data[0].embedding[0:5]' | tr -d '\n')..."
+    log_info "API validation successful!"
 }
 
 # =====================================================================================
@@ -173,23 +160,29 @@ validate_api_with_test_query() {
 # Description: Displays the final connection information for the user.
 # =====================================================================================
 display_connection_info() {
-    local ip_address
-    ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1)
-    local model
-    model=$(jq_get_value "$CTID" ".vllm_model")
+    local ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1)
+    local model=$(jq_get_value "$CTID" ".vllm_model")
+    local model_type=$(jq_get_value "$CTID" ".vllm_model_type")
 
     log_info "============================================================"
-    log_info "Embedding API Server is now running and fully operational."
+    log_info "vLLM API Server is now running and fully operational."
     log_info "============================================================"
     log_info "Connection Details:"
     log_info "  IP Address: $ip_address"
     log_info "  Port: 8000"
     log_info "  Model: $model"
+    log_info "  Model Type: $model_type"
     log_info ""
-    log_info "Example curl command for embeddings:"
-    log_info "  curl -X POST \"http://${ip_address}:8000/v1/embeddings\" \\"
-    log_info "    -H \"Content-Type: application/json\" \\"
-    log_info "    --data '{\"model\": \"$model\", \"input\": \"Your text to embed here.\"}'"
+    log_info "Example curl command:"
+    if [ "$model_type" == "chat" ]; then
+        log_info "  curl -X POST \"http://${ip_address}:8000/v1/chat/completions\" \\"
+        log_info "    -H \"Content-Type: application/json\" \\"
+        log_info "    --data '{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a python function to download a file.\"}]}'"
+    elif [ "$model_type" == "embedding" ]; then
+        log_info "  curl -X POST \"http://${ip_address}:8000/v1/embeddings\" \\"
+        log_info "    -H \"Content-Type: application/json\" \\"
+        log_info "    --data '{\"model\": \"$model\", \"input\": \"Your text to embed here.\"}'"
+    fi
     log_info "============================================================"
 }
 
@@ -201,11 +194,11 @@ main() {
     parse_arguments "$@"
     configure_systemd_service
     manage_vllm_service
-    if systemctl is-active --quiet "$VLLM_SERVICE_NAME"; then
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
         perform_health_check
         validate_api_with_test_query
     else
-        log_info "Service $VLLM_SERVICE_NAME is not active. Skipping health check and API validation."
+        log_info "Service $SERVICE_NAME is not active. Skipping health check and API validation."
     fi
     display_connection_info
     exit_script 0

@@ -132,11 +132,18 @@
                 "proxmox_content_type": "images"
             },
             {
+                "name": "shared-prod-data-volumes",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images,rootdir"
+            },
+            {
                 "name": "shared-test-data",
                 "pool": "fastData",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
                 "proxmox_storage_type": "dir",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-backups",
@@ -165,7 +172,8 @@
         "quickos_vm": "quickOS-vm-disks",
         "quickos_lxc": "quickOS-lxc-disks",
         "fastdata_backup": "fastData-shared-backups",
-        "fastdata_iso": "fastData-shared-iso"
+        "fastdata_iso": "fastData-shared-iso",
+        "quickos_volumes": "quickOS-shared-prod-data-volumes"
     },
     "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {
@@ -218,12 +226,6 @@
                 "954": "/certs"
             }
         },
-        "portainer_data": {
-            "host_path": "/mnt/pve/quickOS/shared-prod-data/portainer/data",
-            "mounts": {
-                "910": "/portainer/data"
-            }
-        },
         "nginx_sites": {
             "host_path": "/usr/local/phoenix_hypervisor/etc/nginx/sites-available",
             "mounts": {
@@ -234,18 +236,6 @@
             "host_path": "/mnt/pve/quickOS/shared-prod-data/logs/nginx",
             "mounts": {
                 "953": "/logs/nginx"
-            }
-        },
-        "qdrant_data": {
-            "host_path": "/mnt/pve/fastData/shared-prod-data/qdrant",
-            "mounts": {
-                "952": "/qdrant"
-            }
-        },
-        "n8n_data": {
-            "host_path": "/mnt/pve/quickOS/shared-prod-data/n8n",
-            "mounts": {
-                "954": "/n8n"
             }
         },
         "ollama_models": {

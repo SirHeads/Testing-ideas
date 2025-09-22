@@ -157,11 +157,12 @@ install_drivers_in_container() {
 
     local nvidia_runfile_url # URL for the NVIDIA driver runfile
     nvidia_runfile_url=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE") # Retrieve runfile URL from config
+    cuda_version=$(jq -r '.nvidia_driver.cuda_version' "$HYPERVISOR_CONFIG_FILE" | tr '.' '-')
 
     # Install prerequisites
     # Install prerequisites inside the container
-    pct_exec "$CTID" apt-get update # Update package lists
-    pct_exec "$CTID" apt-get install -y wget build-essential # Install wget and build tools
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y wget build-essential
 
     # Download and install the runfile
     local runfile_name # Name of the NVIDIA driver runfile
@@ -170,19 +171,19 @@ install_drivers_in_container() {
 
     log_info "Downloading NVIDIA driver runfile to $runfile_path in CTID $CTID..."
     log_info "Downloading NVIDIA driver runfile to $runfile_path in CTID $CTID..."
-    pct_exec "$CTID" wget -q "$nvidia_runfile_url" -O "$runfile_path" # Download runfile
+    pct_exec "$CTID" wget -q "$nvidia_runfile_url" -O "$runfile_path"
 
     log_info "Making runfile executable..."
     log_info "Making runfile executable..."
-    pct_exec "$CTID" chmod +x "$runfile_path" # Make the runfile executable
+    pct_exec "$CTID" chmod +x "$runfile_path"
 
     log_info "Executing NVIDIA driver runfile installation..."
     log_info "Executing NVIDIA driver runfile installation..."
-    pct_exec "$CTID" "$runfile_path" --silent --no-kernel-module --no-x-check --no-nouveau-check # Execute runfile
+    pct_exec "$CTID" "$runfile_path" --silent --no-kernel-module --no-x-check --no-nouveau-check
 
     # Clean up
     # Clean up the downloaded runfile
-    pct_exec "$CTID" rm "$runfile_path" # Remove runfile
+    pct_exec "$CTID" rm "$runfile_path"
 
     # --- Ensure NVIDIA CUDA Repository is configured ---
     # Ensure NVIDIA CUDA Repository is configured (from common_utils)
@@ -191,7 +192,7 @@ install_drivers_in_container() {
     # --- Install CUDA Toolkit ---
     # Install CUDA Toolkit
     log_info "Installing CUDA Toolkit in CTID $CTID..."
-    pct_exec "$CTID" apt-get install -y cuda-toolkit-12-8 # Install CUDA Toolkit
+    pct_exec "$CTID" apt-get install -y "cuda-toolkit-${cuda_version}"
 
     log_info "NVIDIA driver and CUDA installation complete for CTID $CTID."
 }

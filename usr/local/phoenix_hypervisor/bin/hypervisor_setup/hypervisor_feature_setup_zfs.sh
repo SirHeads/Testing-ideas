@@ -308,24 +308,46 @@ add_proxmox_storage() {
         local proxmox_content_type=$(echo "$dataset_config" | jq -r '.proxmox_content_type')
 
         local full_dataset_path="$pool_name/$dataset_name"
-        local storage_id="${pool_name}-${dataset_name}"
+        local storage_id_key="${pool_name}_${dataset_name//-/_}" # e.g., quickOS_shared_prod_data_volumes
+        local mapped_storage_id=$(jq -r --arg key "$storage_id_key" '.proxmox_storage_ids[$key]' "$HYPERVISOR_CONFIG_FILE")
+        
+        local storage_id
+        if [ -n "$mapped_storage_id" ] && [ "$mapped_storage_id" != "null" ]; then
+            storage_id="$mapped_storage_id"
+            log_info "Found mapped storage ID for ${dataset_name}: ${storage_id}"
+        else
+            storage_id="${pool_name}-${dataset_name}"
+            log_info "No mapped storage ID found for ${dataset_name}, using default: ${storage_id}"
+        fi
+        
         local mountpoint="/$full_dataset_path"
 
+        # --- Convergent State Logic ---
         if pvesm status | grep -q "^$storage_id"; then
-            log_info "Proxmox storage $storage_id already exists, skipping creation."
-            continue
-        fi
-
-        log_info "Processing dataset $full_dataset_path for Proxmox storage (ID: $storage_id, Type: $proxmox_storage_type, Content: $proxmox_content_type)"
-
-        if [[ "$proxmox_storage_type" == "zfspool" ]]; then
-            retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $proxmox_content_type" || log_fatal "Failed to add ZFS storage $storage_id"
-            log_info "Added Proxmox ZFS storage: $storage_id for $full_dataset_path with content $proxmox_content_type"
-        elif [[ "$proxmox_storage_type" == "dir" ]]; then
-            retry_command "pvesm add dir $storage_id -path $mountpoint -content $proxmox_content_type" || log_fatal "Failed to add directory storage $storage_id"
-            log_info "Added Proxmox directory storage: $storage_id for path $mountpoint with content $proxmox_content_type"
+            # INSPECT: Storage exists, check its configuration
+            local current_content=$(pvesm status -storage "$storage_id" | awk 'NR==2 {print $2}')
+            
+            # COMPARE: Check if current content matches desired content
+            if [ "$current_content" != "$proxmox_content_type" ]; then
+                log_info "Proxmox storage '$storage_id' exists but has incorrect content type. Current: '$current_content', Desired: '$proxmox_content_type'."
+                # CONVERGE: Update the content type
+                retry_command "pvesm set $storage_id --content $proxmox_content_type" || log_fatal "Failed to update Proxmox storage '$storage_id'"
+                log_info "Successfully updated content type for storage '$storage_id'."
+            else
+                log_info "Proxmox storage '$storage_id' already exists and is correctly configured."
+            fi
         else
-            log_warn "Unsupported proxmox_storage_type '$proxmox_storage_type' for dataset $full_dataset_path. Skipping."
+            # CONVERGE: Storage does not exist, create it
+            log_info "Proxmox storage '$storage_id' does not exist. Creating..."
+            if [[ "$proxmox_storage_type" == "zfspool" ]]; then
+                retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $proxmox_content_type" || log_fatal "Failed to add ZFS storage '$storage_id'"
+                log_info "Added Proxmox ZFS storage: '$storage_id' for '$full_dataset_path' with content '$proxmox_content_type'"
+            elif [[ "$proxmox_storage_type" == "dir" ]]; then
+                retry_command "pvesm add dir $storage_id -path $mountpoint -content $proxmox_content_type" || log_fatal "Failed to add directory storage '$storage_id'"
+                log_info "Added Proxmox directory storage: '$storage_id' for path '$mountpoint' with content '$proxmox_content_type'"
+            else
+                log_warn "Unsupported proxmox_storage_type '$proxmox_storage_type' for dataset '$full_dataset_path'. Skipping."
+            fi
         fi
     done <<< "$zfs_datasets_json"
 }
