@@ -40,7 +40,7 @@ log_info "Reading user configuration from $HYPERVISOR_CONFIG_FILE..."
 # Retrieve user configuration details from the HYPERVISOR_CONFIG_FILE.
 # This assumes a single admin user for now; in a more complex scenario,
 # a 'role' field might be used to identify admin users.
-USERNAME=$(jq -r '.users.username // ""' "$HYPERVISOR_CONFIG_FILE") # System username
+USERNAME=$(jq -r '.users.username // "phoenix_admin"' "$HYPERVISOR_CONFIG_FILE") # System username
 PASSWORD_HASH=$(jq -r '.users.password_hash // ""' "$HYPERVISOR_CONFIG_FILE") # Hashed password for the user
 SUDO_ACCESS=$(jq -r '.users.sudo_access // false' "$HYPERVISOR_CONFIG_FILE") # Boolean indicating sudo access
 SSH_PUBLIC_KEY=$(jq -r '.users.ssh_public_key // ""' "$HYPERVISOR_CONFIG_FILE") # SSH public key for authentication

@@ -144,51 +144,6 @@
                         "gateway",
                         "dns_nameservers"
                     ]
-                }
-            },
-            "properties": {
-                "external_registry_url": {
-                    "type": "string",
-                    "description": "URL for the external Docker registry (e.g., Docker Hub)."
-                },
-                "portainer_server_ip": {
-                    "type": "string",
-                    "description": "IP address of the Portainer Server container."
-                },
-                "portainer_server_port": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 65535,
-                    "description": "Port for accessing the Portainer web UI."
-                },
-                "portainer_agent_port": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 65535,
-                    "description": "Port for Portainer Agent communication."
-                },
-                "interfaces": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string"
-                        },
-                        "address": {
-                            "type": "string"
-                        },
-                        "gateway": {
-                            "type": "string"
-                        },
-                        "dns_nameservers": {
-                            "type": "string"
-                        }
-                    },
-                    "required": [
-                        "name",
-                        "address",
-                        "gateway",
-                        "dns_nameservers"
-                    ]
                 },
                 "default_subnet": {
                     "type": "string"
@@ -603,6 +558,78 @@
         },
         "mount_point_base": {
             "type": "string"
+        },
+        "shared_zfs_volumes": {
+            "type": "object",
+            "description": "Defines shared ZFS volumes that can be mounted into multiple LXC containers.",
+            "patternProperties": {
+                "^[a-zA-Z0-9_-]+$": {
+                    "type": "object",
+                    "properties": {
+                        "pool": {
+                            "type": "string",
+                            "description": "The ZFS storage pool to create the volume in."
+                        },
+                        "size_gb": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "The size of the shared volume in gigabytes."
+                        },
+                        "mount_point": {
+                            "type": "string",
+                            "description": "The absolute path on the host where the volume will be mounted."
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "description": "A map of container IDs to their in-container mount paths.",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "pool",
+                        "size_gb",
+                        "mount_point",
+                        "mounts"
+                    ]
+                }
+            }
+        },
+        "firewall": {
+            "type": "object",
+            "description": "Global firewall settings for the hypervisor.",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether to enable the firewall at the datacenter level."
+                },
+                "default_input_policy": {
+                    "type": "string",
+                    "enum": [
+                        "ACCEPT",
+                        "DROP",
+                        "REJECT"
+                    ],
+                    "description": "Default policy for incoming traffic."
+                },
+                "default_output_policy": {
+                    "type": "string",
+                    "enum": [
+                        "ACCEPT",
+                        "DROP",
+                        "REJECT"
+                    ],
+                    "description": "Default policy for outgoing traffic."
+                }
+            },
+            "required": [
+                "enabled",
+                "default_input_policy",
+                "default_output_policy"
+            ]
         }
     },
     "required": [
@@ -622,7 +649,9 @@
         "nvidia_driver",
         "zfs",
         "proxmox_storage_ids",
-        "mount_point_base"
+        "mount_point_base",
+        "shared_zfs_volumes",
+        "firewall"
     ],
     "additionalProperties": false
 }

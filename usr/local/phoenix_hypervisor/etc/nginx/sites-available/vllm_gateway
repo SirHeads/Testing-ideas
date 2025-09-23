@@ -1,9 +1,3 @@
-# /etc/nginx/nginx.conf
-
-# Define a javascript function to extract the model from the JSON body.
-js_set $model_name http.get_model;
-
-# Define upstream servers for each vLLM model.
 upstream embedding_service {
     server 10.0.0.151:8000;
 }
@@ -16,50 +10,139 @@ upstream qdrant_service {
     server 10.0.0.152:6333;
 }
 
-# Map the model name to the correct upstream service.
-map $model_name $target_upstream {
-    default embedding_service; # Default to the embedding model for safety
-    "Qwen3-Coder-30B-A3B-Instruct-AWQ-4bit" qwen_service;
-    "text-embedding-ada-002" embedding_service; # Explicitly map embedding model
+upstream n8n_service {
+    server 10.0.0.154:5678;
+}
+
+upstream open_webui_service {
+    server 10.0.0.156:8080;
+}
+
+upstream ollama_service {
+    server 10.0.0.155:11434;
+}
+
+upstream llamacpp_service {
+    server 10.0.0.157:8081;
+}
+
+upstream portainer_service {
+    server 10.0.0.99:9443;
 }
 
 server {
     listen 80;
-    server_name api.yourdomain.com;
+    server_name api.yourdomain.com 10.0.0.153;
 
-    # Define a custom log format to include the model name and upstream server
-    log_format vllm_log '$remote_addr - $remote_user [$time_local] "$request" '
-                        '$status $body_bytes_sent "$http_referer" '
-                        '"$http_user_agent" "$http_x_forwarded_for" '
-                        'model:"$model_name" upstream:"$target_upstream"';
-
-    # Set the access log to use the custom format
-    access_log /var/log/nginx/vllm_access.log vllm_log;
-
-    # Common proxy settings to avoid repetition
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
     location /v1/chat/completions {
-        # This location is for chat models
-        proxy_pass http://$target_upstream;
+        proxy_pass http://qwen_service;
     }
 
     location /v1/completions {
-        # This location is for completion models
-        proxy_pass http://$target_upstream;
+        proxy_pass http://qwen_service;
     }
 
     location /v1/embeddings {
-        # This location is for embedding models
-        proxy_pass http://$target_upstream;
+        proxy_pass http://embedding_service;
+    }
+
+    location /qdrant/ {
+        proxy_pass http://qdrant_service/;
+    }
+
+    location /n8n/ {
+        rewrite ^/n8n/?(.*)$ /$1 break;
+        proxy_pass http://n8n_service;
+    }
+
+    location /webui/ {
+        rewrite ^/webui/?(.*)$ /$1 break;
+        proxy_pass http://open_webui_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location /ollama/ {
+        rewrite ^/ollama/?(.*)$ /$1 break;
+        proxy_pass http://ollama_service;
+    }
+
+    location /llamacpp/ {
+        rewrite ^/llamacpp/?(.*)$ /$1 break;
+        proxy_pass http://llamacpp_service;
+    }
+
+    location /portainer/ {
+        rewrite ^/portainer/?(.*)$ /$1 break;
+        proxy_pass http://portainer_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
 }
 
-    location /qdrant/ {
-        # This location is for the Qdrant vector database
-        rewrite ^/qdrant/?(.*)$ /$1 break;
-        proxy_pass http://qdrant_service;
+server {
+    listen 80;
+    server_name n8n.phoenix.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name n8n.phoenix.local;
+
+    ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
+    ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://n8n_service;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
     }
+}
+
+server {
+    listen 80;
+    server_name portainer.phoenix.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name portainer.phoenix.local;
+
+    ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
+    ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass https://portainer_service;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

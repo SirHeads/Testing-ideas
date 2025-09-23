@@ -2,11 +2,11 @@
 #
 # File: phoenix_hypervisor_feature_install_nvidia.sh
 # Description: Automates the configuration of NVIDIA GPU passthrough for an LXC container
-#              on the Proxmox host, and then installs NVIDIA drivers and CUDA Toolkit
+#              on the Proxmox host, and then installs the user-space NVIDIA drivers and CUDA Toolkit
 #              inside the container. This script is designed to be idempotent and is
 #              typically called by the main orchestrator.
 # Dependencies: phoenix_hypervisor_common_utils.sh (sourced), jq, grep, echo, mv,
-#               pct, apt-get, wget, basename, chmod, rm, bash, systemctl, nvidia-smi.
+#               pct, apt-get, wget, basename, chmod, rm, bash, systemctl, nvidia-smi, libnvidia-container1.
 # Inputs:
 #   $1 (CTID) - The container ID for the LXC container.
 #   Configuration values from LXC_CONFIG_FILE: .gpu_assignment, .nvidia_runfile_url.
@@ -72,152 +72,177 @@ parse_arguments() {
 # =====================================================================================
 configure_host_gpu_passthrough() {
     log_info "Configuring host GPU passthrough for container CTID: $CTID"
-    local lxc_conf_file="/etc/pve/lxc/${CTID}.conf" # Path to the LXC container's configuration file
-    local gpu_assignment # Variable to store GPU assignment from config
+    local lxc_conf_file="/etc/pve/lxc/${CTID}.conf"
+    local gpu_assignment
+    local changes_made=false
 
-    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment") # Retrieve GPU assignment from config
-    # If no GPU assignment is found, log and exit the script
+    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment")
     if [ -z "$gpu_assignment" ] || [ "$gpu_assignment" == "none" ]; then
         log_info "No GPU assignment found for CTID $CTID. Skipping NVIDIA feature."
         exit_script 0
     fi
 
-    # Check if the LXC configuration file exists
     if [ ! -f "$lxc_conf_file" ]; then
         log_fatal "LXC config file not found at $lxc_conf_file."
     fi
 
-    local mount_entries=() # Array to hold LXC mount entries
-    local cgroup_entries=( # Array to hold LXC cgroup device allow entries
-        "lxc.cgroup2.devices.allow: c 195:* rwm" # Allow access to NVIDIA devices
-        "lxc.cgroup2.devices.allow: c 243:* rwm" # Allow access to NVIDIA UVM devices
+    local mount_entries=()
+    local cgroup_entries=(
+        "lxc.cgroup2.devices.allow: c 195:* rwm"
+        "lxc.cgroup2.devices.allow: c 243:* rwm"
     )
 
-    # Add standard devices
-    # Add standard NVIDIA devices to mount entries
     local standard_devices=("/dev/nvidiactl" "/dev/nvidia-uvm" "/dev/nvidia-uvm-tools")
     for device in "${standard_devices[@]}"; do
-        if [ -e "$device" ]; then # Check if device exists on host
-            mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=file") # Add mount entry
+        if [ -e "$device" ]; then
+            mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=file")
         else
             log_warn "Standard NVIDIA device $device not found on host. Skipping."
         fi
     done
 
-    # Add assigned GPU devices
-    # Add assigned GPU devices (e.g., /dev/nvidia0, /dev/nvidia1) to mount entries
-    IFS=',' read -ra gpus <<< "$gpu_assignment" # Split gpu_assignment string by comma
+    IFS=',' read -ra gpus <<< "$gpu_assignment"
     for gpu_idx in "${gpus[@]}"; do
-        local nvidia_device="/dev/nvidia${gpu_idx}" # Construct device path
-        if [ -e "$nvidia_device" ]; then # Check if device exists on host
-            mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file") # Add mount entry
+        local nvidia_device="/dev/nvidia${gpu_idx}"
+        if [ -e "$nvidia_device" ]; then
+            mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
         else
             log_warn "Assigned GPU device $nvidia_device not found on host. Skipping."
         fi
     done
 
-    # Apply entries to the config file
-    # Apply all mount and cgroup entries to the LXC config file
     for entry in "${mount_entries[@]}" "${cgroup_entries[@]}"; do
-        if ! grep -qF "$entry" "$lxc_conf_file"; then # Check if entry already exists
+        if ! grep -qF "$entry" "$lxc_conf_file"; then
             log_info "Adding entry to $lxc_conf_file: $entry"
-            echo "$entry" >> "$lxc_conf_file" # Append entry to config file
+            echo "$entry" >> "$lxc_conf_file"
+            changes_made=true
         else
             log_info "Entry already exists in $lxc_conf_file: $entry"
         fi
     done
 
     log_info "Host GPU passthrough configuration complete for CTID $CTID."
-    # Restart the container to apply the new hardware settings
-    log_info "Restarting container CTID $CTID to apply GPU passthrough settings..."
-    run_pct_command stop "$CTID" # Stop the container
-    run_pct_command start "$CTID" # Start the container
-    log_info "Container CTID $CTID restarted successfully."
+    if [ "$changes_made" = true ]; then
+        log_info "Restarting container CTID $CTID to apply GPU passthrough settings..."
+        run_pct_command stop "$CTID"
+        run_pct_command start "$CTID"
+        log_info "Container CTID $CTID restarted successfully."
+        wait_for_nvidia_device "$CTID"
+    else
+        log_info "No changes made to container configuration. Skipping restart."
+    fi
+}
+
+# =====================================================================================
+# Function: wait_for_nvidia_device
+# Description: Waits for the NVIDIA device node to appear in the container.
+# =====================================================================================
+wait_for_nvidia_device() {
+    local ctid="$1"
+    local device_path="/dev/nvidia0"
+    local timeout=30
+    local interval=2
+    local elapsed_time=0
+
+    log_info "Waiting for NVIDIA device to become available in CTID $ctid..."
+
+    while [ $elapsed_time -lt $timeout ]; do
+        if pct exec "$ctid" -- test -e "$device_path"; then
+            log_info "NVIDIA device found in CTID $ctid."
+            return 0
+        fi
+        sleep $interval
+        elapsed_time=$((elapsed_time + interval))
+    done
+
+    log_error "Timeout reached. NVIDIA device not found in CTID $ctid after ${timeout} seconds."
+    log_info "Contents of /dev/ in CTID $ctid:"
+    pct exec "$ctid" -- ls -la /dev/
+    log_fatal "Aborting due to missing NVIDIA device."
 }
 
 # =====================================================================================
 # Function: install_drivers_in_container
 # Description: Installs the NVIDIA driver and CUDA toolkit inside the container.
 # =====================================================================================
-# =====================================================================================
-# Function: install_drivers_in_container
-# Description: Installs the NVIDIA driver and CUDA Toolkit inside the LXC container.
-#              It downloads the NVIDIA runfile, executes it, and then installs
-#              the CUDA Toolkit via apt.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None. Exits with a fatal error if any installation step fails.
-# =====================================================================================
 install_drivers_in_container() {
     log_info "Starting NVIDIA driver and CUDA installation in CTID: $CTID"
 
-    # Note: The NVIDIA runfile installer is idempotent and will handle cases where
-    # the driver is already installed. Final verification is performed by `verify_installation`.
+    # --- Pre-flight Check ---
 
-    local nvidia_runfile_url # URL for the NVIDIA driver runfile
-    nvidia_runfile_url=$(jq -r '.nvidia_runfile_url' "$LXC_CONFIG_FILE") # Retrieve runfile URL from config
+    # --- Configuration Loading ---
+    local nvidia_runfile_url
+    nvidia_runfile_url=$(jq_get_value "$CTID" ".nvidia_runfile_url")
+    if [ -z "$nvidia_runfile_url" ] || [ "$nvidia_runfile_url" == "null" ]; then
+        log_fatal "NVIDIA runfile URL is not defined in the configuration."
+    fi
 
-    # Install prerequisites
-    # Install prerequisites inside the container
-    pct_exec "$CTID" apt-get update # Update package lists
-    pct_exec "$CTID" apt-get install -y wget build-essential # Install wget and build tools
+    # --- Prerequisite Installation ---
+    log_info "Installing prerequisites in container..."
+    pct_exec "$CTID" -- apt-get update
+    pct_exec "$CTID" -- apt-get install -y wget build-essential pkg-config libglvnd-dev curl gnupg
 
-    # Download and install the runfile
-    local runfile_name # Name of the NVIDIA driver runfile
-    runfile_name=$(basename "$nvidia_runfile_url") # Extract filename from URL
-    local runfile_path="/tmp/$runfile_name" # Temporary path for the runfile
+    # --- Driver Installation from .run file ---
+    local runfile_name
+    runfile_name=$(basename "$nvidia_runfile_url")
+    local container_runfile_path="/tmp/${runfile_name}"
 
-    log_info "Downloading NVIDIA driver runfile to $runfile_path in CTID $CTID..."
-    log_info "Downloading NVIDIA driver runfile to $runfile_path in CTID $CTID..."
-    pct_exec "$CTID" wget -q "$nvidia_runfile_url" -O "$runfile_path" # Download runfile
+    log_info "Downloading and pushing NVIDIA runfile to container..."
+    wget -qO "/tmp/${runfile_name}" "$nvidia_runfile_url"
+    run_pct_push "$CTID" "/tmp/${runfile_name}" "$container_runfile_path"
+    rm "/tmp/${runfile_name}"
 
-    log_info "Making runfile executable..."
-    log_info "Making runfile executable..."
-    pct_exec "$CTID" chmod +x "$runfile_path" # Make the runfile executable
+    log_info "Executing NVIDIA runfile installer..."
+    local install_command="bash ${container_runfile_path} --silent --no-kernel-module --no-x-check --no-nouveau-check --no-nvidia-modprobe --no-dkms"
+    pct_exec "$CTID" -- chmod +x "$container_runfile_path"
+    if ! pct_exec "$CTID" -- $install_command; then
+        log_fatal "NVIDIA driver installation from runfile failed."
+    fi
+    pct_exec "$CTID" -- rm "$container_runfile_path"
 
-    log_info "Executing NVIDIA driver runfile installation..."
-    log_info "Executing NVIDIA driver runfile installation..."
-    pct_exec "$CTID" "$runfile_path" --silent --no-kernel-module --no-x-check --no-nouveau-check # Execute runfile
-
-    # Clean up
-    # Clean up the downloaded runfile
-    pct_exec "$CTID" rm "$runfile_path" # Remove runfile
-
-    # --- Ensure NVIDIA CUDA Repository is configured ---
-    # Ensure NVIDIA CUDA Repository is configured (from common_utils)
+    # --- CUDA Toolkit Installation ---
     ensure_nvidia_repo_is_configured "$CTID"
 
-    # --- Install CUDA Toolkit ---
-    # Install CUDA Toolkit
-    log_info "Installing CUDA Toolkit in CTID $CTID..."
-    pct_exec "$CTID" apt-get install -y cuda-toolkit-12-8 # Install CUDA Toolkit
-
-    log_info "NVIDIA driver and CUDA installation complete for CTID $CTID."
-}
-
-# =====================================================================================
-# Function: verify_installation
-# Description: Verifies the NVIDIA installation by running nvidia-smi inside the container.
-# =====================================================================================
-# =====================================================================================
-# Function: verify_installation
-# Description: Verifies the NVIDIA driver and CUDA installation inside the container
-#              by executing the `nvidia-smi` command.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None. Exits with a fatal error if `nvidia-smi` command fails.
-# =====================================================================================
-verify_installation() {
-    log_info "Verifying NVIDIA installation in CTID: $CTID"
-    # Execute `nvidia-smi` inside the container to verify driver functionality
-    if ! pct_exec "$CTID" nvidia-smi; then
-        log_fatal "NVIDIA verification failed. 'nvidia-smi' command failed in CTID $CTID."
+    log_info "Installing CUDA Toolkit..."
+    pct_exec "$CTID" -- apt-get update
+    if ! pct_exec "$CTID" -- apt-get install -y cuda-toolkit-12-8; then
+        log_fatal "Failed to install CUDA Toolkit."
     fi
-    log_info "NVIDIA installation verified successfully in CTID $CTID."
+
+    # --- Final Verification ---
+    log_info "Final verification of NVIDIA components..."
+    if ! pct_exec "$CTID" -- nvidia-smi; then
+        log_fatal "Final nvidia-smi verification failed."
+    fi
+    if ! pct_exec "$CTID" -- /usr/local/cuda/bin/nvcc --version; then
+        log_fatal "Final nvcc verification failed."
+    fi
+
+    log_info "NVIDIA driver and CUDA installation process finished for CTID $CTID."
 }
 
+get_os_version_from_config() {
+    local current_ctid="$1"
+    local template_file
+    local os_version
+
+    while true; do
+        template_file=$(jq_get_value "$current_ctid" ".template")
+        if [ -n "$template_file" ] && [ "$template_file" != "null" ]; then
+            os_version=$(echo "$template_file" | grep -oP 'ubuntu-\K[0-9]{2}\.[0-9]{2}')
+            if [ -n "$os_version" ]; then
+                echo "$os_version" | tr -d '.'
+                return 0
+            fi
+        fi
+
+        current_ctid=$(jq_get_value "$current_ctid" ".clone_from_ctid")
+        if [ -z "$current_ctid" ] || [ "$current_ctid" == "null" ]; then
+            log_error "Could not determine OS version for CTID $1. No template file found in hierarchy."
+            return 1
+        fi
+    done
+}
 
 # =====================================================================================
 # Function: main
@@ -235,10 +260,11 @@ verify_installation() {
 #   Exits with status 0 on successful completion.
 # =====================================================================================
 main() {
-    parse_arguments "$@" # Parse command-line arguments
+    parse_arguments "$@"
+
+
     configure_host_gpu_passthrough # Configure GPU passthrough on the Proxmox host
     install_drivers_in_container # Install NVIDIA drivers and CUDA Toolkit inside the container
-    verify_installation # Verify the NVIDIA installation
     exit_script 0 # Exit successfully
 }
 

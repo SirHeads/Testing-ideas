@@ -1,8 +1,8 @@
 {
-    "version": "0.01.02",
+    "version": "1.0.0",
     "author": "Heads, Qwen3-coder, Roo",
     "users": {
-        "username": "heads",
+        "username": "phoenix_admin",
         "password_hash": "NOT_SET",
         "sudo_access": true,
         "ssh_public_key": ""
@@ -121,43 +121,57 @@
                 "name": "shared-prod-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
             },
             {
                 "name": "shared-prod-data-sync",
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
+            },
+            {
+                "name": "shared-prod-data-volumes",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-test-data",
                 "pool": "fastData",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
-                "proxmox_storage_type": "dir",
-                "proxmox_content_type": "images"
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-backups",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=zstd,sync=standard,quota=2T",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "backup"
             },
             {
                 "name": "shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "iso,vztmpl"
             },
             {
                 "name": "shared-bulk-data",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
+            },
+            {
+                "name": "fastData-shared-iso",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "iso,vztmpl"
             }
         ]
     },
@@ -165,7 +179,8 @@
         "quickos_vm": "quickOS-vm-disks",
         "quickos_lxc": "quickOS-lxc-disks",
         "fastdata_backup": "fastData-shared-backups",
-        "fastdata_iso": "fastData-shared-iso"
+        "fastdata_iso": "fastData-shared-iso",
+        "quickos_volumes": "quickOS-shared-prod-data-volumes"
     },
     "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {
@@ -208,5 +223,51 @@
     "behavior": {
         "rollback_on_failure": false,
         "debug_mode": true
+    },
+    "shared_volumes": {
+        "ssl_certs": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/ssl",
+            "mounts": {
+                "953": "/etc/nginx/ssl",
+                "910": "/certs",
+                "954": "/certs"
+            }
+        },
+        "nginx_sites": {
+            "host_path": "/usr/local/phoenix_hypervisor/etc/nginx/sites-available",
+            "mounts": {
+                "953": "/etc/nginx/sites-available"
+            }
+        },
+        "nginx_logs": {
+            "host_path": "/mnt/pve/quickOS/shared-prod-data/logs/nginx",
+            "mounts": {
+                "953": "/logs/nginx"
+            }
+        },
+        "ollama_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/ollama_models",
+            "mounts": {
+                "955": "/ollama_models"
+            }
+        },
+        "llamacpp_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/llamacpp_models",
+            "mounts": {
+                "957": "/llamacpp_models"
+            }
+        },
+        "vllm_models": {
+            "host_path": "/mnt/pve/fastData/shared-bulk-data/vllm_models",
+            "mounts": {
+                "950": "/vllm_models",
+                "951": "/vllm_models"
+            }
+        },
+        "firewall": {
+            "enabled": true,
+            "default_input_policy": "DROP",
+            "default_output_policy": "ACCEPT"
+        }
     }
 }

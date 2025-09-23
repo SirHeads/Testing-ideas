@@ -21,6 +21,7 @@ check_root
 HYPERVISOR_CONFIG_FILE=""
 NO_REBOOT_OVERRIDE=0
 SCRIPT_VERSION="6.0.0"
+CACHE_DIR="/usr/local/phoenix_hypervisor/cache"
 
 # =====================================================================================
 # Main Execution Logic
@@ -114,17 +115,19 @@ options nouveau modeset=0
 EOF
     update-initramfs -u || log_warn "Failed to update initramfs."
     
-    local runfile="NVIDIA-Linux-x86_64-${NVIDIA_DRIVER_VERSION}.run"
-    wget --quiet "$NVIDIA_RUNFILE_URL" -O "$runfile" || log_fatal "Failed to download NVIDIA driver."
-    chmod +x "$runfile"
-    ./"$runfile" --silent --no-x-check --no-nouveau-check --no-opengl-files --accept-license --no-dkms || log_fatal "NVIDIA driver installation failed."
+    local runfile_path
+    runfile_path=$(cache_and_get_file "$NVIDIA_RUNFILE_URL" "$CACHE_DIR") || log_fatal "Failed to cache NVIDIA driver runfile."
     
-    rm -f "$runfile"
+    chmod +x "$runfile_path"
+    "$runfile_path" --silent --no-x-check --no-nouveau-check --no-opengl-files --accept-license --no-dkms || log_fatal "NVIDIA driver installation failed."
 
     # --- Phase 5: Finalization & Reboot ---
     log_info "--- Phase 5: Finalization & Reboot ---"
     log_info "Updating kernel module dependencies..."
     depmod -a || log_warn "depmod -a failed, but continuing."
+# Install nvtop for GPU process monitoring
+log_info "Installing nvtop..."
+apt-get install -y nvtop
     
     if [[ "$NO_REBOOT_OVERRIDE" -eq 0 ]]; then
         log_info "System preparation complete. Rebooting now to load the new driver."

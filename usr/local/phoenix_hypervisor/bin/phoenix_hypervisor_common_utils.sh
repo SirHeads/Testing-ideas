@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_common_utils.sh
-# Description: Provides centralized environment setup, logging utilities, and common functions
+# Description: Provids centralized environment setup, logging utilities, and common functions
 #              for all Phoenix Hypervisor shell scripts. This script is designed to be sourced
 #              by other scripts to ensure a consistent execution environment and standardized
 #              logging practices across the hypervisor management system.
@@ -62,7 +62,7 @@ log_debug() {
     # Check if debug mode is enabled
     if [ "$PHOENIX_DEBUG" == "true" ]; then
         # Log the debug message with timestamp and script name
-        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
     fi
 }
 
@@ -76,7 +76,7 @@ log_debug() {
 # =====================================================================================
 log_info() {
     # Log the informational message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -89,7 +89,7 @@ log_info() {
 # =====================================================================================
 log_success() {
     # Log the success message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE"
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -134,6 +134,25 @@ log_fatal() {
 }
 
 # =====================================================================================
+# Function: setup_logging
+# Description: Ensures the log directory exists and the log file is available.
+# Arguments:
+#   $1 - The full path to the log file.
+# =====================================================================================
+setup_logging() {
+    local log_file="$1"
+    local log_dir
+    log_dir=$(dirname "$log_file")
+
+    if [ ! -d "$log_dir" ]; then
+        # Create the log directory if it doesn't exist
+        mkdir -p "$log_dir" || log_fatal "Failed to create log directory: $log_dir"
+    fi
+    # Touch the log file to ensure it exists
+    touch "$log_file" || log_fatal "Failed to create log file: $log_file"
+}
+ 
+# =====================================================================================
 # Function: log_plain_output
 # Description: Logs multi-line output from a variable or command, preserving formatting.
 #              Designed to be used with pipes.
@@ -161,6 +180,8 @@ log_plain_output() {
 # Function: pct_exec
 # Description: Executes a command inside an LXC container using 'pct exec'.
 #              Handles errors and ensures commands are run with appropriate privileges.
+#              NOTE: This function is robust and automatically handles the '--' separator.
+#              It is safe to call with or without it.
 # Arguments:
 #   $1 (ctid) - The container ID.
 #   $@ - The command and its arguments to execute inside the container.
@@ -168,12 +189,35 @@ log_plain_output() {
 pct_exec() {
     local ctid="$1"
     shift # Remove ctid from the arguments list
+
+    # If the first argument is '--', remove it to make the function more robust.
+    if [[ "$1" == "--" ]]; then
+        shift
+    fi
+
     local cmd_args=("$@")
 
-    log_info "Executing in CTID $ctid: ${cmd_args[*]}"
-    if ! pct exec "$ctid" -- "${cmd_args[@]}"; then
-        log_error "Command failed in CTID $ctid: '${cmd_args[*]}'"
-        return 1
+    # Context-aware execution: check if running inside the container's temp dir
+    if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+        log_info "Executing command inside container: ${cmd_args[*]}"
+        # When inside the container, execute the command directly using bash -c
+        # This is necessary because 'pct' is a host-only command.
+        if ! "${cmd_args[@]}"; then
+            log_error "Command failed inside container: '${cmd_args[@]}'"
+            return 1
+        fi
+    else
+        # When on the host, use 'pct exec' to run the command inside the container
+        log_info "Executing command from host in CTID $ctid: ${cmd_args[@]}"
+        local output
+        local exit_code=0
+        output=$(pct exec "$ctid" -- "${cmd_args[@]}" 2>&1) || exit_code=$?
+        if [ $exit_code -ne 0 ]; then
+            log_error "Command failed in CTID $ctid with exit code $exit_code: '${cmd_args[@]}'"
+            log_error "Output:\n$output"
+            return $exit_code
+        fi
+        echo "$output"
     fi
     return 0
 }
@@ -193,8 +237,17 @@ jq_get_value() {
     local jq_query="$2"
     local value
 
+    # Log the exact query for debugging purposes
+    log_debug "Executing jq query for CTID $ctid: .lxc_configs[\$ctid | tostring] | ${jq_query}"
+
     # Execute jq to query the LXC config file for the specified CTID and query
     value=$(jq -r --arg ctid "$ctid" ".lxc_configs[\$ctid | tostring] | ${jq_query}" "$LXC_CONFIG_FILE")
+
+    # If the value is not found in the container's config, check the root of the file.
+    if [ -z "$value" ] || [ "$value" == "null" ]; then
+        log_debug "Value not found in CTID $ctid config. Checking root of the file for query: ${jq_query}"
+        value=$(jq -r "${jq_query}" "$LXC_CONFIG_FILE")
+    fi
 
     # Check if jq command failed
     if [ "$?" -ne 0 ]; then
@@ -283,6 +336,68 @@ run_pct_command() {
     log_info "'pct ${pct_args[*]}' command executed successfully."
     return 0
 }
+# =====================================================================================
+# Function: run_pct_push
+# Description: A robust wrapper for 'pct push' with retries and verification.
+#              This function pushes a file to a container, creating the destination
+#              directory if it doesn't exist, and verifies the transfer.
+# Arguments:
+#   $1 (ctid) - The container ID.
+#   $2 (host_path) - The path of the file on the host.
+#   $3 (container_path) - The destination path in the container.
+#   $4 (max_attempts) - Optional: Maximum number of push attempts (default: 3).
+#   $5 (delay) - Optional: Delay in seconds between retries (default: 5).
+# Returns:
+#   0 on success, 1 on failure after all retries.
+# =====================================================================================
+run_pct_push() {
+    local ctid="$1"
+    local host_path="$2"
+    local container_path="$3"
+    local max_attempts="${4:-3}"
+    local delay="${5:-5}"
+    local attempt=1
+
+    # Ensure the destination directory exists in the container
+    local container_dir
+    container_dir=$(dirname "$container_path")
+    log_info "Ensuring destination directory '$container_dir' exists in CTID $ctid..."
+    if ! pct_exec "$ctid" mkdir -p "$container_dir"; then
+        log_fatal "Failed to create directory '$container_dir' in CTID $ctid. Aborting file push."
+        return 1
+    fi
+
+    while [ $attempt -le $max_attempts ]; do
+        log_info "Attempt $attempt/$max_attempts: Pushing '$host_path' to CTID $ctid at '$container_path'..."
+        
+        local output
+        local exit_code=0
+        output=$(pct push "$ctid" "$host_path" "$container_path" 2>&1) || exit_code=$?
+
+        if [ $exit_code -eq 0 ]; then
+            log_info "File push command succeeded. Verifying file existence in container..."
+            if pct_exec "$ctid" test -f "$container_path"; then
+                log_success "File successfully pushed and verified in CTID $ctid."
+                return 0
+            else
+                log_warn "File push command succeeded, but verification failed. File not found at '$container_path'."
+            fi
+        else
+            log_error "File push command failed with exit code $exit_code."
+            log_error "Output:\n$output"
+        fi
+
+        if [ $attempt -lt $max_attempts ]; then
+            log_info "Waiting for $delay seconds before retrying..."
+            sleep "$delay"
+        fi
+        ((attempt++))
+    done
+
+    log_fatal "Failed to push file to CTID $ctid after $max_attempts attempts."
+    return 1
+}
+
 
 # =====================================================================================
 # Function: ensure_nvidia_repo_is_configured
@@ -295,26 +410,29 @@ ensure_nvidia_repo_is_configured() {
     local ctid="$1"
     log_info "Ensuring NVIDIA CUDA repository is configured in CTID $ctid..."
 
-    # Check if the NVIDIA CUDA repository is already configured
-    if pct_exec "$ctid" [ -f /etc/apt/sources.list.d/cuda.list ]; then
-        log_info "NVIDIA CUDA repository already configured. Skipping."
+
+    local nvidia_repo_url
+    nvidia_repo_url=$(jq_get_value "$ctid" ".nvidia_repo_url")
+    local expected_repo_line="deb [signed-by=/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg] ${nvidia_repo_url} /"
+    
+    local repo_file_path="/etc/apt/sources.list.d/cuda.list"
+    if pct_exec "$ctid" -- test -f "$repo_file_path" && pct_exec "$ctid" -- grep -Fxq -- "${expected_repo_line}" "$repo_file_path"; then
+        log_info "NVIDIA CUDA repository is already correctly configured. Skipping."
         return 0
     fi
 
-    # Retrieve NVIDIA repository URL from LXC config file
-    local nvidia_repo_url=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu2404.pin" # Construct CUDA pin URL
-    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub" # Construct CUDA key URL
-    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg" # Define keyring path
+    log_info "NVIDIA CUDA repository not configured or misconfigured. Proceeding with setup."
 
-    # Download and install CUDA repository pin
-    pct_exec "$ctid" wget -qO /etc/apt/preferences.d/cuda-repository-pin-600 "$cuda_pin_url"
-    # Download and install CUDA public key
-    pct_exec "$ctid" curl -fsSL "$cuda_key_url" | pct_exec "$ctid" gpg --dearmor -o "$cuda_keyring_path"
-    # Add CUDA repository to sources list
-    pct_exec "$ctid" bash -c "echo \"deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /\" > /etc/apt/sources.list.d/cuda.list"
-    # Update apt package list
-    pct_exec "$ctid" apt-get update
+    local os_version=$(echo "$nvidia_repo_url" | grep -oP 'ubuntu\K[0-9]{4}')
+    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu${os_version}.pin"
+    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub"
+    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg"
+
+    pct_exec "$ctid" -- wget -qO "/etc/apt/preferences.d/cuda-repository-pin-600" "$cuda_pin_url"
+    pct_exec "$ctid" -- rm -f "/usr/share/keyrings/cuda-archive-keyring.gpg"
+    pct_exec "$ctid" -- bash -c "curl -fsSL \"$cuda_key_url\" | gpg --dearmor -o \"$cuda_keyring_path\""
+    pct_exec "$ctid" -- bash -c "echo \"$expected_repo_line\" > /etc/apt/sources.list.d/cuda.list"
+    pct_exec "$ctid" -- apt-get update
 }
 
 # --- Initial Environment Check (only run once per main script execution) ---
@@ -646,4 +764,324 @@ zfs_dataset_exists() {
     return 0 # Dataset exists
   fi
   return 1 # Dataset does not exist
+}
+# =====================================================================================
+# Function: is_command_available
+# Description: Checks if a command is available inside a specified LXC container.
+# Arguments:
+#   $1 (CTID) - The container ID.
+#   $2 (command_name) - The name of the command to check.
+# Returns:
+#   0 if the command is available, 1 otherwise.
+# =====================================================================================
+is_command_available() {
+    local CTID="$1"
+    local command_name="$2"
+    
+    log_debug "Checking for command '$command_name' in CTID $CTID..."
+    
+    # First, try the standard 'command -v' which is fast and checks the PATH
+    if pct_exec "$CTID" command -v "$command_name" >/dev/null 2>&1; then
+        log_debug "Command '$command_name' found in PATH for CTID $CTID."
+        return 0
+    fi
+    
+    # If not found in PATH, check for the file's existence in common locations using 'test -f'
+    log_debug "Command '$command_name' not in PATH. Checking common locations with 'test -f' in CTID $CTID..."
+    local search_paths=("/usr/bin" "/usr/sbin" "/bin" "/sbin" "/usr/local/bin" "/usr/local/sbin" "/opt/bin" "/usr/local/cuda/bin" "/usr/local/cuda-12.8/bin")
+    
+    for path in "${search_paths[@]}"; do
+        if pct_exec "$CTID" test -f "${path}/${command_name}"; then
+            log_debug "Command '$command_name' found at ${path}/${command_name} in CTID $CTID."
+            return 0
+        fi
+    done
+
+    log_debug "Command '$command_name' not found in CTID $CTID after full search."
+    return 1
+}
+
+# =====================================================================================
+# Function: cache_and_get_file
+# Description: Downloads a file from a URL to a local cache directory if it doesn't
+#              already exist and returns the path to the cached file.
+# Arguments:
+#   $1 (URL) - The URL of the file to download.
+#   $2 (cache_dir) - The directory to store the cached file.
+# Returns:
+#   Echoes the full path to the cached file and returns 0 on success.
+#   Returns a non-zero value if the download fails.
+# =====================================================================================
+cache_and_get_file() {
+    local url="$1"
+    local cache_dir="$2"
+    local filename
+
+    # Extract filename from the URL
+    filename=$(basename "$url")
+    local cached_file_path="${cache_dir}/${filename}"
+
+    # Check if the file is already cached
+    if [ -f "$cached_file_path" ]; then
+        log_info "File '$filename' found in cache: $cached_file_path"
+        echo "$cached_file_path"
+        return 0
+    fi
+
+    # Create the cache directory if it doesn't exist
+    mkdir -p "$cache_dir"
+
+    # Download the file
+    log_info "Downloading '$filename' from '$url' to '$cache_dir'..."
+    if wget -qO "$cached_file_path" "$url"; then
+        log_success "Successfully downloaded '$filename' to '$cached_file_path'"
+        echo "$cached_file_path"
+        return 0
+    else
+        log_error "Failed to download file from '$url'"
+        # Clean up partially downloaded file
+        rm -f "$cached_file_path"
+        return 1
+    fi
+}
+# =====================================================================================
+# Function: is_nvidia_installed_robust
+# Description: A robust check to see if the NVIDIA feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+is_nvidia_installed_robust() {
+    local CTID="$1"
+    log_info "--- Running Robust NVIDIA Installation Diagnostics for CTID $CTID ---"
+
+    # 1. Check for nvidia-smi in common locations
+    local nvidia_smi_path
+    nvidia_smi_path=$(pct_exec "$CTID" find /usr/bin /usr/local/bin /opt -name "nvidia-smi" 2>/dev/null | head -n 1)
+
+    if [ -z "$nvidia_smi_path" ]; then
+        log_info "NVIDIA feature not installed: nvidia-smi binary not found."
+        return 1
+    fi
+    log_info "Found 'nvidia-smi' binary at: $nvidia_smi_path"
+
+    # 2. Check driver version
+    local driver_version
+    driver_version=$(pct_exec "$CTID" "$nvidia_smi_path" --query-gpu=driver_version --format=csv,noheader | head -n 1)
+
+    if [ -z "$driver_version" ]; then
+        log_info "NVIDIA feature not installed: Unable to query driver version."
+        return 1
+    fi
+    log_info "NVIDIA driver version: $driver_version"
+
+    # 3. Check for CUDA directory
+    if ! pct_exec "$CTID" test -d /usr/local/cuda; then
+        log_info "NVIDIA feature not installed: CUDA directory /usr/local/cuda does not exist."
+        return 1
+    fi
+    log_info "CUDA directory /usr/local/cuda found."
+
+    log_info "NVIDIA feature is already installed and configured correctly."
+    log_info "--- End Robust NVIDIA Installation Diagnostics ---"
+    return 0
+}
+
+# =====================================================================================
+# Function: _check_docker_installed
+# Description: Private function to check if the Docker feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+_check_docker_installed() {
+    local CTID="$1"
+    
+    if ! is_command_available "$CTID" "docker"; then
+        log_info "Docker feature not installed: docker command not found."
+        return 1
+    fi
+
+    if ! pct_exec "$CTID" systemctl is-active --quiet docker; then
+        log_info "Docker feature not installed: docker service is not active."
+        return 1
+    fi
+
+    log_info "Docker feature is already installed and active."
+    return 0
+}
+
+# =====================================================================================
+# Function: _check_base_setup_installed
+# Description: Private function to check if the base_setup feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+_check_base_setup_installed() {
+    local CTID="$1"
+    
+    local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui" "gnupg" "locales")
+    for pkg in "${essential_packages[@]}"; do
+        if ! is_command_available "$CTID" "$pkg"; then
+            log_info "Base setup not complete: Essential package '$pkg' is missing."
+            return 1
+        fi
+    done
+
+    if ! pct_exec "$CTID" locale | grep -q "LANG=en_US.UTF-8"; then
+        log_info "Base setup not complete: Locale is not set to en_US.UTF-8."
+        return 1
+    fi
+
+    log_info "Base setup feature is already installed."
+    return 0
+}
+
+# =====================================================================================
+# Function: _check_ollama_installed
+# Description: Private function to check if the Ollama feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+_check_ollama_installed() {
+    local CTID="$1"
+    
+    if is_command_available "$CTID" "ollama"; then
+        log_info "Ollama feature is already installed."
+        return 0
+    fi
+
+    log_info "Ollama feature not installed: ollama command not found."
+    return 1
+}
+
+# =====================================================================================
+# Function: _check_python_api_service_installed
+# Description: Private function to check if the python_api_service feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+_check_python_api_service_installed() {
+    local CTID="$1"
+    
+    if ! is_command_available "$CTID" "python3"; then
+        log_info "Python API service not installed: python3 command not found."
+        return 1
+    fi
+
+    if ! is_command_available "$CTID" "pip3"; then
+        log_info "Python API service not installed: pip3 command not found."
+        return 1
+    fi
+
+    if ! pct_exec "$CTID" python3 -c "import venv" &> /dev/null; then
+        log_info "Python API service not installed: venv module not found."
+        return 1
+    fi
+
+    log_info "Python API service feature is already installed."
+    return 0
+}
+
+# =====================================================================================
+# Function: _check_vllm_installed
+# Description: Private function to check if the vLLM feature is installed.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 if the feature is installed, 1 otherwise.
+# =====================================================================================
+_check_vllm_installed() {
+    local CTID="$1"
+    local vllm_dir="/opt/vllm"
+    
+    if ! pct_exec "$CTID" test -d "$vllm_dir"; then
+        log_info "vLLM feature not installed: vLLM directory not found."
+        return 1
+    fi
+
+    if ! pct_exec "$CTID" test -f "${vllm_dir}/bin/vllm"; then
+        log_info "vLLM feature not installed: vllm executable not found."
+        return 1
+    fi
+
+    if ! pct_exec "$CTID" "${vllm_dir}/bin/python" -c "import vllm" &> /dev/null; then
+        log_info "vLLM feature not installed: vllm package could not be imported."
+        return 1
+    fi
+
+    log_info "vLLM feature is already installed."
+    return 0
+}
+
+# =====================================================================================
+# Function: is_feature_present_on_container
+# Description: Recursively checks if a feature is present on a container, including its templates.
+# Arguments:
+#   $1 (CTID) - The container ID to check.
+#   $2 (feature_name) - The name of the feature to look for.
+# Returns:
+#   0 if the feature is found, 1 otherwise.
+# =====================================================================================
+is_feature_present_on_container() {
+    local ctid="$1"
+    local feature_name="$2"
+    local features
+    
+    # Get the features for the current container
+    features=$(jq_get_array "$ctid" ".features[]" || echo "")
+    
+    # Check if the feature is in the list of features for this container
+    if [[ " ${features[*]} " =~ " ${feature_name} " ]]; then
+        log_info "Feature '$feature_name' found directly on CTID $ctid."
+        return 0
+    fi
+    
+    # Get the parent template ID, if it exists
+    local parent_ctid
+    parent_ctid=$(jq_get_value "$ctid" ".clone_from_ctid" || echo "")
+    
+    # If there is a parent, recursively check it for the feature
+    if [ -n "$parent_ctid" ]; then
+        log_info "Feature '$feature_name' not found on CTID $ctid. Checking parent template: $parent_ctid."
+        is_feature_present_on_container "$parent_ctid" "$feature_name"
+        return $?
+    fi
+    
+    # If there is no parent and the feature was not found, return 1
+    log_info "Feature '$feature_name' not found on CTID $ctid or any of its parents."
+    return 1
+}
+# =====================================================================================
+# Function: wait_for_container_initialization
+# Description: Waits for a container to have network connectivity.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 on success, exits with a fatal error on timeout.
+# =====================================================================================
+wait_for_container_initialization() {
+    local ctid="$1"
+    local timeout=60
+    local end_time=$((SECONDS + timeout))
+
+    log_info "Waiting for container $ctid to initialize (up to ${timeout}s)..."
+
+    while [ $SECONDS -lt $end_time ]; do
+        if pct_exec "$ctid" -- ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            log_success "Container $ctid is initialized and has network connectivity."
+            return 0
+        fi
+        sleep 2
+    done
+
+    log_fatal "Timeout reached: Container $ctid did not initialize within $timeout seconds."
 }

@@ -86,12 +86,10 @@ configure_proxmox_repositories() {
     fi
     log_info "Proxmox GPG key installed."
 
-    # Disable Enterprise Repositories by renaming them
+    # Disable Enterprise Repositories by renaming them if it exists
     if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ]; then
         mv /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/pve-enterprise.sources.disabled
         log_info "Disabled Proxmox VE enterprise repository."
-    else
-        log_warn "Proxmox VE enterprise repository file not found, skipping."
     fi
 
     # Create the PVE no-subscription repository file
@@ -135,7 +133,7 @@ configure_nodesource_repository() {
     mkdir -p /etc/apt/keyrings
     
     # Download the NodeSource GPG key
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg
     
     # Set the correct permissions for the GPG key
     chmod 644 /etc/apt/keyrings/nodesource.gpg
@@ -410,6 +408,15 @@ main() {
     set_system_hostname # Set system hostname
     configure_network_interface # Configure static IP for network interface
     update_etc_hosts # Update /etc/hosts
+
+    # Initialize NVIDIA GPUs
+    if [ -f "${SCRIPT_DIR}/hypervisor_feature_initialize_nvidia_gpus.sh" ]; then
+        log_info "Running NVIDIA GPU initialization script..."
+        source "${SCRIPT_DIR}/hypervisor_feature_initialize_nvidia_gpus.sh"
+    else
+        log_warning "NVIDIA GPU initialization script not found. Skipping."
+    fi
+
     install_ufw # Install ufw if not present
     configure_firewall_rules # Configure firewall rules
     
