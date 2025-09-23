@@ -78,7 +78,7 @@ install_and_configure_docker() {
     local docker_installed=false
     # Use raw 'pct exec' for the systemctl check to prevent the script from exiting if the service is not active.
     # This ensures that if Docker is installed but not running, we can proceed to the installation/repair logic.
-    if is_command_available "$CTID" "docker" && pct exec "$CTID" -- systemctl is-active --quiet docker >/dev/null 2>&1; then
+    if pct exec "$CTID" -- command -v docker >/dev/null 2>&1 && pct exec "$CTID" -- systemctl is-active --quiet docker >/dev/null 2>&1; then
         docker_installed=true
     fi
 
@@ -87,28 +87,24 @@ install_and_configure_docker() {
     # This makes the script more robust for partial installations or re-runs.
     log_info "Ensuring dependencies are installed in CTID: $CTID"
     pct_exec "$CTID" apt-get update
-    pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release
+    pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release jq
 
     # --- NVIDIA Repository Configuration ---
     # This must happen after dependency installation to ensure curl and gpg are available.
     ensure_nvidia_repo_is_configured "$CTID"
 
     # --- Docker Installation ---
-    if [ "$docker_installed" = true ]; then
-        log_info "Docker already appears to be installed and running in CTID $CTID. Skipping installation."
-    else
-        log_info "Adding Docker official repository in CTID: $CTID"
-        pct_exec "$CTID" mkdir -p /etc/apt/keyrings
-        pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
-        pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
-        pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
-        pct_exec "$CTID" rm /tmp/docker.gpg
-        pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
-        pct_exec "$CTID" apt-get update
+    log_info "Adding Docker official repository in CTID: $CTID"
+    pct_exec "$CTID" mkdir -p /etc/apt/keyrings
+    pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
+    pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
+    pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
+    pct_exec "$CTID" rm /tmp/docker.gpg
+    pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+    pct_exec "$CTID" apt-get update
 
-        log_info "Installing Docker Engine in CTID: $CTID"
-        pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    fi
+    log_info "Installing Docker Engine in CTID: $CTID"
+    pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
     # --- Conditional NVIDIA Container Toolkit Installation ---
     if is_feature_present_on_container "$CTID" "nvidia"; then
@@ -135,8 +131,8 @@ install_and_configure_docker() {
         local docker_daemon_config_file="/etc/docker/daemon.json"
         local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }'
 
-        pct_exec "$CTID" bash -c "mkdir -p /etc/docker && touch $docker_daemon_config_file"
-        pct_exec "$CTID" bash -c "jq -s 'if (.[0] | type) == \"null\" then {} else .[0] end * .[1]' '$docker_daemon_config_file' <(echo '$nvidia_runtime_config') > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '$docker_daemon_config_file'"
+        pct_exec "$CTID" bash -c "mkdir -p /etc/docker && [ -f $docker_daemon_config_file ] || echo '{}' > $docker_daemon_config_file"
+        pct_exec "$CTID" bash -c "jq -s '.[0] * .[1]' '$docker_daemon_config_file' <(echo '$nvidia_runtime_config') > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '$docker_daemon_config_file'"
     else
         log_info "NVIDIA feature not detected. Skipping NVIDIA Container Toolkit installation."
     fi
@@ -150,6 +146,18 @@ install_and_configure_docker() {
     log_info "Docker installation and configuration complete for CTID $CTID."
 }
 
+# =====================================================================================
+# Function: verify_docker_installation
+# Description: Verifies that Docker was installed and is running correctly.
+# =====================================================================================
+verify_docker_installation() {
+    log_info "Verifying Docker installation in CTID: $CTID"
+    if ! pct_exec "$CTID" docker --version; then
+        log_fatal "Docker installation verification failed. The 'docker' command is not available."
+    fi
+    log_success "Docker installation verified successfully."
+}
+
 
 # =====================================================================================
 # Function: main
@@ -159,10 +167,12 @@ main() {
     parse_arguments "$@" # Parse command-line arguments
 
     # --- Idempotency Check ---
-    if is_feature_present_on_container "$CTID" "docker"; then
-        log_info "Docker feature already installed on CTID $CTID. Skipping installation."
+    # Use a direct, silent check for the docker command to avoid log noise from is_command_available
+    if pct exec "$CTID" -- command -v docker >/dev/null 2>&1; then
+        log_info "Docker is already installed in CTID $CTID. Skipping installation."
     else
-        install_and_configure_docker # Install and configure Docker
+        install_and_configure_docker
+        verify_docker_installation
     fi
     # --- End Idempotency Check ---
     

@@ -180,7 +180,7 @@ install_drivers_in_container() {
     # --- Prerequisite Installation ---
     log_info "Installing prerequisites in container..."
     pct_exec "$CTID" -- apt-get update
-    pct_exec "$CTID" -- apt-get install -y wget build-essential pkg-config libglvnd-dev
+    pct_exec "$CTID" -- apt-get install -y wget build-essential pkg-config libglvnd-dev curl gnupg
 
     # --- Driver Installation from .run file ---
     local runfile_name
@@ -201,11 +201,7 @@ install_drivers_in_container() {
     pct_exec "$CTID" -- rm "$container_runfile_path"
 
     # --- CUDA Toolkit Installation ---
-    log_info "Configuring NVIDIA CUDA repository..."
-    local os_version
-    os_version=$(get_os_version_from_config "$CTID")
-    local cuda_repo_url="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${os_version}/x86_64/cuda-keyring_1.1-1_all.deb"
-    pct_exec "$CTID" -- bash -c "wget -qO /tmp/cuda-keyring.deb ${cuda_repo_url} && dpkg -i /tmp/cuda-keyring.deb && rm /tmp/cuda-keyring.deb"
+    ensure_nvidia_repo_is_configured "$CTID"
 
     log_info "Installing CUDA Toolkit..."
     pct_exec "$CTID" -- apt-get update

@@ -210,11 +210,12 @@ pct_exec() {
         # When on the host, use 'pct exec' to run the command inside the container
         log_info "Executing command from host in CTID $ctid: ${cmd_args[@]}"
         local output
-        output=$(pct exec "$ctid" -- "${cmd_args[@]}" 2>&1)
-        if [ $? -ne 0 ]; then
-            log_error "Command failed in CTID $ctid: '${cmd_args[@]}'"
+        local exit_code=0
+        output=$(pct exec "$ctid" -- "${cmd_args[@]}" 2>&1) || exit_code=$?
+        if [ $exit_code -ne 0 ]; then
+            log_error "Command failed in CTID $ctid with exit code $exit_code: '${cmd_args[@]}'"
             log_error "Output:\n$output"
-            return 1
+            return $exit_code
         fi
         echo "$output"
     fi
@@ -409,32 +410,29 @@ ensure_nvidia_repo_is_configured() {
     local ctid="$1"
     log_info "Ensuring NVIDIA CUDA repository is configured in CTID $ctid..."
 
-    # Check if the NVIDIA CUDA repository is already configured
-    # Check if the NVIDIA CUDA repository is already configured.
-    # The command will return a non-zero exit code if the file does not exist, which is the expected behavior.
-    # We directly use 'pct exec' here to avoid the error logging from our 'pct_exec' wrapper,
-    # as a non-zero exit code is expected if the file doesn't exist.
-    if pct exec "$ctid" -- test -f /etc/apt/sources.list.d/cuda.list >/dev/null 2>&1; then
-        log_info "NVIDIA CUDA repository already configured. Skipping."
+
+    local nvidia_repo_url
+    nvidia_repo_url=$(jq_get_value "$ctid" ".nvidia_repo_url")
+    local expected_repo_line="deb [signed-by=/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg] ${nvidia_repo_url} /"
+    
+    local repo_file_path="/etc/apt/sources.list.d/cuda.list"
+    if pct_exec "$ctid" -- test -f "$repo_file_path" && pct_exec "$ctid" -- grep -Fxq -- "${expected_repo_line}" "$repo_file_path"; then
+        log_info "NVIDIA CUDA repository is already correctly configured. Skipping."
         return 0
-    else
-        log_info "NVIDIA CUDA repository not found. Proceeding with configuration."
     fi
 
-    # Retrieve NVIDIA repository URL from LXC config file
-    local nvidia_repo_url=$(jq -r '.nvidia_repo_url' "$LXC_CONFIG_FILE")
-    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu2404.pin" # Construct CUDA pin URL
-    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub" # Construct CUDA key URL
-    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg" # Define keyring path
+    log_info "NVIDIA CUDA repository not configured or misconfigured. Proceeding with setup."
 
-    # Download and install CUDA repository pin
-    pct_exec "$ctid" wget -qO /etc/apt/preferences.d/cuda-repository-pin-600 "$cuda_pin_url"
-    # Download and install CUDA public key
-    pct_exec "$ctid" bash -c "curl -fsSL \"$cuda_key_url\" | gpg --dearmor -o \"$cuda_keyring_path\""
-    # Add CUDA repository to sources list
-    pct_exec "$ctid" bash -c "echo 'deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /' > /etc/apt/sources.list.d/cuda.list"
-    # Update apt package list
-    pct_exec "$ctid" apt-get update
+    local os_version=$(echo "$nvidia_repo_url" | grep -oP 'ubuntu\K[0-9]{4}')
+    local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu${os_version}.pin"
+    local cuda_key_url="${nvidia_repo_url}3bf863cc.pub"
+    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg"
+
+    pct_exec "$ctid" -- wget -qO "/etc/apt/preferences.d/cuda-repository-pin-600" "$cuda_pin_url"
+    pct_exec "$ctid" -- rm -f "/usr/share/keyrings/cuda-archive-keyring.gpg"
+    pct_exec "$ctid" -- bash -c "curl -fsSL \"$cuda_key_url\" | gpg --dearmor -o \"$cuda_keyring_path\""
+    pct_exec "$ctid" -- bash -c "echo \"$expected_repo_line\" > /etc/apt/sources.list.d/cuda.list"
+    pct_exec "$ctid" -- apt-get update
 }
 
 # --- Initial Environment Check (only run once per main script execution) ---
