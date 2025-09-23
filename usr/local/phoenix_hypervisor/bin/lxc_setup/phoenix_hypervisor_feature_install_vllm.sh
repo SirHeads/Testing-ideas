@@ -119,10 +119,21 @@ install_and_test_vllm() {
     install_proxy_ca_certificate
     log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
+    # --- Dependency Check ---
+    log_info "Verifying NVIDIA feature dependency..."
+    if ! is_feature_present_on_container "$CTID" "nvidia"; then
+        log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found on CTID $CTID or its templates."
+    fi
+
+    log_info "Verifying NVIDIA driver installation..."
+    if ! is_command_available "$CTID" "nvidia-smi"; then
+        log_fatal "NVIDIA driver not found in CTID $CTID. The 'vllm' feature depends on a functional NVIDIA driver."
+    fi
+
     log_info "Verifying NVIDIA GPU access in CTID $CTID..."
     # Check for NVIDIA GPU access using `nvidia-smi`
     if ! pct_exec "$CTID" nvidia-smi; then
-        log_fatal "NVIDIA GPU not accessible in CTID $CTID. Aborting vLLM installation."
+        log_fatal "NVIDIA GPU not accessible in CTID $CTID. 'nvidia-smi' command failed. Aborting vLLM installation."
     fi
     log_info "NVIDIA GPU access verified."
     local vllm_dir="/opt/vllm" # Directory for vLLM virtual environment
@@ -182,9 +193,12 @@ install_and_test_vllm() {
     log_info "Building and installing vLLM from source (includes flash-attn)..."
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
     log_info "Installing FlashInfer from source..."
-    pct_exec "$CTID" rm -rf /opt/flashinfer
-    pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
+    if pct_exec "$CTID" test -d "/opt/flashinfer"; then
+        log_info "FlashInfer directory already exists. Skipping clone and install."
+    else
+        pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
+        pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
+    fi
     log_info "Cleaning pip cache after vLLM installation..."
     pct_exec "$CTID" rm -rf /root/.cache/pip
 
@@ -260,6 +274,10 @@ EOF
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
+    if is_feature_installed "$CTID" "vllm"; then
+        log_info "vLLM feature is already installed. Skipping."
+        exit_script 0
+    fi
     install_and_test_vllm # Install and test vLLM
     create_vllm_systemd_service # Create the systemd service file
     

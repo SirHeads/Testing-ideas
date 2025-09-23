@@ -74,7 +74,7 @@ perform_base_os_setup() {
     local packages_to_install=()
 
     for pkg in "${essential_packages[@]}"; do
-        if ! pct_exec "$CTID" bash -c "dpkg -l | grep -q \" ${pkg} \""; then
+        if ! is_command_available "$CTID" "$pkg"; then
             packages_to_install+=("$pkg")
         fi
     done
@@ -112,6 +112,10 @@ perform_base_os_setup() {
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
+    if is_feature_installed "$CTID" "base_setup"; then
+        log_info "Base setup feature is already installed. Skipping."
+        exit_script 0
+    fi
     perform_base_os_setup # Perform base OS setup
     exit_script 0 # Exit successfully
 }

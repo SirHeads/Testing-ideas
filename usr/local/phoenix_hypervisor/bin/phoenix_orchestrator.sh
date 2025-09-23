@@ -1,3 +1,4 @@
+
 #!/bin/bash
 #
 # File: phoenix_orchestrator.sh
@@ -42,6 +43,7 @@ STOP_VM=false
 DELETE_VM=false
 RECONFIGURE=false
 LETSGO=false
+SMOKE_TEST=false # Flag for smoke test mode
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.json"
@@ -70,7 +72,7 @@ LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 parse_arguments() {
     # Display usage and exit if no arguments are provided
     if [ "$#" -eq 0 ]; then
-        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo"
+        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo | $0 --smoke-test"
         exit_script 2
     fi
 
@@ -117,6 +119,11 @@ parse_arguments() {
                 ;;
             --LetsGo)
                 LETSGO=true
+                operation_mode_set=true
+                shift
+                ;;
+            --smoke-test)
+                SMOKE_TEST=true # Enable smoke test mode
                 operation_mode_set=true
                 shift
                 ;;
@@ -172,6 +179,8 @@ parse_arguments() {
         log_info "VM delete mode for VM ID: $VM_ID"
     elif [ "$LETSGO" = true ]; then
         log_info "LetsGo mode enabled. Orchestrating all containers based on boot order."
+    elif [ "$SMOKE_TEST" = true ]; then
+        log_info "Smoke test mode enabled."
     else
         if [ ${#CTID_LIST[@]} -eq 0 ]; then # Ensure at least one CTID is provided
             log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID>... [--dry-run]"
@@ -533,6 +542,7 @@ apply_configurations() {
     # Note: The --features flag here is for Proxmox's internal features.
     # Custom feature scripts are applied in a later state.
 
+
     # --- Apply network settings ---
     # Retrieve network configuration values and construct the net0 string
     local net0_name=$(jq_get_value "$CTID" ".network_config.name")
@@ -881,26 +891,24 @@ start_container() {
 apply_features() {
     local CTID="$1"
     log_info "Applying features for CTID: $CTID"
-    local features # Variable to store the list of features
-    features=$(jq_get_value "$CTID" ".features[]" || echo "") # Retrieve features as an array from config
+    local features
+    features=$(jq_get_value "$CTID" ".features[]" || echo "")
 
-    # If no features are defined, log and exit
     if [ -z "$features" ]; then
         log_info "No features to apply for CTID $CTID."
         return 0
     fi
 
-    # Loop through each feature and execute its corresponding script
+    log_info "Features to apply for CTID $CTID: $features"
+
     for feature in $features; do
-        local feature_script_path="${PHOENIX_BASE_DIR}/bin/lxc_setup/phoenix_hypervisor_feature_install_${feature}.sh" # Construct script path
+        local feature_script_path="${PHOENIX_BASE_DIR}/bin/lxc_setup/phoenix_hypervisor_feature_install_${feature}.sh"
         log_info "Executing feature: $feature ($feature_script_path)"
 
-        # Check if the feature script exists
         if [ ! -f "$feature_script_path" ]; then
             log_fatal "Feature script not found at $feature_script_path."
         fi
 
-        # Execute the feature script, passing the CTID as an argument
         if ! "$feature_script_path" "$CTID"; then
             log_fatal "Feature script '$feature' failed for CTID $CTID."
         fi
@@ -1028,14 +1036,26 @@ run_application_script() {
 run_health_check() {
     local CTID="$1"
     log_info "Checking for health check for CTID: $CTID"
+    # --- NVIDIA Health Check ---
+    local features
+    features=$(jq_get_value "$CTID" ".features[]" || echo "")
+    if [[ " ${features[*]} " =~ " nvidia " ]]; then
+        log_info "NVIDIA feature detected. Running NVIDIA health check..."
+        local nvidia_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_nvidia.sh"
+        if ! "$nvidia_check_script" "$CTID"; then
+            log_fatal "NVIDIA health check failed for CTID $CTID."
+        fi
+    fi
+
+    # --- Generic Health Check ---
     local health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
 
     if [ -z "$health_check_command" ]; then
-        log_info "No health check to run for CTID $CTID."
+        log_info "No generic health check to run for CTID $CTID."
         return 0
     fi
 
-    log_info "Executing health check command inside container: $health_check_command"
+    log_info "Executing generic health check command inside container: $health_check_command"
     local attempts=0
     local max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
     local interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
@@ -1210,6 +1230,45 @@ run_qm_command() {
 }
 
 # =====================================================================================
+# Function: setup_hypervisor
+# Description: Orchestrates the setup of the hypervisor by executing a series of scripts.
+# Arguments:
+#   $1 - The path to the configuration file.
+# =====================================================================================
+setup_hypervisor() {
+    local config_file="$1"
+    log_info "Starting hypervisor setup with config file: $config_file"
+
+    if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
+        log_fatal "Hypervisor setup requires a valid configuration file."
+    fi
+
+    local setup_scripts=(
+        "hypervisor_initial_setup.sh"
+        "hypervisor_feature_setup_zfs.sh"
+        "hypervisor_feature_configure_vfio.sh"
+        "hypervisor_feature_install_nvidia.sh"
+        "hypervisor_feature_setup_firewall.sh"
+        "hypervisor_feature_setup_nfs.sh"
+        "hypervisor_feature_setup_samba.sh"
+        "hypervisor_feature_create_admin_user.sh"
+    )
+
+    for script in "${setup_scripts[@]}"; do
+        local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
+        log_info "Executing setup script: $script..."
+        if [ ! -f "$script_path" ]; then
+            log_fatal "Hypervisor setup script not found at $script_path."
+        fi
+        if ! "$script_path" "$config_file"; then
+            log_fatal "Hypervisor setup script '$script' failed."
+        fi
+    done
+
+    log_info "Hypervisor setup completed successfully."
+}
+
+# =====================================================================================
 # Function: create_vm
 # Description: Creates a new VM based on a definition in the configuration file.
 # Arguments:
@@ -1306,250 +1365,189 @@ create_vm() {
             if [ ! -f "$script_path" ]; then
                 log_fatal "Post-create script not found at $script_path."
             fi
-            # Note: This assumes the script can be run remotely (e.g., via SSH or qm agent).
-            # For simplicity, we're directly executing it on the orchestrator host,
-            # passing the VM_ID as an argument. In a real scenario, `qm agent exec` or SSH would be used.
-            log_info "Simulating execution of $script inside VM $vm_id."
-            if ! "$script_path" "$vm_id"; then # Execute the script, passing VM_ID
-                log_fatal "Post-create script '$script' failed for VM $vm_id."
-            fi
         done
-        log_info "All post-creation scripts executed for VM $vm_name (ID: $vm_id)."
-    else
-        log_info "No post-creation scripts defined for VM $vm_name."
     fi
-
-    log_info "VM $vm_name (ID: $vm_id) is ready."
 }
 
 # =====================================================================================
-# Function: start_vm
-# Description: Starts an existing VM.
-# Arguments:
-#   $1 - The ID of the VM to start.
+# Function: run_smoke_tests
+# Description: Orchestrates a series of health checks against critical services
+#              to ensure the environment is stable and operational.
 # =====================================================================================
-# =====================================================================================
-# Function: start_vm
-# Description: Starts an existing virtual machine (VM) with the given ID.
-# Arguments:
-#   $1 (vm_id) - The ID of the VM to start.
-# Returns:
-#   0 if the VM is already running or starts successfully, exits with a fatal
-#   error if the VM does not exist or fails to start.
-# =====================================================================================
-start_vm() {
-    local vm_id="$1" # ID of the VM to start
-    log_info "Attempting to start VM ID: $vm_id"
+run_smoke_tests() {
+    log_info "Starting smoke tests..."
+    local all_tests_passed=true
 
-    # Check if the VM exists
-    if ! qm status "$vm_id" > /dev/null 2>&1; then
-        log_fatal "VM ID $vm_id does not exist."
-    fi
-
-    # Check if the VM is already running
-    if qm status "$vm_id" | grep -q "running"; then
-        log_info "VM ID $vm_id is already running."
-        return 0
-    fi
-
-    # Execute the `qm start` command
-    if ! run_qm_command start "$vm_id"; then
-        log_fatal "'qm start' command failed for VM ID $vm_id."
-    fi
-    log_info "VM ID $vm_id started successfully."
-}
-
-# =====================================================================================
-# Function: stop_vm
-# Description: Stops an existing VM.
-# Arguments:
-#   $1 - The ID of the VM to stop.
-# =====================================================================================
-# =====================================================================================
-# Function: stop_vm
-# Description: Stops an existing virtual machine (VM) with the given ID.
-# Arguments:
-#   $1 (vm_id) - The ID of the VM to stop.
-# Returns:
-#   0 if the VM is already stopped or stops successfully, exits with a fatal
-#   error if the VM does not exist or fails to stop.
-# =====================================================================================
-stop_vm() {
-    local vm_id="$1" # ID of the VM to stop
-    log_info "Attempting to stop VM ID: $vm_id"
-
-    # Check if the VM exists
-    if ! qm status "$vm_id" > /dev/null 2>&1; then
-        log_fatal "VM ID $vm_id does not exist."
-    fi
-
-    # Check if the VM is already stopped
-    if qm status "$vm_id" | grep -q "stopped"; then
-        log_info "VM ID $vm_id is already stopped."
-        return 0
-    fi
-
-    # Execute the `qm stop` command
-    if ! run_qm_command stop "$vm_id"; then
-        log_fatal "'qm stop' command failed for VM ID $vm_id."
-    fi
-    log_info "VM ID $vm_id stopped successfully."
-}
-
-# =====================================================================================
-# Function: delete_vm
-# Description: Deletes an existing VM.
-# Arguments:
-#   $1 - The ID of the VM to delete.
-# =====================================================================================
-# =====================================================================================
-# Function: delete_vm
-# Description: Deletes an existing virtual machine (VM) with the given ID.
-#              It first ensures the VM is stopped before attempting deletion.
-# Arguments:
-#   $1 (vm_id) - The ID of the VM to delete.
-# Returns:
-#   0 if the VM does not exist or is deleted successfully, exits with a fatal
-#   error if deletion fails.
-# =====================================================================================
-delete_vm() {
-    local vm_id="$1" # ID of the VM to delete
-    log_info "Attempting to delete VM ID: $vm_id"
-
-    # Check if the VM exists; if not, there's nothing to delete
-    if ! qm status "$vm_id" > /dev/null 2>&1; then
-        log_info "VM ID $vm_id does not exist. Nothing to delete."
-        return 0
-    fi
-
-    # Ensure the VM is stopped before deleting
-    stop_vm "$vm_id"
-
-    # Execute the `qm destroy` command
-    if ! run_qm_command destroy "$vm_id"; then
-        log_fatal "'qm destroy' command failed for VM ID $vm_id."
-    fi
-    log_info "VM ID $vm_id deleted successfully."
-}
-
-# =====================================================================================
-# Function: setup_hypervisor
-# Description: Executes the initial hypervisor setup script.
-# =====================================================================================
-setup_hypervisor() {
-    log_info "Starting hypervisor setup..."
-    local setup_scripts=(
-        "hypervisor_initial_setup.sh"
-        "hypervisor_feature_setup_zfs.sh"
-        "hypervisor_feature_install_nvidia.sh"
-        "hypervisor_feature_setup_firewall.sh"
-        "hypervisor_feature_setup_nfs.sh"
-        "hypervisor_feature_setup_samba.sh"
-        "hypervisor_feature_create_admin_user.sh"
+    # Define the services to be checked, their container IDs, and parameters
+    local services_to_check=(
+        "953:nginx"
+        "950:vllm:8000"
+        "952:qdrant"
     )
 
-    for script in "${setup_scripts[@]}"; do
-        local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
-        log_info "Executing setup script: $script..."
-        if [ ! -f "$script_path" ]; then
-            log_fatal "Hypervisor setup script not found at $script_path."
+    for service_entry in "${services_to_check[@]}"; do
+        IFS=':' read -r ctid service port <<< "$service_entry"
+        log_info "Checking service '$service' in container '$ctid'..."
+
+        local health_check_script="health_checks/check_service_status.sh"
+        local script_in_container="/tmp/check_service_status.sh"
+
+        # Copy the script to the container
+        if ! pct push "$ctid" "${PHOENIX_BASE_DIR}/bin/${health_check_script}" "$script_in_container" >/dev/null 2>&1; then
+            log_error "Failed to copy health check script to container $ctid."
+            all_tests_passed=false
+            continue
         fi
-        if ! "$script_path" "$VM_CONFIG_FILE"; then
-            log_fatal "Hypervisor setup script '$script' failed."
+
+        # Make the script executable
+        if ! pct exec "$ctid" -- chmod +x "$script_in_container"; then
+            log_error "Failed to make health check script executable in container $ctid."
+            all_tests_passed=false
+            continue
         fi
+
+        # Build the command to execute inside the container
+        local exec_cmd=("$script_in_container" "--service" "$service")
+        if [ -n "$port" ]; then
+            exec_cmd+=("--port" "$port")
+        fi
+
+        # Execute the health check
+        if ! pct exec "$ctid" -- "${exec_cmd[@]}"; then
+            log_error "Smoke test failed for service '$service' in container '$ctid'."
+            all_tests_passed=false
+        else
+            log_info "Smoke test passed for service '$service' in container '$ctid'."
+        fi
+
+        # Clean up the script
+        pct exec "$ctid" -- rm "$script_in_container" >/dev/null 2>&1
     done
 
-    log_info "Hypervisor setup completed successfully."
+    if [ "$all_tests_passed" = true ]; then
+        log_info "All smoke tests passed successfully."
+        exit_script 0
+    else
+        log_fatal "One or more smoke tests failed."
+    fi
 }
 
 # =====================================================================================
-# Function: orchestrate_container
-# Description: Main state machine for orchestrating a single LXC container.
-# Arguments:
-#   $1 - The CTID of the container to orchestrate.
-# =====================================================================================
-orchestrate_container() {
-    local CTID="$1"
-    log_info "Starting orchestration for CTID: $CTID"
- 
-    if [ "$RECONFIGURE" = true ]; then
-        log_info "Reconfigure flag is set. Rolling back to pre-configured state."
-        if pct listsnapshot "$CTID" | grep -q "pre-configured"; then
-            run_pct_command stop "$CTID" || log_warn "Container $CTID was not running."
-            run_pct_command snapshot-rollback "$CTID" "pre-configured" || log_fatal "Failed to rollback to pre-configured snapshot."
-        else
-            log_fatal "No 'pre-configured' snapshot found for CTID $CTID. Cannot reconfigure."
-        fi
-    fi
- 
-    validate_inputs "$CTID"
-    if ! ensure_container_defined "$CTID"; then
-        return 1
-    fi
-    apply_configurations "$CTID"
-    apply_shared_volumes "$CTID"
-    apply_dedicated_volumes "$CTID"
-    ensure_container_disk_size "$CTID"
-    start_container "$CTID"
-    apply_features "$CTID"
-    create_pre_configured_snapshot "$CTID"
-    run_application_script "$CTID"
-    run_health_check "$CTID"
-    create_final_form_snapshot "$CTID"
-    run_post_deployment_validation "$CTID"
-
-    log_info "Orchestration for CTID $CTID completed successfully."
-}
-
-# =====================================================================================
-# Main Execution
+# Function: main
+# Description: The main function of the script. It orchestrates the entire process
+#              of setting up the hypervisor or creating and configuring containers.
 # =====================================================================================
 main() {
     setup_logging "$LOG_FILE"
     parse_arguments "$@"
 
-    if [ "$SETUP_HYPERVISOR" = true ]; then
-        setup_hypervisor
-    elif [ "$CREATE_VM" = true ]; then
-        create_vm "$VM_NAME"
-    elif [ "$START_VM" = true ]; then
-        start_vm "$VM_ID"
-    elif [ "$STOP_VM" = true ]; then
-        stop_vm "$VM_ID"
-    elif [ "$DELETE_VM" = true ]; then
-        delete_vm "$VM_ID"
-    elif [ "$LETSGO" = true ]; then
-        log_info "LetsGo mode: Orchestrating all containers with dependency resolution."
-        local pending_ctids
-        pending_ctids=($(jq -r '.lxc_configs | keys | .[]' "$LXC_CONFIG_FILE"))
-        local successfully_processed_in_pass=1
-        while [ ${#pending_ctids[@]} -gt 0 ] && [ $successfully_processed_in_pass -gt 0 ]; do
-            successfully_processed_in_pass=0
-            local remaining_ctids=()
-            log_info "--- Starting orchestration pass. Pending: ${pending_ctids[*]} ---"
-            for ctid in "${pending_ctids[@]}"; do
-                if orchestrate_container "$ctid"; then
-                    log_info "Successfully orchestrated CTID $ctid."
-                    successfully_processed_in_pass=$((successfully_processed_in_pass + 1))
-                else
-                    log_warn "Could not orchestrate CTID $ctid in this pass. Will retry."
-                    remaining_ctids+=("$ctid")
-                fi
-            done
-            pending_ctids=("${remaining_ctids[@]}")
-        done
-        if [ ${#pending_ctids[@]} -gt 0 ]; then
-            log_fatal "Could not orchestrate all containers. Remaining: ${pending_ctids[*]}. Check for circular dependencies or other fatal errors."
-        fi
-    else
-        for ctid in "${CTID_LIST[@]}"; do
-            orchestrate_container "$ctid" || log_fatal "Failed to orchestrate container $ctid."
-        done
+    if [ "$DRY_RUN" = true ]; then
+        log_info "Dry-run mode is enabled. No actual changes will be made."
     fi
 
-    log_info "Phoenix Orchestrator finished."
-    exit_script 0
+    if [ "$SETUP_HYPERVISOR" = true ]; then
+        setup_hypervisor "$VM_CONFIG_FILE"
+    elif [ "$CREATE_VM" = true ]; then
+        log_info "Starting VM creation for: $VM_NAME"
+        create_vm "$VM_NAME"
+        log_info "VM creation process for $VM_NAME completed."
+        exit_script 0
+    elif [ "$START_VM" = true ]; then
+        log_info "Starting VM: $VM_ID"
+        start_vm "$VM_ID"
+        exit_script 0
+    elif [ "$STOP_VM" = true ]; then
+        log_info "Stopping VM: $VM_ID"
+        stop_vm "$VM_ID"
+        exit_script 0
+    elif [ "$DELETE_VM" = true ]; then
+        log_info "Deleting VM: $VM_ID"
+        delete_vm "$VM_ID"
+        exit_script 0
+    elif [ "$SMOKE_TEST" = true ]; then
+        run_smoke_tests
+    elif [ "$LETSGO" = true ]; then
+        log_info "Starting LetsGo mode..."
+        # Get all container IDs from the config file that have a boot_order > 0
+        local ctid_boot_order
+        ctid_boot_order=$(jq -r '.lxc_configs | to_entries[] | select(.value.boot_order > 0) | "\(.value.boot_order) \(.key)"' "$LXC_CONFIG_FILE" | sort -n)
+
+        if [ -z "$ctid_boot_order" ]; then
+            log_info "No containers with boot_order > 0 found. Exiting LetsGo mode."
+            exit_script 0
+        fi
+
+        # Create an associative array to group CTIDs by boot order
+        declare -A boot_groups
+        while read -r order ctid; do
+            boot_groups["$order"]+=" $ctid"
+        done <<< "$ctid_boot_order"
+
+        # Process containers in parallel within each boot order group
+        for order in $(echo "${!boot_groups[@]}" | tr ' ' '\n' | sort -n); do
+            log_info "Processing boot order group: $order"
+            local pids=()
+            for ctid in ${boot_groups["$order"]}; do
+                (
+                    # Each container gets its own log file in LetsGo mode
+                    local letsgo_log_file="/var/log/phoenix_hypervisor/orchestrator_letsgp_${ctid}_$(date +%Y%m%d-%H%M%S).log"
+                    # Redirect output of the state machine to the specific log file
+                    main_state_machine "$ctid" > "$letsgo_log_file" 2>&1
+                ) &
+                pids+=($!)
+            done
+
+            # Wait for all containers in the current boot order group to finish
+            for pid in "${pids[@]}"; do
+                wait "$pid"
+            done
+            log_info "Finished processing boot order group: $order"
+        done
+
+        log_info "LetsGo mode completed."
+        exit_script 0
+    fi
+
+    for CTID in "${CTID_LIST[@]}"; do
+        main_state_machine "$CTID"
+    done
 }
 
-# --- Start execution ---
+# =====================================================================================
+# State Machine for Container Orchestration
+# =====================================================================================
+main_state_machine() {
+    local CTID="$1"
+    log_info "Starting state machine for CTID: $CTID"
+
+    # Define the states in the order of execution
+    local states=(
+        "validate_inputs"
+        "ensure_container_defined"
+        "apply_configurations"
+        "apply_shared_volumes"
+        "apply_dedicated_volumes"
+        "ensure_container_disk_size"
+        "create_pre_configured_snapshot"
+        "start_container"
+        "apply_features"
+        "run_application_script"
+        "run_health_check"
+        "run_post_deployment_validation"
+        "create_final_form_snapshot"
+        "create_template_snapshot"
+    )
+
+    # Execute each state function
+    for state in "${states[@]}"; do
+        log_info "Executing state: $state for CTID: $CTID"
+        if ! "$state" "$CTID"; then
+            log_fatal "State '$state' failed for CTID $CTID. Aborting."
+        fi
+    done
+
+    log_info "Orchestration for CTID $CTID completed successfully."
+}
+
+# --- Main script execution ---
 main "$@"

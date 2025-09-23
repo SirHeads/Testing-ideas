@@ -17,13 +17,13 @@ CTID="$1"
 
 log_info "Starting Ollama feature installation for CTID: $CTID"
 
-# Check if ollama is already installed
-if pct_exec "$CTID" command -v ollama &> /dev/null; then
-    log_info "Ollama is already installed in CTID $CTID. Skipping installation."
-else
-    log_info "Installing Ollama in CTID $CTID..."
-    pct_exec "$CTID" bash -c "curl -fsSL https://ollama.com/install.sh | sh"
-    log_info "Ollama installation complete."
+if is_feature_installed "$CTID" "ollama"; then
+    log_info "Ollama feature is already installed. Skipping."
+    exit_script 0
 fi
+
+log_info "Installing Ollama in CTID $CTID..."
+pct_exec "$CTID" bash -c "curl -fsSL https://ollama.com/install.sh | sh"
+log_info "Ollama installation complete."
 
 exit_script 0

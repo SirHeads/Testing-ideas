@@ -13,7 +13,7 @@
 # --- Configuration and Setup ---
 set -o pipefail
 # Sourcing common utilities
-# source "$(dirname "$0")/../phoenix_hypervisor_common_utils.sh"
+source "$(dirname "$0")/../phoenix_hypervisor_common_utils.sh"
 
 # --- User-configurable variables ---
 # These should be configured before running the script, possibly sourced from a config file.
@@ -114,6 +114,25 @@ verify_sudo_access() {
 }
 
 # ==============================================================================
+# Test Implementation: Utility Functions
+# ==============================================================================
+
+verify_is_command_available() {
+    # Test for a command that should exist
+    if is_command_available "ls"; then
+        report_pass "is_command_available: existing command"
+    else
+        report_fail "is_command_available: existing command" "is_command_available could not find the 'ls' command."
+    fi
+
+    # Test for a command that should not exist
+    if ! is_command_available "nonexistentcommand"; then
+        report_pass "is_command_available: non-existing command"
+    else
+        report_fail "is_command_available: non-existing command" "is_command_available wrongfully found 'nonexistentcommand'."
+    fi
+}
+# ==============================================================================
 # Test Implementation: Network Services
 # ==============================================================================
 
@@ -195,6 +214,9 @@ run_tests() {
     verify_system_timezone
     verify_admin_user
     verify_sudo_access
+
+    echo -e "\n${COLOR_BLUE}--- Running Utility Function Checks ---${COLOR_RESET}"
+    verify_is_command_available
 
     echo -e "\n${COLOR_BLUE}--- Running Network Services Checks ---${COLOR_RESET}"
     verify_network_configuration

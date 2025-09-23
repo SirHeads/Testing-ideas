@@ -72,19 +72,30 @@ parse_arguments() {
 #   None. Exits with a fatal error if any installation or configuration step fails.
 # =====================================================================================
 install_and_configure_docker() {
-    ensure_nvidia_repo_is_configured "$CTID" # Ensure NVIDIA repository is configured (for toolkit)
     log_info "Starting Docker installation and configuration in CTID: $CTID"
 
-    # Idempotency Check
-    # Idempotency Check: Check if Docker is already installed and running
-    if pct_exec "$CTID" command -v docker &>/dev/null && \
-       pct_exec "$CTID" systemctl is-active docker &>/dev/null; then
+    # --- Pre-computation and Idempotency Checks ---
+    local docker_installed=false
+    if is_command_available "$CTID" "docker" && pct_exec "$CTID" systemctl is-active docker &>/dev/null; then
+        docker_installed=true
+    fi
+
+    # --- Dependency Installation ---
+    # Always ensure dependencies are present, even if Docker is already installed.
+    # This makes the script more robust for partial installations or re-runs.
+    log_info "Ensuring dependencies are installed in CTID: $CTID"
+    pct_exec "$CTID" apt-get update
+    pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release
+
+    # --- NVIDIA Repository Configuration ---
+    # This must happen after dependency installation to ensure curl and gpg are available.
+    ensure_nvidia_repo_is_configured "$CTID"
+
+    # --- Docker Installation ---
+    if [ "$docker_installed" = true ]; then
         log_info "Docker already appears to be installed and running in CTID $CTID. Skipping installation."
     else
-        # Add Docker Official Repository
         log_info "Adding Docker official repository in CTID: $CTID"
-        pct_exec "$CTID" apt-get update
-        pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release
         pct_exec "$CTID" mkdir -p /etc/apt/keyrings
         pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
         pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
@@ -93,17 +104,20 @@ install_and_configure_docker() {
         pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
         pct_exec "$CTID" apt-get update
 
-        # Install Docker Engine
-        # Install Docker Engine components
         log_info "Installing Docker Engine in CTID: $CTID"
         pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     fi
 
     # --- Conditional NVIDIA Container Toolkit Installation ---
-    # Conditional NVIDIA Container Toolkit Installation based on GPU assignment
-    local gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment" || echo "none") # Retrieve GPU assignment from config
-    if [ "$gpu_assignment" != "none" ]; then
-        log_info "GPU assignment found. Installing and configuring NVIDIA Container Toolkit..."
+    if is_feature_present_on_container "$CTID" "nvidia"; then
+        log_info "NVIDIA feature detected. Installing and configuring NVIDIA Container Toolkit..."
+
+        # --- Dependency Check ---
+        log_info "Verifying NVIDIA driver installation (dependency check)..."
+        if ! is_command_available "$CTID" "nvidia-smi"; then
+            log_fatal "NVIDIA driver not found in CTID $CTID. The 'docker' feature with GPU assignment depends on the 'nvidia' feature. Please ensure 'nvidia' is listed before 'docker' in the features array of your configuration file."
+        fi
+
         ensure_nvidia_repo_is_configured "$CTID" # Ensure NVIDIA repository is configured
 
         # Check if NVIDIA Container Toolkit is already installed
@@ -115,19 +129,14 @@ install_and_configure_docker() {
         fi
 
         # --- Safely merge NVIDIA runtime configuration using jq ---
-        # Safely merge NVIDIA runtime configuration into Docker daemon.json using jq
         log_info "Configuring Docker daemon for NVIDIA runtime in CTID: $CTID"
-        local docker_daemon_config_file="/etc/docker/daemon.json" # Path to Docker daemon configuration
-        local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }' # NVIDIA runtime config snippet
+        local docker_daemon_config_file="/etc/docker/daemon.json"
+        local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }'
 
-        # Ensure the /etc/docker directory and daemon.json file exist
-        # Ensure the /etc/docker directory and daemon.json file exist
         pct_exec "$CTID" bash -c "mkdir -p /etc/docker && touch $docker_daemon_config_file"
-
-        # Merge the new config with the existing one, handling empty file case
         pct_exec "$CTID" bash -c "jq -s 'if (.[0] | type) == \"null\" then {} else .[0] end * .[1]' '$docker_daemon_config_file' <(echo '$nvidia_runtime_config') > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '$docker_daemon_config_file'"
     else
-        log_info "No GPU assignment found. Skipping NVIDIA Container Toolkit installation."
+        log_info "NVIDIA feature not detected. Skipping NVIDIA Container Toolkit installation."
     fi
 
     # Start and enable Docker service
@@ -214,7 +223,15 @@ setup_portainer() {
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
-    install_and_configure_docker # Install and configure Docker
+
+    # --- Idempotency Check ---
+    if is_feature_installed "$CTID" "docker"; then
+        log_info "Docker feature already installed on CTID $CTID. Skipping installation."
+    else
+        install_and_configure_docker # Install and configure Docker
+    fi
+    # --- End Idempotency Check ---
+    
     setup_portainer # Set up Portainer
     exit_script 0 # Exit successfully
 }

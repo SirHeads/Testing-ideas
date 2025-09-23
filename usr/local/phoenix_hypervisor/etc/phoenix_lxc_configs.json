@@ -79,6 +79,31 @@
             ],
             "template_snapshot_name": "pre-configured"
         },
+        "903": {
+            "name": "Template-Docker-GPU",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 2048,
+            "cores": 2,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 32,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.203/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:CF",
+            "gpu_assignment": "0,1",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "clone_from_ctid": "901",
+            "features": [
+                "docker"
+            ],
+            "template_snapshot_name": "pre-configured"
+        },
         "910": {
             "name": "Portainer",
             "memory_mb": 32768,
@@ -151,6 +176,7 @@
             "portainer_role": "none",
             "clone_from_ctid": "901",
             "features": [
+                "nvidia",
                 "vllm"
             ],
             "pct_options": [],
@@ -535,6 +561,38 @@
             ],
             "start_at_boot": true,
             "boot_order": 2,
+            "boot_delay": 5
+        },
+        "960": {
+            "name": "monitoring-stack",
+            "memory_mb": 4096,
+            "cores": 4,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 64,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.160/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:67:89:C0",
+            "gpu_assignment": "none",
+            "unprivileged": true,
+            "portainer_role": "none",
+            "clone_from_ctid": "903",
+            "features": [
+                "docker"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_960.sh",
+            "ports": [
+                "3000:3000",
+                "9090:9090"
+            ],
+            "dependencies": [
+                "953"
+            ],
+            "start_at_boot": true,
+            "boot_order": 4,
             "boot_delay": 5
         }
     }
