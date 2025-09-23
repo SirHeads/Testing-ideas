@@ -559,36 +559,44 @@
         "mount_point_base": {
             "type": "string"
         },
-        "shared_volumes": {
+        "shared_zfs_volumes": {
             "type": "object",
+            "description": "Defines shared ZFS volumes that can be mounted into multiple LXC containers.",
             "patternProperties": {
                 "^[a-zA-Z0-9_-]+$": {
                     "type": "object",
                     "properties": {
-                        "host_path": {
-                            "type": "string"
-                        },
-                        "owner": {
+                        "pool": {
                             "type": "string",
-                            "description": "The owner of the shared volume on the host. Can be a username or 'container_root'."
+                            "description": "The ZFS storage pool to create the volume in."
+                        },
+                        "size_gb": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "The size of the shared volume in gigabytes."
+                        },
+                        "mount_point": {
+                            "type": "string",
+                            "description": "The absolute path on the host where the volume will be mounted."
                         },
                         "mounts": {
                             "type": "object",
+                            "description": "A map of container IDs to their in-container mount paths.",
                             "patternProperties": {
                                 "^[0-9]+$": {
                                     "type": "string"
                                 }
-                            },
-                            "additionalProperties": false
+                            }
                         }
                     },
                     "required": [
-                        "host_path",
+                        "pool",
+                        "size_gb",
+                        "mount_point",
                         "mounts"
                     ]
                 }
-            },
-            "additionalProperties": false
+            }
         },
         "firewall": {
             "type": "object",
@@ -642,7 +650,7 @@
         "zfs",
         "proxmox_storage_ids",
         "mount_point_base",
-        "shared_volumes",
+        "shared_zfs_volumes",
         "firewall"
     ],
     "additionalProperties": false

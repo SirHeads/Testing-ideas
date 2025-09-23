@@ -588,186 +588,42 @@ ensure_container_defined() {
 }
 
 # =====================================================================================
-# Function: apply_shared_volumes
-# Description: Applies shared volume configurations to all containers.
+# Function: apply_zfs_volumes
+# Description: Creates and attaches ZFS volumes to a container.
 # =====================================================================================
-# =====================================================================================
-# Function: ensure_shared_ssl_certs_exist
-# Description: Generates self-signed SSL certificates for services like Portainer
-#              directly on the host's shared volume if they don't already exist.
-# Arguments:
-#   $1 - The host path of the shared SSL volume.
-# =====================================================================================
-ensure_shared_ssl_certs_exist() {
-    local cert_dir="$1"
-    log_info "Ensuring SSL certificates exist in shared volume: $cert_dir"
-
-    # --- Domains to generate certificates for ---
-    local domains=("portainer.phoenix.local" "n8n.phoenix.local")
-
-    # --- Install openssl if not present ---
-    if ! command -v openssl &> /dev/null; then
-        log_info "Installing openssl on the hypervisor..."
-        apt-get update
-        apt-get install -y openssl
-    fi
-
-    # --- Loop through domains and generate certs if they don't exist ---
-    for domain in "${domains[@]}"; do
-        local key_file="${cert_dir}/${domain}.key"
-        local cert_file="${cert_dir}/${domain}.crt"
-
-        if [ -f "$key_file" ] && [ -f "$cert_file" ]; then
-            log_info "SSL certificate for $domain already exists."
-        else
-            log_info "Generating self-signed certificate for $domain..."
-            local openssl_command="openssl req -x509 -newkey rsa:4096 -keyout ${key_file} -out ${cert_file} -sha256 -days 3650 -nodes -subj '/CN=${domain}'"
-            if ! bash -c "$openssl_command"; then
-                log_fatal "Failed to generate self-signed certificate for $domain."
-            fi
-            log_info "Self-signed certificate for $domain generated successfully."
-        fi
-    done
-}
-
-get_container_mapped_root_uid() {
-    local container_id="$1"
-    local conf_file="/etc/pve/lxc/${container_id}.conf"
-
-    if [ ! -f "$conf_file" ]; then
-        log_warn "Container config file not found: $conf_file. Cannot get mapped UID."
-        return 1
-    fi
-
-    local idmap_line
-    idmap_line=$(grep "^lxc.idmap:" "$conf_file")
-
-    if [ -z "$idmap_line" ]; then
-        log_warn "No idmap found in $conf_file. The container might not be unprivileged or the idmap has not been generated yet."
-        return 1
-    fi
-
-    local mapped_uid
-    mapped_uid=$(echo "$idmap_line" | awk '{print $3}')
-    echo "$mapped_uid"
-}
-
-generate_idmap_cycle() {
-    local ctid="$1"
-    log_info "Performing start/stop cycle for CT $ctid to generate idmap..."
-
-    if ! pct status "$ctid" | grep -q "running"; then
-        log_info "Starting container $ctid..."
-        if ! pct start "$ctid"; then
-            log_error "Failed to start container $ctid during idmap generation cycle."
-            return 1
-        fi
-    else
-        log_info "Container $ctid is already running. Skipping start."
-    fi
-
-    log_info "Stopping container $ctid..."
-    if ! pct stop "$ctid"; then
-        log_error "Failed to stop container $ctid during idmap generation cycle."
-        return 1
-    fi
-
-    log_info "Start/stop cycle for CT $ctid completed."
-    return 0
-}
-
-apply_shared_volumes() {
+apply_zfs_volumes() {
     local CTID="$1"
-    log_info "Applying shared volumes for CTID: $CTID..."
-    local admin_user
-    admin_user=$(jq -r '.users.username' "$VM_CONFIG_FILE")
-    if [ -z "$admin_user" ] || [ "$admin_user" == "null" ]; then
-        log_fatal "Admin user not defined in configuration file."
+    log_info "Applying ZFS volumes for CTID: $CTID..."
+
+    local volumes
+    volumes=$(jq_get_value "$CTID" ".zfs_volumes // [] | .[]" || echo "")
+    if [ -z "$volumes" ]; then
+        log_info "No ZFS volumes to apply for CTID $CTID."
+        return 0
     fi
 
-    local shared_volumes
-    shared_volumes=$(jq -c '.shared_volumes // {}' "$VM_CONFIG_FILE")
-    local containers_to_restart=()
-
-    for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
-        local volume_config
-        volume_config=$(echo "$shared_volumes" | jq -r --arg name "$volume_name" '.[$name]')
-        local host_path
-        host_path=$(echo "$volume_config" | jq -r '.host_path')
-        local mounts
-        mounts=$(echo "$volume_config" | jq -c '.mounts')
-
-        if ! echo "$mounts" | jq -e --arg ctid "$CTID" '.[$ctid]' > /dev/null; then
-            continue
-        fi
-
-        if [ ! -d "$host_path" ]; then
-            log_info "Creating shared directory on host: $host_path"
-            if ! mkdir -p "$host_path"; then
-                log_fatal "Failed to create host directory: $host_path"
-            fi
-        fi
-
-        log_info "Setting ownership to '100000:100000' for: $host_path"
-        if ! chown -R "100000:100000" "$host_path"; then
-            log_fatal "Failed to set ownership to user '100000' on $host_path"
-        fi
-
-        log_info "Applying permissions for shared volume: $volume_name"
-        case "$volume_name" in
-            "ssl_certs")
-                ensure_shared_ssl_certs_exist "$host_path"
-                find "$host_path" -type d -exec chmod 755 {} \; || log_fatal "Failed to set directory permissions for ssl_certs"
-                find "$host_path" -type f -exec chmod 644 {} \; || log_fatal "Failed to set file permissions for ssl_certs"
-                ;;
-            "portainer_data")
-                find "$host_path" -type d -exec chmod 770 {} \; || log_fatal "Failed to set directory permissions for portainer_data"
-                find "$host_path" -type f -exec chmod 660 {} \; || log_fatal "Failed to set file permissions for portainer_data"
-                ;;
-            "nginx_sites")
-                find "$host_path" -type d -exec chmod 755 {} \; || log_fatal "Failed to set directory permissions for nginx_sites"
-                find "$host_path" -type f -exec chmod 644 {} \; || log_fatal "Failed to set file permissions for nginx_sites"
-                ;;
-            *)
-                find "$host_path" -type d -exec chmod 775 {} \; || log_fatal "Failed to set default directory permissions"
-                find "$host_path" -type f -exec chmod 664 {} \; || log_fatal "Failed to set default file permissions"
-                ;;
-        esac
-
-        local mount_point
-        mount_point=$(echo "$mounts" | jq -r --arg ctid "$CTID" '.[$ctid]')
-        
-        if ! pct config "$CTID" | grep -q "mp[0-9]*:.*,mp=${mount_point}"; then
-            log_info "Creating mount point for CTID $CTID: $host_path -> $mount_point"
-            local mp_num=0
-            while pct config "$CTID" | grep -q "mp${mp_num}:"; do
-                mp_num=$((mp_num + 1))
-            done
-            run_pct_command set "$CTID" --mp${mp_num} "${host_path},mp=${mount_point}"
-            
-            if [[ ! " ${containers_to_restart[*]} " =~ " ${CTID} " ]]; then
-                containers_to_restart+=("$CTID")
-            fi
-        else
-            log_info "Mount point already exists for CTID $CTID: $mount_point"
-        fi
+    local volume_index=0
+    # Find the next available mount point index
+    while pct config "$CTID" | grep -q "mp${volume_index}:"; do
+        volume_index=$((volume_index + 1))
     done
 
-    if [ ${#containers_to_restart[@]} -gt 0 ]; then
-        log_info "Restarting containers to apply mount point changes: ${containers_to_restart[*]}"
-        for ctid_to_restart in "${containers_to_restart[@]}"; do
-            if pct status "$ctid_to_restart" | grep -q "running"; then
-                log_info "Stopping container $ctid_to_restart..."
-                run_pct_command stop "$ctid_to_restart"
-                log_info "Starting container $ctid_to_restart..."
-                start_container "$ctid_to_restart"
-            else
-                log_info "Container $ctid_to_restart is not running. No restart needed."
-            fi
-        done
-    fi
+    for volume_config in $(echo "$volumes" | jq -c '.'); do
+        local volume_name=$(echo "$volume_config" | jq -r '.name')
+        local storage_pool=$(echo "$volume_config" | jq -r '.pool')
+        local size_gb=$(echo "$volume_config" | jq -r '.size_gb')
+        local mount_point=$(echo "$volume_config" | jq -r '.mount_point')
+        local volume_id="mp${volume_index}"
 
-    log_info "Shared volumes applied successfully for CTID: $CTID."
+        # Check if the volume is already configured
+        if pct config "$CTID" | grep -q "${volume_id}:.*,mp=${mount_point}"; then
+            log_info "Volume '${volume_name}' (${volume_id}) already exists for CTID $CTID."
+        else
+            log_info "Creating and attaching volume '${volume_name}' to CTID $CTID..."
+            run_pct_command set "$CTID" --"${volume_id}" "${storage_pool}:${size_gb},mp=${mount_point}" || log_fatal "Failed to create volume '${volume_name}'."
+        fi
+        volume_index=$((volume_index + 1))
+    done
 }
 
 # =====================================================================================
@@ -1267,6 +1123,26 @@ run_qm_command() {
 }
 
 # =====================================================================================
+# Function: run_pvesm_command
+# Description: Executes a pvesm command, logging the command and its output.
+# Arguments:
+#   $@ - The pvesm command and its arguments.
+# =====================================================================================
+run_pvesm_command() {
+    local cmd_description="pvesm $*"
+    log_info "Executing: $cmd_description"
+    if [ "$DRY_RUN" = true ]; then
+        log_info "Dry-run: Skipping actual command execution."
+        return 0
+    fi
+    if ! pvesm "$@"; then
+        log_error "Command failed: $cmd_description"
+        return 1
+    fi
+    return 0
+}
+
+# =====================================================================================
 # Function: setup_hypervisor
 # Description: Orchestrates the setup of the hypervisor by executing a series of scripts.
 # Arguments:
@@ -1291,6 +1167,9 @@ setup_hypervisor() {
         "hypervisor_feature_create_admin_user.sh"
     )
 
+    # Provision shared ZFS volumes as part of the hypervisor setup
+    provision_shared_zfs_volumes
+
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
         log_info "Executing setup script: $script..."
@@ -1303,6 +1182,38 @@ setup_hypervisor() {
     done
 
     log_info "Hypervisor setup completed successfully."
+}
+
+# =====================================================================================
+# Function: provision_shared_zfs_volumes
+# Description: Idempotently creates shared ZFS volumes as hypervisor-level resources.
+# =====================================================================================
+provision_shared_zfs_volumes() {
+    log_info "Provisioning shared ZFS volumes..."
+    local shared_volumes
+    shared_volumes=$(jq -c '.shared_zfs_volumes // {}' "$VM_CONFIG_FILE")
+
+    for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
+        local volume_config
+        volume_config=$(echo "$shared_volumes" | jq -r --arg name "$volume_name" '.[$name]')
+        local storage_pool
+        storage_pool=$(echo "$volume_config" | jq -r '.pool')
+        local size_gb
+        size_gb=$(echo "$volume_config" | jq -r '.size_gb')
+        # Use a placeholder CTID like 99999 for hypervisor-level resources
+        local placeholder_ctid="99999"
+        local volume_id="vm-${placeholder_ctid}-disk-${volume_name}"
+
+        # Check if the volume already exists
+        if ! pvesm list "$storage_pool" | grep -q "$volume_id"; then
+            log_info "Creating shared ZFS volume: $volume_id of size ${size_gb}G in pool $storage_pool"
+            if ! run_pvesm_command alloc "$storage_pool" "$placeholder_ctid" "$volume_id" "${size_gb}G" --format raw; then
+                log_fatal "Failed to create shared ZFS volume: $volume_id"
+            fi
+        else
+            log_info "Shared ZFS volume $volume_id already exists."
+        fi
+    done
 }
 
 # =====================================================================================
@@ -1562,7 +1473,7 @@ main_state_machine() {
         "validate_inputs"
         "ensure_container_defined"
         "apply_configurations"
-        "apply_shared_volumes"
+        "apply_zfs_volumes"
         "apply_dedicated_volumes"
         "ensure_container_disk_size"
         "start_container"

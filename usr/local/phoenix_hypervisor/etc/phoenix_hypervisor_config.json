@@ -121,14 +121,14 @@
                 "name": "shared-prod-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
             },
             {
                 "name": "shared-prod-data-sync",
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
             },
             {
@@ -142,29 +142,36 @@
                 "name": "shared-test-data",
                 "pool": "fastData",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-backups",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=zstd,sync=standard,quota=2T",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "backup"
             },
             {
                 "name": "shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "iso,vztmpl"
             },
             {
                 "name": "shared-bulk-data",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
-                "proxmox_storage_type": "dir",
+                "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images"
+            },
+            {
+                "name": "fastData-shared-iso",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "iso,vztmpl"
             }
         ]
     },
