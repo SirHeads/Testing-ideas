@@ -112,7 +112,7 @@ perform_base_os_setup() {
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
-    if is_feature_present_on_container "$CTID" "base_setup"; then
+    if _check_base_setup_installed "$CTID"; then
         log_info "Base setup feature is already installed. Skipping."
         exit_script 0
     fi

@@ -172,8 +172,6 @@ install_and_test_vllm() {
     # Install PyTorch Nightly for CUDA 12.8+ compatibility
     log_info "Installing PyTorch nightly for CUDA 12.1+..."
     pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
-    log_info "Cleaning pip cache after PyTorch installation..."
-    pct_exec "$CTID" rm -rf /root/.cache/pip
 
     # Clone vLLM Repository
     # Clone vLLM Repository or pull latest changes if it exists
@@ -199,8 +197,6 @@ install_and_test_vllm() {
         pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
         pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
     fi
-    log_info "Cleaning pip cache after vLLM installation..."
-    pct_exec "$CTID" rm -rf /root/.cache/pip
 
     # Verification
     # Verification: Check vLLM installation by importing and printing its version
@@ -274,7 +270,7 @@ EOF
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
-    if is_feature_present_on_container "$CTID" "vllm"; then
+    if _check_vllm_installed "$CTID"; then
         log_info "vLLM feature is already installed. Skipping."
         exit_script 0
     fi

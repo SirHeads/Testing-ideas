@@ -995,6 +995,13 @@ run_application_script() {
         log_fatal "Failed to create temporary directory in container $CTID."
     fi
 
+    # Verification step
+    log_info "Verifying temporary directory creation..."
+    if ! pct exec "$CTID" -- test -d "$temp_dir_in_container"; then
+        log_fatal "Verification failed: Temporary directory '$temp_dir_in_container' does not exist in container $CTID."
+    fi
+    log_info "Temporary directory verified successfully."
+
     # 2. Copy common_utils.sh to the container
     log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
     if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
