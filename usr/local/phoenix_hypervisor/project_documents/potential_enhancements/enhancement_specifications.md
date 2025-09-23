@@ -1,15 +1,12 @@
 ---
 title: Phoenix Hypervisor Enhancement Specifications
-summary: This document outlines the specifications for proposed enhancements to the
-  Phoenix Hypervisor project, including dynamic IP address management, secret management,
-  advanced configuration validation, and an expanded feature library.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
-- Phoenix Hypervisor
 - Enhancements
 - Specifications
 - Dynamic IP Address Management
@@ -19,8 +16,8 @@ tags:
 - Proxmox SDN
 - AWS Secrets Manager
 - Bash Scripting
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project, based on recent investigation reports.
 

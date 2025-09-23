@@ -1,16 +1,18 @@
 ---
 title: Script Guide - phoenix_hypervisor_lxc_956.sh
-summary: This document provides a comprehensive guide to the `phoenix_hypervisor_lxc_956.sh` script, detailing its purpose, usage, and the functions it provides for installing and configuring Open WebUI.
-document_type: Guide
-status: Final
+summary: This document provides a comprehensive guide to the phoenix_hypervisor_lxc_956.sh script, detailing its purpose, usage, and the functions it provides for installing and configuring Open WebUI.
+document_type: Technical
+status: Approved
 version: 1.1.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
-  - Phoenix Hypervisor
-  - Script Guide
-  - Open WebUI
-  - LXC
-  - Docker
+- Script Guide
+- Open WebUI
+- LXC
+- Docker
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # Script Guide: `phoenix_hypervisor_lxc_956.sh`

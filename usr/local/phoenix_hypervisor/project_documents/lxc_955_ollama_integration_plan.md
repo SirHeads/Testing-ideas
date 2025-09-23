@@ -1,3 +1,22 @@
+---
+title: Ollama LXC Container (ID 955) Integration Plan
+summary: This document outlines the architectural plan for the complete integration and operationalization of the Ollama service within the LXC container (ID 955).
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Ollama
+- LXC Container
+- Integration Plan
+- Service Management
+- Nginx
+- Reverse Proxy
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Ollama LXC Container (ID 955) Integration Plan
 
 ## 1. Introduction

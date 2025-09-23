@@ -1,24 +1,21 @@
 ---
 title: phoenix_hypervisor_config.json - Summary
-summary: This document summarizes the purpose, structure, and role of the `phoenix_hypervisor_config.json`
-  file, which serves as the central configuration point for system-wide settings and
-  default values within the Phoenix Hypervisor system.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document summarizes the purpose, structure, and role of the phoenix_hypervisor_config.json file.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - Configuration
 - Hypervisor
-- Phoenix Hypervisor
 - System Settings
 - File Paths
 - Network Defaults
 - Proxmox Defaults
 - Script Behavior
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document summarizes the purpose, structure, and role of the `phoenix_hypervisor_config.json` file within the Phoenix Hypervisor system. This file serves as the central configuration point for system-wide settings and default values used by the orchestrator and its associated scripts.
 

@@ -1,18 +1,18 @@
 ---
-title: "Phoenix Orchestrator: A Deep Dive"
-summary: This document provides a detailed analysis of the `phoenix_orchestrator.sh` script's workflow, illustrating the sequence of operations for provisioning and configuring a container.
+title: "Phoenix Orchestrator Deep Dive"
+summary: This document provides a detailed analysis of the phoenix_orchestrator.sh script's workflow, illustrating the sequence of operations for provisioning and configuring a container.
 document_type: Technical
-status: Draft
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
-- Phoenix Hypervisor
 - Architecture
 - LXC
 - Orchestration
 - Workflow
 review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 ## 1. Introduction

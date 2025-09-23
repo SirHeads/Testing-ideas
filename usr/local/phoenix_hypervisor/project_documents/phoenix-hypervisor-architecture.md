@@ -1,13 +1,12 @@
 ---
-title: Phoenix Hypervisor Unified Architecture
-summary: This document provides a unified architectural overview of the Phoenix Hypervisor project, a sophisticated, automated system for provisioning Proxmox LXC containers and Virtual Machines (VMs). It outlines the core architecture, orchestration model, and unified strategy for user and permission management. This document supersedes all previous architectural markdown files.
+title: Phoenix Hypervisor Architecture
+summary: This document provides a unified architectural overview of the Phoenix Hypervisor project, a sophisticated, automated system for provisioning Proxmox LXC containers and Virtual Machines (VMs).
 document_type: Technical
 status: Approved
 version: 2.0.0
 author: Phoenix Hypervisor Team
 owner: Thinkheads.AI
 tags:
-- Phoenix Hypervisor
 - Architecture
 - Orchestration
 - LXC
@@ -18,7 +17,7 @@ tags:
 - Idempotency
 - Templating
 review_cadence: Quarterly
-last_reviewed: 2025-09-17
+last_reviewed: 2025-09-23
 ---
 
 ## 1. Executive Summary

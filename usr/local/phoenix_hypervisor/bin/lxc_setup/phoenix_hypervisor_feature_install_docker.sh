@@ -76,7 +76,9 @@ install_and_configure_docker() {
 
     # --- Pre-computation and Idempotency Checks ---
     local docker_installed=false
-    if is_command_available "$CTID" "docker" && pct_exec "$CTID" systemctl is-active docker &>/dev/null; then
+    # Use raw 'pct exec' for the systemctl check to prevent the script from exiting if the service is not active.
+    # This ensures that if Docker is installed but not running, we can proceed to the installation/repair logic.
+    if is_command_available "$CTID" "docker" && pct exec "$CTID" -- systemctl is-active --quiet docker >/dev/null 2>&1; then
         docker_installed=true
     fi
 
@@ -148,91 +150,22 @@ install_and_configure_docker() {
     log_info "Docker installation and configuration complete for CTID $CTID."
 }
 
-# =====================================================================================
-# Function: setup_portainer
-# Description: Deploys Portainer server or agent based on the container's configuration.
-# =====================================================================================
-# =====================================================================================
-# Function: setup_portainer
-# Description: Deploys Portainer (either server or agent) within the LXC container
-#              based on the `portainer_role` defined in the container's configuration.
-#              It performs idempotency checks to avoid re-deploying existing containers.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None. Exits with a fatal error if Portainer deployment commands fail.
-# =====================================================================================
-setup_portainer() {
-    local portainer_role # Variable to store Portainer role
-    portainer_role=$(jq_get_value "$CTID" ".portainer_role" || echo "none") # Retrieve Portainer role from config
-
-    # Skip Portainer setup if role is 'none'
-    if [ "$portainer_role" == "none" ]; then
-        log_info "Portainer role is 'none'. Skipping Portainer setup for CTID $CTID."
-        return 0
-    fi
-
-    log_info "Setting up Portainer ($portainer_role) in CTID: $CTID"
-
-    # Deploy Portainer server or agent based on the configured role
-    if [ "$portainer_role" == "server" ]; then
-        # Check if Portainer server container already exists
-        if pct_exec "$CTID" bash -c "docker ps -a --format '{{.Names}}' | grep -q \"^portainer$\""; then
-            log_info "Portainer server container already exists in CTID $CTID."
-        else
-            log_info "Deploying Portainer server container in CTID: $CTID"
-            pct_exec "$CTID" docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always \
-                -v /var/run/docker.sock:/var/run/docker.sock \
-                -v portainer_data:/data \
-                -v /certs:/certs:ro \
-                portainer/portainer-ce:latest --ssl --sslcert /certs/portainer.phoenix.local.crt --sslkey /certs/portainer.phoenix.local.key
-        fi
-    elif [ "$portainer_role" == "agent" ]; then
-        # Check if Portainer agent container already exists
-        if pct_exec "$CTID" bash -c "docker ps -a --format '{{.Names}}' | grep -q \"^portainer_agent$\""; then
-            log_info "Portainer agent container already exists in CTID $CTID."
-        else
-            log_info "Deploying Portainer agent container in CTID: $CTID"
-            local portainer_server_ip # IP of the Portainer server
-            portainer_server_ip=$(jq_get_value "$CTID" ".portainer_server_ip") # Retrieve server IP from config
-            local portainer_agent_port # Port for the Portainer agent
-            portainer_agent_port=$(jq_get_value "$CTID" ".portainer_agent_port") # Retrieve agent port from config
-            local agent_cluster_addr="tcp://${portainer_server_ip}:${portainer_agent_port}" # Construct agent cluster address
-
-            pct_exec "$CTID" docker run -d -p 9001:9001 --name portainer_agent --restart=always \
-                -v /var/run/docker.sock:/var/run/docker.sock \
-                -v /var/lib/docker/volumes:/var/lib/docker/volumes \
-                -e AGENT_CLUSTER_ADDR="$agent_cluster_addr" \
-                portainer/agent
-        fi
-    fi
-}
 
 # =====================================================================================
 # Function: main
 # Description: Main entry point for the Docker feature script.
-# =====================================================================================
-# =====================================================================================
-# Function: main
-# Description: Main entry point for the Docker feature script.
-#              It parses arguments, installs and configures Docker, and sets up Portainer.
-# Arguments:
-#   $@ - All command-line arguments passed to the script.
-# Returns:
-#   Exits with status 0 on successful completion.
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
 
     # --- Idempotency Check ---
-    if is_feature_installed "$CTID" "docker"; then
+    if is_feature_present_on_container "$CTID" "docker"; then
         log_info "Docker feature already installed on CTID $CTID. Skipping installation."
     else
         install_and_configure_docker # Install and configure Docker
     fi
     # --- End Idempotency Check ---
     
-    setup_portainer # Set up Portainer
     exit_script 0 # Exit successfully
 }
 

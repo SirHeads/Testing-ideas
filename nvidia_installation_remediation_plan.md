@@ -1,58 +1,105 @@
 # NVIDIA Installation Remediation Plan
 
-**Date:** 2025-09-22
+This document outlines the plan to refactor the LXC container NVIDIA installation script (`phoenix_hypervisor_feature_install_nvidia.sh`) to align with the more robust and reliable methodology of the hypervisor installation script.
 
-**Author:** Roo
+## I. Refactor the LXC NVIDIA Installation Script
 
-## 1. Executive Summary
+The primary goal is to simplify the LXC installation process by adopting the single-source `.run` file method from the hypervisor script. This eliminates the complexity and potential for conflict introduced by using the `apt` repository.
 
-This document outlines a comprehensive plan to address three critical issues in the LXC container feature installation process: a flawed order of operations in the NVIDIA driver installation, a race condition that leads to installation failures, and a logical flaw in feature inheritance detection. The proposed solutions will ensure a reliable, robust, and efficient container provisioning process.
+### New LXC Installation Workflow
 
-## 2. Problem Analysis
+The refactored script will follow these steps:
 
-### 2.1. NVIDIA Installation Order of Operations
+1.  **Idempotency Check:**
+    -   Execute `nvidia-smi` inside the container.
+    -   If the command succeeds and the driver version matches the one specified in the `.run` file name (or a config value), the script will exit successfully.
 
-The most critical issue is a flawed order of operations in the NVIDIA installation script. The script is attempting to install the CUDA toolkit *before* the NVIDIA driver has been fully installed and configured. This is a fundamental error that needs to be corrected to ensure a stable and functional NVIDIA environment.
+2.  **Aggressive Cleanup (New):**
+    -   Execute a comprehensive cleanup inside the container to remove all traces of previous NVIDIA installations.
+    -   This includes purging `*nvidia*` and `*cuda*` packages via `apt`, removing related files, and cleaning up any old repository configurations.
 
-### 2.2. NVIDIA Installation Race Condition
+3.  **Install Dependencies (Modified):**
+    -   Install essential dependencies like `build-essential`, `pkg-config`, and `wget` inside the container.
+    -   The kernel headers are not needed in the container, as the kernel module is already loaded on the host.
 
-A race condition has been identified in the NVIDIA feature installation script. The script is checking for the NVIDIA device before it's actually available to the container, leading to a timeout and a fatal error. This is because the script is not waiting for the container to be fully initialized before proceeding with the device check.
+4.  **Driver Installation (Simplified):**
+    -   Push the NVIDIA `.run` file from the host to the container's `/tmp` directory.
+    -   Execute the `.run` file inside the container with flags appropriate for a user-space-only installation (e.g., `--no-kernel-module`, `--no-x-check`, `--no-nouveau-check`, `--no-opengl-files`). This will install the user-space driver, CUDA toolkit, and `nvidia-smi`.
+    -   Remove the `.run` file from the container after installation.
 
-### 2.3. Feature Inheritance
+5.  **Verification:**
+    -   Run `nvidia-smi` inside the container to confirm the installation was successful.
+    -   Run `nvcc --version` to verify the CUDA toolkit installation.
 
-A logical flaw has been identified in the feature installation process for cloned LXC containers. Feature installation scripts are re-installing features that should have been inherited from their parent templates. The root cause of this issue is that the scripts are using state-based checks (e.g., checking for the existence of a package) instead of a configuration-based approach that correctly identifies inherited features.
+## II. Proposed `install_drivers_in_container` Function Rewrite
 
-## 3. Proposed Solution
+The core of the change will be in the `install_drivers_in_container` function within `usr/local/phoenix_hypervisor/bin/lxc_setup/phoenix_hypervisor_feature_install_nvidia.sh`.
 
-### 3.1. NVIDIA Installation Order of Operations
+```bash
+install_drivers_in_container() {
+    log_info "Starting robust NVIDIA driver and CUDA toolkit installation."
 
-The NVIDIA installation process will be re-structured to follow the correct order of operations:
+    # --- Stage 1: Idempotency Check ---
+    log_info "Stage 1: Verifying existing NVIDIA installation."
+    local host_driver_version
+    host_driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | head -n 1)
 
-1.  **Driver Installation:** The NVIDIA driver will be installed from the runfile.
-2.  **Driver Verification:** The script will verify that the driver has been installed correctly by running `nvidia-smi`.
-3.  **CUDA Repository Configuration:** The CUDA repository will be configured.
-4.  **CUDA Toolkit Installation:** The CUDA toolkit will be installed from the repository.
+    if pct_exec "$CTID" -- nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits | grep -q "$host_driver_version"; then
+        log_info "NVIDIA driver version ${host_driver_version} is already installed and verified in container. Exiting."
+        return 0
+    fi
+    log_info "NVIDIA driver not found or version mismatch. Proceeding with installation."
 
-### 3.2. NVIDIA Installation Race Condition
+    # --- Stage 2: Aggressive Cleanup ---
+    log_info "Stage 2: Performing aggressive cleanup of previous NVIDIA installations."
+    pct_exec "$CTID" -- bash -c "apt-get purge -y '*nvidia*' '*cuda*' && apt-get autoremove -y"
 
-A new function, `wait_for_container_initialization`, will be introduced in the `phoenix_hypervisor_common_utils.sh` script. This function will ensure that the container's network is up and running before proceeding with any device checks. The `phoenix_hypervisor_feature_install_nvidia.sh` script will be modified to call this new function before attempting to check for the NVIDIA device.
+    # --- Stage 3: System Preparation ---
+    log_info "Stage 3: Installing essential dependencies."
+    pct_exec "$CTID" -- apt-get update
+    pct_exec "$CTID" -- apt-get install -y build-essential pkg-config wget
 
-### 3.3. Feature Inheritance
+    # --- Stage 4: Driver Installation from .run file ---
+    log_info "Stage 4: Installing user-space driver and CUDA toolkit from .run file."
+    local nvidia_runfile_url
+    nvidia_runfile_url=$(jq_get_value "$CTID" ".nvidia_runfile_url")
+    if [ -z "$nvidia_runfile_url" ] || [ "$nvidia_runfile_url" == "null" ]; then
+        log_error "NVIDIA runfile URL is not defined for CTID $CTID."
+        return 1
+    fi
 
-The state-based checks in all feature installation scripts will be replaced with a call to the `is_feature_present_on_container` function, which is already available in the `phoenix_hypervisor_common_utils.sh` script. This function recursively checks the container's configuration and its parent templates for the presence of a feature, ensuring that inherited features are correctly identified.
+    local runfile_name
+    runfile_name=$(basename "$nvidia_runfile_url")
+    local container_runfile_path="/tmp/${runfile_name}"
 
-## 4. Implementation Plan
+    log_info "Downloading NVIDIA .run file and pushing to container..."
+    wget -qO "/tmp/${runfile_name}" "$nvidia_runfile_url"
+    run_pct_push "$CTID" "/tmp/${runfile_name}" "$container_runfile_path"
+    rm "/tmp/${runfile_name}"
 
-This is a planning document. The implementation of these changes will be handled by a separate development task. The following is a high-level overview of the implementation process:
+    log_info "Executing ${runfile_name} in container..."
+    local install_command="bash ${container_runfile_path} --silent --no-x-check --no-nouveau-check --no-opengl-files --no-kernel-module --accept-license"
+    pct_exec "$CTID" -- chmod +x "$container_runfile_path"
+    if ! pct_exec "$CTID" -- $install_command; then
+        log_error "NVIDIA .run file installation failed."
+        pct_exec "$CTID" -- rm -f "$container_runfile_path"
+        return 1
+    fi
+    pct_exec "$CTID" -- rm -f "$container_runfile_path"
 
-1.  **Branching:** Create a new feature branch for this fix.
-2.  **Development:**
-    *   Implement the `wait_for_container_initialization` function in `phoenix_hypervisor_common_utils.sh`.
-    *   Modify `phoenix_hypervisor_feature_install_nvidia.sh` to call the new function and to follow the correct order of operations.
-    *   Modify all feature installation scripts to use `is_feature_present_on_container` for feature detection.
-3.  **Testing:** Thoroughly test the changes to ensure that NVIDIA installation and feature inheritance are working correctly and that no regressions have been introduced.
-4.  **Deployment:** Merge the changes into the main branch and deploy them to the production environment.
+    # --- Stage 5: Final Verification ---
+    log_info "Stage 5: Final verification of NVIDIA components."
+    if ! pct_exec "$CTID" -- nvidia-smi; then
+        log_error "Final nvidia-smi verification failed."
+        return 1
+    fi
+    if ! pct_exec "$CTID" -- nvcc --version; then
+        log_error "Final nvcc verification failed."
+        return 1
+    fi
 
-## 5. Conclusion
+    log_info "NVIDIA driver and CUDA toolkit installation completed successfully."
+}
+```
 
-By implementing the solutions outlined in this document, we will address three critical issues in our feature installation process. This will result in a more reliable, robust, and efficient container provisioning system.
+This revised approach simplifies the installation, enhances its reliability, and aligns it with the proven methodology used for the hypervisor.

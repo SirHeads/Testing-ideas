@@ -121,7 +121,8 @@
                                     "base_setup",
                                     "nvidia",
                                     "docker",
-                                    "vllm"
+                                    "vllm",
+                                    "portainer"
                                 ]
                             },
                             "description": "An array of feature scripts to apply to the container."

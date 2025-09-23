@@ -1,22 +1,24 @@
 ---
 title: 'LXC Container 951: vllm-granite-embed - Enhancement Plan'
 summary: This document outlines a comprehensive plan to enhance the lxc 951 embedding model with robust responsiveness and context-checking capabilities.
-document_type: Strategy | Technical
-status: Draft
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - vLLM
 - granite-embed
 - Architecture
 - Implementation Plan
-- Phoenix Hypervisor
 - AI
 - Machine Learning
 - Embeddings
 - Responsiveness
 - Context-Checking
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # LXC 951 Enhancement Plan

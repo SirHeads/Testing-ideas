@@ -1,3 +1,21 @@
+---
+title: Revised ZFS Dataset Structure and Configuration Plan
+summary: This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- ZFS
+- Datasets
+- NVMe
+- Performance
+- Data Integrity
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Revised ZFS Dataset Structure and Configuration Plan
 
 This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization for the `quickOS` and `fastData` pools.

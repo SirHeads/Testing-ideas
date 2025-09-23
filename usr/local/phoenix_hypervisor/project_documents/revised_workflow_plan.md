@@ -1,3 +1,20 @@
+---
+title: Revised Workflow for vLLM Integration Testing
+summary: This document outlines the architectural changes required to fix the critical failure in the vLLM integration testing workflow.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Workflow
+- vLLM
+- Integration Testing
+- Orchestration
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Revised Workflow for vLLM Integration Testing
 
 This document outlines the architectural changes required to fix the critical failure in the vLLM integration testing workflow.

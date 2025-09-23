@@ -1,3 +1,20 @@
+---
+title: phoenix_hypervisor_qa.sh - Architectural and Implementation Plan
+summary: This document outlines the design and implementation strategy for the phoenix_hypervisor_qa.sh script, a comprehensive test suite for the Phoenix Hypervisor setup scripts.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- QA
+- Test Plan
+- Shell Scripts
+- Automation
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Architectural and Implementation Plan: phoenix_hypervisor_qa.sh
 
 This document outlines the design and implementation strategy for the `phoenix_hypervisor_qa.sh` script, a comprehensive test suite for the Phoenix Hypervisor setup scripts.

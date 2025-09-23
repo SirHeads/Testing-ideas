@@ -1,3 +1,20 @@
+---
+title: Final Orchestrator Control Flow
+summary: This document outlines the corrected control flow for the Phoenix Orchestrator, resolving a race condition related to Proxmox's idmap generation for unprivileged containers.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Orchestration
+- Control Flow
+- Idempotency
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Final Orchestrator Control Flow
 
 ## 1. Corrected Control Flow Explanation

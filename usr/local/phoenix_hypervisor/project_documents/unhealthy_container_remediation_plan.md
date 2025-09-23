@@ -1,3 +1,20 @@
+---
+title: Unhealthy Container Remediation Plan
+summary: This document outlines the steps to resolve the unhealthy status of containers 951 (vllm-granite-embed) and 952 (qdrant-lxc).
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Remediation
+- Health Check
+- vLLM
+- Qdrant
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Unhealthy Container Remediation Plan
 
 This document outlines the steps to resolve the unhealthy status of containers 951 (vllm-granite-embed) and 952 (qdrant-lxc).

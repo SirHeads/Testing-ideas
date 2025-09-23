@@ -11,7 +11,7 @@ CTID="$1"
 
 log_info "Starting Python API Service feature installation for CTID: $CTID"
 
-if is_feature_installed "$CTID" "python_api_service"; then
+if is_feature_present_on_container "$CTID" "python_api_service"; then
     log_info "Python API Service feature is already installed. Skipping."
     exit_script 0
 fi

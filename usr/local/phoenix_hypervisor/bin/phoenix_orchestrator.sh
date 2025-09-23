@@ -917,6 +917,36 @@ apply_features() {
     log_info "All features applied successfully for CTID $CTID."
 }
 
+# =====================================================================================
+# Function: run_portainer_script
+# Description: Executes the Portainer feature script for the container if it is defined
+#              in the configuration.
+# =====================================================================================
+run_portainer_script() {
+    local CTID="$1"
+    log_info "Checking for Portainer feature for CTID: $CTID"
+    local portainer_role
+    portainer_role=$(jq_get_value "$CTID" ".portainer_role" || echo "")
+
+    if [ -z "$portainer_role" ] || [ "$portainer_role" == "none" ]; then
+        log_info "No Portainer role to apply for CTID $CTID."
+        return 0
+    fi
+
+    local portainer_script_path="${PHOENIX_BASE_DIR}/bin/lxc_setup/phoenix_hypervisor_feature_install_portainer.sh"
+    log_info "Executing Portainer feature script: $portainer_script_path"
+
+    if [ ! -f "$portainer_script_path" ]; then
+        log_fatal "Portainer feature script not found at $portainer_script_path."
+    fi
+
+    if ! "$portainer_script_path" "$CTID"; then
+        log_fatal "Portainer feature script failed for CTID $CTID."
+    fi
+
+    log_info "Portainer feature script applied successfully for CTID $CTID."
+}
+
 
 # =====================================================================================
 # Function: run_application_script
@@ -1528,11 +1558,12 @@ main_state_machine() {
         "apply_shared_volumes"
         "apply_dedicated_volumes"
         "ensure_container_disk_size"
-        "create_pre_configured_snapshot"
         "start_container"
         "apply_features"
+        "run_portainer_script"
         "run_application_script"
         "run_health_check"
+        "create_pre_configured_snapshot"
         "run_post_deployment_validation"
         "create_final_form_snapshot"
         "create_template_snapshot"

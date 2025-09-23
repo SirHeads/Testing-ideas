@@ -1,14 +1,18 @@
 ---
 title: Declarative State Implementation Roadmap
-summary: This document provides a phased implementation roadmap for transitioning the Phoenix Orchestrator to a fully declarative, convergent state engine. It breaks down the project into manageable phases, each with specific technical tasks, deliverables, and estimated effort.
+summary: This document provides a phased implementation roadmap for transitioning the Phoenix Orchestrator to a fully declarative, convergent state engine.
 document_type: Technical
-status: Draft
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
 owner: Thinkheads.AI
-tags: ["Phoenix Hypervisor", "Roadmap", "Implementation Plan", "Declarative State", "IaC"]
+tags:
+- Roadmap
+- Implementation Plan
+- Declarative State
+- IaC
 review_cadence: Monthly
-last_reviewed: 2025-09-22
+last_reviewed: 2025-09-23
 ---
 
 # Declarative State Implementation Roadmap

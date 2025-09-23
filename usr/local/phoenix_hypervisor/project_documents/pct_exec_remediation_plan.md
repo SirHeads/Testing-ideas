@@ -1,3 +1,20 @@
+---
+title: pct_exec Remediation Plan
+summary: This plan outlines the steps to fix the immediate bug caused by the incorrect usage of the pct_exec function and to improve the codebase to prevent similar issues in the future.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- pct_exec
+- Remediation
+- Bug Fix
+- Shell Scripts
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Plan to Resolve `pct_exec` Inconsistency
 
 This plan outlines the steps to fix the immediate bug caused by the incorrect usage of the `pct_exec` function and to improve the codebase to prevent similar issues in the future.

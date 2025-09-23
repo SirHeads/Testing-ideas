@@ -1,14 +1,18 @@
 ---
-title: Document Title
-summary: A brief, one-to-two-sentence summary of the document's purpose and content.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: RAG Integration Strategy
+summary: This document outlines the strategy and best practices for authoring and maintaining corporate strategy documents to ensure they are optimized for Retrieval-Augmented Generation (RAG) pipelines.
+document_type: Strategy
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Thinkheads.AI
+owner: Thinkheads.AI
+tags:
+- RAG
+- Integration
+- Strategy
+- Corporate Documentation
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 # RAG Integration Strategy for Corporate Documentation
 

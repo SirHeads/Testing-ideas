@@ -1,3 +1,20 @@
+---
+title: VS Code Integration with LXC Containers and RooCode Extension
+summary: This document outlines the integration of VS Code with LXC containers 951, 952, 953, and the RooCode extension.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- VS Code
+- LXC
+- Roo Code
+- Integration
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # VS Code Integration with LXC Containers and RooCode Extension
 
 This document outlines the integration of VS Code with LXC containers 951, 952, 953, and the RooCode extension.

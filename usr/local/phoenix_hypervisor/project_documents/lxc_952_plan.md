@@ -1,23 +1,19 @@
 ---
 title: 'LXC Container 952: qdrant-lxc - Architecture and Implementation Plan'
-summary: This document outlines the architectural plan for the creation and configuration
-  of LXC container `952`, named `qdrant-lxc`. This container will host a Qdrant vector
-  database, providing a high-performance, scalable solution for vector similarity
-  search.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document outlines the architectural plan for the creation and configuration of LXC container 952.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - Qdrant
 - Vector Database
 - Architecture
 - Implementation Plan
-- Phoenix Hypervisor
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document outlines the architectural plan for the creation and configuration of LXC container `952`, named `qdrant-lxc`. This container will host a Qdrant vector database, providing a high-performance, scalable solution for vector similarity search. The setup will be consistent with the existing platform architecture, leveraging a dedicated setup script and centralized configuration.
 

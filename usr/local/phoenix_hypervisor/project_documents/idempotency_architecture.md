@@ -1,3 +1,21 @@
+---
+title: NVIDIA Idempotency Check Architecture
+summary: This document outlines a robust idempotency check for the NVIDIA feature installation script.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Idempotency
+- NVIDIA
+- GPU
+- Driver Installation
+- Architecture
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # NVIDIA Idempotency Check - Proposed Architecture
 
 This document outlines a robust idempotency check for the NVIDIA feature installation script.

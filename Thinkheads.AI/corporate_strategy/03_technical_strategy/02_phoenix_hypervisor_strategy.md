@@ -1,14 +1,17 @@
 ---
-title: Document Title
-summary: This document outlines the strategic importance and configuration of the Phoenix Hypervisor, detailing its role in orchestrating both LXC containers and Virtual Machines (VMs) for AI/ML/DL workloads.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: Phoenix Hypervisor Strategy
+summary: This document outlines the strategic importance and configuration of the Phoenix Hypervisor.
+document_type: Strategy
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Thinkheads.AI
+owner: Thinkheads.AI
+tags:
+- Phoenix Hypervisor
+- Strategy
+- Technical
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
 ---
 # Phoenix Hypervisor Strategy
 

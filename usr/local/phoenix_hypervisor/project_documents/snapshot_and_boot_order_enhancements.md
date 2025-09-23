@@ -1,3 +1,20 @@
+---
+title: Snapshot and Boot Order Enhancements
+summary: This document outlines the new snapshot and boot order features that have been added to the Phoenix Hypervisor orchestration system.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Snapshot
+- Boot Order
+- Orchestration
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Snapshot and Boot Order Enhancements
 
 This document outlines the new snapshot and boot order features that have been added to the Phoenix Hypervisor orchestration system.

@@ -82,7 +82,7 @@ install_proxy_ca_certificate() {
         pct_exec "$CTID" mkdir -p "$container_cert_dir"
 
         # Push the certificate to the container
-        pct push "$CTID" "$hypervisor_cert_path" "$container_cert_path"
+        run_pct_push "$CTID" "$hypervisor_cert_path" "$container_cert_path"
 
         # Check if the certificate was successfully copied
         if pct_exec "$CTID" test -f "$container_cert_path"; then
@@ -246,7 +246,7 @@ WantedBy=multi-user.target
 EOF
 
     # Push the temporary file to the container
-    pct push "$CTID" "$temp_service_file" "$service_file_path"
+    run_pct_push "$CTID" "$temp_service_file" "$service_file_path"
 
     # Clean up the temporary file
     rm "$temp_service_file"
@@ -274,7 +274,7 @@ EOF
 # =====================================================================================
 main() {
     parse_arguments "$@" # Parse command-line arguments
-    if is_feature_installed "$CTID" "vllm"; then
+    if is_feature_present_on_container "$CTID" "vllm"; then
         log_info "vLLM feature is already installed. Skipping."
         exit_script 0
     fi

@@ -1,16 +1,18 @@
 ---
 title: Script Guide - phoenix_orchestrator.sh
-summary: This document provides a comprehensive guide to the `phoenix_orchestrator.sh` script, detailing its purpose, usage, and the functions it provides for orchestrating LXC containers and VMs.
-document_type: Guide
-status: Final
+summary: This document provides a comprehensive guide to the phoenix_orchestrator.sh script, detailing its purpose, usage, and the functions it provides for orchestrating LXC containers and VMs.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
-  - Phoenix Hypervisor
-  - Script Guide
-  - Orchestrator
-  - LXC
-  - VM
+- Script Guide
+- Orchestrator
+- LXC
+- VM
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # Script Guide: `phoenix_orchestrator.sh`

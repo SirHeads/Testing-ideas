@@ -1,17 +1,17 @@
 ---
-title: "LXC Container Environment: An Overview"
+title: "LXC Container Environment Overview"
 summary: This document provides a detailed overview of the LXC container environment, including the network topology and container communication pathways.
 document_type: Technical
-status: Draft
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
-- Phoenix Hypervisor
 - Architecture
 - LXC
 - Networking
 review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 ## 1. Introduction

@@ -1,3 +1,20 @@
+---
+title: Phoenix LXC Configuration Reference
+summary: This document provides a detailed reference for the phoenix_lxc_configs.json file.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- LXC
+- Configuration
+- Reference
+- JSON
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Phoenix LXC Configuration Reference
 
 ## Introduction

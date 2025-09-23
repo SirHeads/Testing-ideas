@@ -1,18 +1,14 @@
 ---
-title: phoenix_lxc_configs.json (and phoenix_lxc_configs.schema.json) - Summary
-summary: This document summarizes the purpose, structure, and role of the `phoenix_lxc_configs.json`
-  file and its associated JSON Schema (`phoenix_lxc_configs.schema.json`) within the
-  Phoenix Hypervisor system, defining LXC container configurations and ensuring data
-  validity.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: phoenix_lxc_configs.json - Summary
+summary: This document summarizes the purpose, structure, and role of the phoenix_lxc_configs.json file and its associated JSON Schema.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - LXC Configuration
 - JSON Schema
-- Phoenix Hypervisor
 - Container Definitions
 - Templates
 - Snapshot-Based Templates
@@ -20,8 +16,8 @@ tags:
 - Portainer
 - NVIDIA Settings
 - Validation
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document summarizes the purpose, structure, and role of the `phoenix_lxc_configs.json` file and its associated JSON Schema (`phoenix_lxc_configs.schema.json`) within the Phoenix Hypervisor system. This pair defines *what* LXC containers to create, their specific configurations, and provides a mechanism to ensure the configuration data is valid. It has been updated to support a hierarchical snapshot-based template creation strategy.
 

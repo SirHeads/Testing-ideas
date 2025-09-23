@@ -1,3 +1,19 @@
+---
+title: Container Verification Plan
+summary: This document outlines the verification methods for each container to ensure a standardized and reliable process.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Verification
+- Health Check
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Container Verification Plan
 
 This document outlines the verification methods for each container to ensure a standardized and reliable process.

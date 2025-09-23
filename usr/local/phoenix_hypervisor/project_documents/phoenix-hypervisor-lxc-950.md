@@ -1,15 +1,17 @@
 ---
 title: Script Guide - phoenix_hypervisor_lxc_950.sh
-summary: This document provides a comprehensive guide to the `phoenix_hypervisor_lxc_950.sh` script, detailing its purpose, usage, and the functions it provides.
-document_type: Guide
-status: Final
+summary: This document provides a comprehensive guide to the phoenix_hypervisor_lxc_950.sh script, detailing its purpose, usage, and the functions it provides.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
-  - Phoenix Hypervisor
-  - Script Guide
-  - vLLM
-  - LXC
+- Script Guide
+- vLLM
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # Script Guide: `phoenix_hypervisor_lxc_950.sh`

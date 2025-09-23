@@ -1,23 +1,19 @@
 ---
 title: 'LXC Container 954: n8n-lxc - Architecture and Implementation Plan'
-summary: This document outlines the architectural plan for the creation and configuration
-  of LXC container `954`, named `n8n-lxc`. This container will host an n8n workflow
-  automation instance, providing a robust and scalable environment for automating
-  tasks and integrating various services.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document outlines the architectural plan for the creation and configuration of LXC container 954.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - n8n
 - Workflow Automation
 - Architecture
 - Implementation Plan
-- Phoenix Hypervisor
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document outlines the architectural plan for the creation and configuration of LXC container `954`, named `n8n-lxc`. This container will host an n8n workflow automation instance, providing a robust and scalable environment for automating tasks and integrating various services. The setup will adhere to the established platform standards, ensuring consistency with previous container deployments.
 

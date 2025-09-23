@@ -779,15 +779,28 @@ zfs_dataset_exists() {
 is_command_available() {
     local CTID="$1"
     local command_name="$2"
-
+    
     log_debug "Checking for command '$command_name' in CTID $CTID..."
-    if pct_exec "$CTID" command -v "$command_name" &> /dev/null; then
-        log_debug "Command '$command_name' found in CTID $CTID."
+    
+    # First, try the standard 'command -v' which is fast and checks the PATH
+    if pct_exec "$CTID" command -v "$command_name" >/dev/null 2>&1; then
+        log_debug "Command '$command_name' found in PATH for CTID $CTID."
         return 0
-    else
-        log_debug "Command '$command_name' not found in CTID $CTID."
-        return 1
     fi
+    
+    # If not found in PATH, check for the file's existence in common locations using 'test -f'
+    log_debug "Command '$command_name' not in PATH. Checking common locations with 'test -f' in CTID $CTID..."
+    local search_paths=("/usr/bin" "/usr/sbin" "/bin" "/sbin" "/usr/local/bin" "/usr/local/sbin" "/opt/bin" "/usr/local/cuda/bin" "/usr/local/cuda-12.8/bin")
+    
+    for path in "${search_paths[@]}"; do
+        if pct_exec "$CTID" test -f "${path}/${command_name}"; then
+            log_debug "Command '$command_name' found at ${path}/${command_name} in CTID $CTID."
+            return 0
+        fi
+    done
+
+    log_debug "Command '$command_name' not found in CTID $CTID after full search."
+    return 1
 }
 
 # =====================================================================================
@@ -1012,46 +1025,6 @@ _check_vllm_installed() {
 }
 
 # =====================================================================================
-# Function: is_feature_installed
-# Description: Checks if a specific feature is already installed in a container.
-# Arguments:
-#   $1 (CTID) - The container ID.
-#   $2 (feature_name) - The name of the feature to check (e.g., "nvidia").
-# Returns:
-#   0 if the feature is installed, 1 otherwise.
-# =====================================================================================
-is_feature_installed() {
-    local CTID="$1"
-    local feature_name="$2"
-
-    log_info "Checking if feature '$feature_name' is installed in CTID $CTID..."
-
-    case "$feature_name" in
-        "nvidia")
-            is_nvidia_installed_robust "$CTID"
-            ;;
-        "docker")
-            _check_docker_installed "$CTID"
-            ;;
-        "base_setup")
-            _check_base_setup_installed "$CTID"
-            ;;
-        "ollama")
-            _check_ollama_installed "$CTID"
-            ;;
-        "python_api_service")
-            _check_python_api_service_installed "$CTID"
-            ;;
-        "vllm")
-            _check_vllm_installed "$CTID"
-            ;;
-        *)
-            log_warn "No installation check defined for feature '$feature_name'. Assuming not installed."
-            return 1
-            ;;
-    esac
-}
-# =====================================================================================
 # Function: is_feature_present_on_container
 # Description: Recursively checks if a feature is present on a container, including its templates.
 # Arguments:
@@ -1088,4 +1061,29 @@ is_feature_present_on_container() {
     # If there is no parent and the feature was not found, return 1
     log_info "Feature '$feature_name' not found on CTID $ctid or any of its parents."
     return 1
+}
+# =====================================================================================
+# Function: wait_for_container_initialization
+# Description: Waits for a container to have network connectivity.
+# Arguments:
+#   $1 (CTID) - The container ID.
+# Returns:
+#   0 on success, exits with a fatal error on timeout.
+# =====================================================================================
+wait_for_container_initialization() {
+    local ctid="$1"
+    local timeout=60
+    local end_time=$((SECONDS + timeout))
+
+    log_info "Waiting for container $ctid to initialize (up to ${timeout}s)..."
+
+    while [ $SECONDS -lt $end_time ]; do
+        if pct_exec "$ctid" -- ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1; then
+            log_success "Container $ctid is initialized and has network connectivity."
+            return 0
+        fi
+        sleep 2
+    done
+
+    log_fatal "Timeout reached: Container $ctid did not initialize within $timeout seconds."
 }

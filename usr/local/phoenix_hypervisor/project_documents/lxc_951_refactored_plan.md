@@ -1,16 +1,18 @@
 ---
 title: 'LXC vLLM Deployment Refactoring Plan'
-summary: This document outlines a plan to refactor the vLLM LXC deployment process by introducing a model_type field to the configuration, unifying the application scripts, and creating a more robust and maintainable system.
-document_type: Technical | Plan
-status: Draft
+summary: This document outlines a plan to refactor the vLLM LXC deployment process by introducing a model_type field to the configuration.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - vLLM
 - Refactoring
 - Deployment Plan
-- Phoenix Hypervisor
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # LXC vLLM Deployment Refactoring Plan

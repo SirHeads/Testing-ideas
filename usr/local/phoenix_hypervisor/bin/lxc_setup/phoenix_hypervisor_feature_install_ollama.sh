@@ -17,7 +17,7 @@ CTID="$1"
 
 log_info "Starting Ollama feature installation for CTID: $CTID"
 
-if is_feature_installed "$CTID" "ollama"; then
+if is_feature_present_on_container "$CTID" "ollama"; then
     log_info "Ollama feature is already installed. Skipping."
     exit_script 0
 fi

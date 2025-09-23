@@ -1,14 +1,17 @@
 ---
 title: Script Guide - manage_vllm_services.sh
-summary: This document provides a comprehensive guide to the `manage_vllm_services.sh` script, detailing its purpose, usage, and functionality.
-document_type: Guide
-status: Draft
+summary: This document provides a comprehensive guide to the manage_vllm_services.sh script, detailing its purpose, usage, and functionality.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
-  - vLLM
-  - Script Guide
-  - Service Management
+- vLLM
+- Script Guide
+- Service Management
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # Script Guide: `manage_vllm_services.sh`

@@ -1,3 +1,20 @@
+---
+title: Unhealthy Container Report
+summary: This report details the failure of containers 951 (vllm-granite-embed) and 952 (qdrant-lxc) to pass the health check.
+document_type: Report
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Health Check
+- vLLM
+- Qdrant
+- RAG
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Unhealthy Container Report
 
 ## 1. Summary

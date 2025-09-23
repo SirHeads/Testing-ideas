@@ -1,3 +1,21 @@
+---
+title: NVIDIA Run File Installer Plan
+summary: This document outlines a detailed plan for handling the NVIDIA run file during LXC container creation.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- NVIDIA
+- GPU
+- Driver Installation
+- LXC Container
+- Automation
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Plan for Handling NVIDIA Run File During LXC Container Creation
 
 This document outlines a detailed plan for handling the NVIDIA run file during LXC container creation.
@@ -57,20 +75,17 @@ After the installation, a verification step will be added to confirm that the co
 
 ```mermaid
 graph TD
-    A[Start LXC Creation] --> B{NVIDIA Feature Enabled?};
-    B -->|Yes| C[Read NVIDIA Config];
-    B -->|No| Z[End];
-    C --> D{Run File in Cache?};
-    D -->|Yes| F[Push Run File to Container];
-    D -->|No| E[Download Run File to Cache];
-    E --> F;
-    F --> G[Install Driver in Container];
-    G --> H{Installation Successful?};
-    H -->|Yes| I[Verify Driver Version];
-    H -->|No| J[Log Error];
-    I --> K{Version Match?};
-    K -->|Yes| L[Installation Complete];
-    K -->|No| M[Log Version Mismatch Error];
-    J --> Z;
-    L --> Z;
-    M --> Z;
+    A[Start Installation] --> B[Detect Container OS Version];
+    B --> C[Construct Dynamic CUDA Repository URL];
+    C --> D[Configure NVIDIA CUDA apt Repository];
+    D --> E[Update apt Package Lists];
+    E --> F[Install CUDA Toolkit & Utilities];
+    F --> G[Download NVIDIA .run File];
+    G --> H[Push .run File to Container];
+    H --> I[Execute .run File];
+    I --> J[Clean Up .run File];
+    J --> K{Verification};
+    K -->|nvidia-smi & nvcc OK?| L[Installation Successful];
+    K -->|Verification Fails| M[Log Error & Abort];
+    L --> N[End];
+    M --> N;

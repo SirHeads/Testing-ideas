@@ -1,3 +1,20 @@
+---
+title: Declarative State Architecture
+summary: This document outlines the refactored architecture for the Phoenix Orchestrator, which transitions the system from an imperative, script-based execution model to a declarative, convergent state engine.
+document_type: Technical
+status: Approved
+version: 2.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Architecture
+- Declarative State
+- Idempotency
+- IaC
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
+---
+
 # Declarative State Architecture for Phoenix Orchestrator v2.0
 
 ## 1. Overview

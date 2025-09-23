@@ -1,3 +1,21 @@
+---
+title: Shared Storage and NGINX Gateway Architecture Overview
+summary: This document provides a high-level overview of the shared storage strategy and the NGINX gateway configuration for the Phoenix Hypervisor system.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Shared Storage
+- NGINX
+- Gateway
+- Architecture
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # System Architecture Overview: Shared Storage and NGINX Gateway
 
 This document provides a high-level overview of the shared storage strategy and the NGINX gateway configuration for the Phoenix Hypervisor system.

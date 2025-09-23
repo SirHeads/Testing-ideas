@@ -1,16 +1,18 @@
 ---
 title: 'LXC Container 951: vllm-granite-embed - Deployment Plan'
-summary: This document outlines the plan to create and configure LXC container 951 to host the vllm-granite-embed embedding model, mirroring the setup of LXC container 950.
-document_type: Technical | Plan
-status: Draft
+summary: This document outlines the plan to create and configure LXC container 951 to host the vllm-granite-embed embedding model.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - vLLM
 - granite-embed
 - Deployment Plan
-- Phoenix Hypervisor
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # LXC 951 Deployment Plan

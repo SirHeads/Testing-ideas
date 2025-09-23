@@ -1,14 +1,17 @@
 ---
-title: Document Title
-summary: A brief, one-to-two-sentence summary of the document's purpose and content.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: V2MOM
+summary: This document outlines the V2MOM framework for Thinkheads.AI.
+document_type: Strategy
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Thinkheads.AI
+owner: Thinkheads.AI
+tags:
+- V2MOM
+- Strategy
+- Business
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
 ---
 # V2MOM
 

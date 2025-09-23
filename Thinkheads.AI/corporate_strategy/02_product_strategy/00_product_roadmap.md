@@ -1,14 +1,17 @@
 ---
-title: Document Title
-summary: A brief, one-to-two-sentence summary of the document's purpose and content.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: Product Roadmap
+summary: This document outlines the product roadmap for Thinkheads.AI.
+document_type: Strategy
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Thinkheads.AI
+owner: Thinkheads.AI
+tags:
+- Product Roadmap
+- Strategy
+- Business
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
 ---
 # Product Roadmap
 

@@ -1,3 +1,19 @@
+---
+title: vLLM Systemd Service Creation Fix Plan
+summary: This document outlines the plan to fix the vLLM systemd service creation failure.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- vLLM
+- Systemd
+- Bug Fix
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # vLLM Systemd Service Creation Fix Plan
 
 ## 1. Problem Analysis

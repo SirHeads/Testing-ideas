@@ -1,3 +1,20 @@
+---
+title: Declarative State Strategy
+summary: This document outlines the strategy for transitioning the Phoenix Orchestrator from an imperative, script-driven system to a fully declarative, convergent state engine.
+document_type: Strategy
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Strategy
+- Declarative State
+- Idempotency
+- IaC
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
+---
+
 # Phoenix Orchestrator: Strategy for a Declarative State Model
 
 ## 1. Strategic Objective

@@ -1,24 +1,20 @@
 ---
 title: 'LXC Container 956: openWebUIBase - Architecture and Implementation Plan'
-summary: This document outlines the architectural plan for the creation and configuration
-  of LXC container `956`, designated `openWebUIBase`. This container will provide
-  a web-based user interface for interacting with the Ollama API, which is hosted
-  in the `ollamaBase` container (CTID `955`).
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document outlines the architectural plan for the creation and configuration of LXC container 956.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - LXC Container
 - Open WebUI
 - Ollama
 - Architecture
 - Implementation Plan
-- Phoenix Hypervisor
 - Web Interface
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document outlines the architectural plan for the creation and configuration of LXC container `956`, designated `openWebUIBase`. This container will provide a web-based user interface for interacting with the Ollama API, which is hosted in the `ollamaBase` container (CTID `955`).
 

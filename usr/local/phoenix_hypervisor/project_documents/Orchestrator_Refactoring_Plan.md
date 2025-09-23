@@ -1,3 +1,20 @@
+---
+title: Orchestrator Refactoring Plan
+summary: This document outlines the specific code changes required to refactor phoenix_orchestrator.sh to implement the new Unprivileged_LXC_Creation_Architecture.md.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Orchestration
+- Refactoring
+- LXC
+- Idempotency
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Orchestrator Refactoring Plan
 
 ## 1. Objective

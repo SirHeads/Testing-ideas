@@ -1,14 +1,19 @@
 ---
-title: Document Title
-summary: A brief, one-to-two-sentence summary of the document's purpose and content.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: Business Case: User Profiles
+summary: This document outlines the business case for the User Profiles project.
+document_type: Business Case
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Thinkheads.AI
+owner: Thinkheads.AI
+tags:
+- Business Case
+- User Profiles
+- AI
+- ML
+- DL
+review_cadence: Quarterly
+last_reviewed: 2025-09-23
 ---
 # Business Case: User Profiles V0
 

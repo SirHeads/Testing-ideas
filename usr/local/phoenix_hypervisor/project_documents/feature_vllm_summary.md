@@ -1,22 +1,20 @@
 ---
 title: 'Feature: vLLM'
-summary: The `vllm` feature automates the installation of the vLLM library, a high-throughput
-  engine for LLM inference. This script prepares a container to serve large language
-  models efficiently.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: The `vllm` feature automates the installation of the vLLM library, a high-throughput engine for LLM inference.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
 - vLLM
-- LLM inference
+- LLM Inference
 - AI
-- machine learning
-- model serving
+- Machine Learning
+- Model Serving
 - Python
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 The `vllm` feature automates the installation of the vLLM library, a high-throughput engine for LLM inference. This script prepares a container to serve large language models efficiently.
 

@@ -1,14 +1,19 @@
 ---
-title: Document Title
-summary: A brief, one-to-two-sentence summary of the document's purpose and content.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+title: RAG Optimization Strategy
+summary: This document outlines a comprehensive strategy for optimizing the existing Markdown documents and shell scripts within the phoenix_hypervisor repository for a Retrieval-Augmented Generation (RAG) implementation.
+document_type: Strategy
+status: Approved
 version: 1.0.0
-author: Author Name
-owner: Team/Individual Name
-tags: []
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- RAG
+- Optimization
+- Strategy
+- Markdown
+- Shell Scripts
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 # RAG Optimization Strategy for Phoenix Hypervisor
 

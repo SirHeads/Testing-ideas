@@ -1,3 +1,20 @@
+---
+title: API Gateway Access Guide
+summary: This guide explains how to connect to services that are exposed through the api-gateway-lxc (Container 953).
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- API Gateway
+- NGINX
+- Networking
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # How to Access Services via the API Gateway
 
 This guide explains how to connect to services that are exposed through the `api-gateway-lxc` (Container 953).

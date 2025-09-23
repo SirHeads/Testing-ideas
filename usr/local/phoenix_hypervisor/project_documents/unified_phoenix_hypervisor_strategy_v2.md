@@ -1,14 +1,18 @@
 ---
-title: Unified Phoenix Hypervisor Strategy v2.0
-summary: This document outlines the unified strategy for the Phoenix Hypervisor, integrating a declarative, convergent state model as the core of its architecture. It details the strategic importance, technical principles, and phased evolution of the platform to support Thinkheads.AI's vision.
+title: Unified Phoenix Hypervisor Strategy
+summary: This document outlines the unified strategy for the Phoenix Hypervisor, integrating a declarative, convergent state model as the core of its architecture.
 document_type: Strategy
-status: Draft
+status: Approved
 version: 2.0.0
-author: Roo
+author: Phoenix Hypervisor Team
 owner: Thinkheads.AI
-tags: ["Phoenix Hypervisor", "Strategy", "Declarative State", "IaC", "Architecture"]
+tags:
+- Strategy
+- Declarative State
+- IaC
+- Architecture
 review_cadence: Quarterly
-last_reviewed: 2025-09-22
+last_reviewed: 2025-09-23
 ---
 
 # Unified Phoenix Hypervisor Strategy v2.0

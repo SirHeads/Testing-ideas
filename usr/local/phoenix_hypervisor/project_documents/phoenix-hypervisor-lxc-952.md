@@ -1,16 +1,18 @@
 ---
 title: Script Guide - phoenix_hypervisor_lxc_952.sh
-summary: This document provides a comprehensive guide to the `phoenix_hypervisor_lxc_952.sh` script, detailing its purpose, usage, and functionality for managing a Qdrant vector database container.
-document_type: Guide
-status: Final
+summary: This document provides a comprehensive guide to the phoenix_hypervisor_lxc_952.sh script, detailing its purpose, usage, and functionality for managing a Qdrant vector database container.
+document_type: Technical
+status: Approved
 version: 1.0.0
-author: Roo
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
 tags:
-  - Phoenix Hypervisor
-  - Script Guide
-  - Qdrant
-  - Docker
-  - LXC
+- Script Guide
+- Qdrant
+- Docker
+- LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 
 # Script Guide: `phoenix_hypervisor_lxc_952.sh`

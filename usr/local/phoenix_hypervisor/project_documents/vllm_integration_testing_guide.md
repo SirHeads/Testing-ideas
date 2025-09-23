@@ -1,3 +1,19 @@
+---
+title: vLLM Integration Testing Guide
+summary: This document outlines the automated integration testing framework for vLLM containers within the Phoenix Hypervisor environment.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- vLLM
+- Integration Testing
+- Automation
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # vLLM Integration Testing Guide
 
 ## 1. Overview

@@ -1,3 +1,21 @@
+---
+title: Roo Code Integration Guide
+summary: This document provides the necessary configuration settings to integrate the Roo Code extension in VS Code with your self-hosted embedding model and Qdrant vector database.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Roo Code
+- VS Code
+- Integration
+- Embedding Model
+- Qdrant
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Roo Code Integration Guide
 
 This document provides the necessary configuration settings to integrate the Roo Code extension in VS Code with your self-hosted embedding model and Qdrant vector database.

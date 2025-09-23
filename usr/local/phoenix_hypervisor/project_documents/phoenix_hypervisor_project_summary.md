@@ -1,15 +1,12 @@
 ---
 title: Phoenix Hypervisor Project Summary
-summary: This document provides a summary of the Phoenix Hypervisor project, outlining
-  its goals, capabilities, and core architectural concepts for orchestrating LXC containers and Virtual Machines (VMs)
-  tailored for AI and machine learning workloads on Proxmox.
-document_type: Strategy | Technical | Business Case | Report
-status: Draft | In Review | Approved | Archived
+summary: This document provides a summary of the Phoenix Hypervisor project, outlining its goals, capabilities, and core architectural concepts.
+document_type: Technical
+status: Approved
 version: 1.0.0
 author: Phoenix Hypervisor Team
-owner: Team/Individual Name
+owner: Thinkheads.AI
 tags:
-- Phoenix Hypervisor
 - Project Summary
 - LXC
 - VMs
@@ -20,8 +17,8 @@ tags:
 - Declarative Configuration
 - State Machine
 - Feature-Based Customization
-review_cadence: Annual | Quarterly | Monthly | None
-last_reviewed: YYYY-MM-DD
+review_cadence: Annual
+last_reviewed: 2025-09-23
 ---
 This document provides a summary of the Phoenix Hypervisor project's goals, capabilities, and a post-implementation review of issues and suggested improvements from the initial build phase.
 

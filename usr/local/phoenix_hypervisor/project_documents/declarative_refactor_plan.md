@@ -1,3 +1,20 @@
+---
+title: Declarative Refactor Plan
+summary: This plan outlines a holistic refactoring of the scripting environment to align with the core architectural principles of declarative state and idempotency.
+document_type: Technical
+status: Approved
+version: 1.0.0
+author: Phoenix Hypervisor Team
+owner: Thinkheads.AI
+tags:
+- Refactoring
+- Declarative State
+- Idempotency
+- Shell Scripts
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Plan for Declarative Refactor of Scripting
 
 This plan outlines a holistic refactoring of the scripting environment to align with the core architectural principles of declarative state and idempotency. This approach will resolve the root cause of the recent failures and improve the overall resilience and maintainability of the system.
