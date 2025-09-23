@@ -70,8 +70,8 @@ graph TD
 
 ## 4. Implementation Plan
 
-1.  **Define Datasets in `hypervisor_feature_setup_zfs.sh`**: The ZFS pools and datasets are now defined as shell arrays directly within the `hypervisor_feature_setup_zfs.sh` script.
-2.  **Execute ZFS Setup Script**: Run the `hypervisor_feature_setup_zfs.sh` script to create the pools and datasets.
+1.  **Define Datasets in `phoenix_hypervisor_config.json`**: The ZFS pools and datasets are now defined declaratively in the `phoenix_hypervisor_config.json` file.
+2.  **Execute Orchestrator Script**: Run the main `phoenix_orchestrator.sh` script, which in turn calls the `hypervisor_feature_setup_zfs.sh` script to apply the configuration.
 3.  **Configure Proxmox Storage**: The script also adds the datasets as storage resources in Proxmox.
 4.  **Configure Mounts and Permissions**: Set up NFS exports and bind mounts for VMs and LXCs, and configure permissions as required.
 

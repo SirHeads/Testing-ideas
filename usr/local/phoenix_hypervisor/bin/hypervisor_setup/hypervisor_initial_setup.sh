@@ -1,3 +1,9 @@
+# Determine the absolute path of the directory containing this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+
+# Source the common utilities script using the calculated absolute path
+# This ensures the script can be called from any directory
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 #!/bin/bash
 
 # File: hypervisor_initial_setup.sh
@@ -157,26 +163,24 @@ configure_nodesource_repository() {
 update_and_upgrade_system() {
     log_info "Updating and upgrading system (this may take a while)..."
     retry_command "apt-get update" || log_fatal "Failed to update package lists" # Update package lists
+    
+    # --- Check and install jq ---
+    if ! command -v jq &> /dev/null; then
+        log_info "jq is not installed. Installing..."
+        if apt-get install -y jq; then
+            log_info "jq installed successfully."
+        else
+            log_fatal "Failed to install jq. Please install it manually and rerun the script."
+        fi
+    else
+        log_info "jq is already installed."
+    fi
     retry_command "apt-get dist-upgrade -y" || log_fatal "Failed to upgrade system" # Perform full system upgrade
     retry_command "proxmox-boot-tool refresh" || log_fatal "Failed to refresh proxmox-boot-tool" # Refresh Proxmox boot configuration
     retry_command "update-initramfs -u" || log_fatal "Failed to update initramfs" # Update initramfs
     log_info "System updated, upgraded, and initramfs refreshed"
 }
 
-# Install jq
-# =====================================================================================
-# Function: install_jq
-# Description: Installs the `jq` command-line JSON processor.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if `jq` installation fails.
-# =====================================================================================
-install_jq() {
-    log_info "Installing jq..."
-    retry_command "apt-get install -y jq" || log_fatal "Failed to install jq" # Install jq
-    log_info "Installed jq"
-}
 
 # Install s-tui
 # =====================================================================================
@@ -399,7 +403,6 @@ main() {
     configure_proxmox_repositories # Configure Proxmox repositories
     configure_nodesource_repository # Configure NodeSource repository
     update_and_upgrade_system # Update and upgrade the system
-    install_jq # Install jq
     install_s_tui # Install s-tui
     install_samba_packages # Install Samba packages
     set_system_timezone # Set system timezone

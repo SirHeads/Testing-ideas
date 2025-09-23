@@ -1159,6 +1159,8 @@ setup_hypervisor() {
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
         "hypervisor_feature_setup_zfs.sh"
+        "hypervisor_feature_create_heads_user.sh"
+        "hypervisor_feature_set_heads_password.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
         "hypervisor_feature_setup_firewall.sh"
@@ -1166,21 +1168,26 @@ setup_hypervisor() {
         "hypervisor_feature_setup_samba.sh"
         "hypervisor_feature_create_admin_user.sh"
     )
-
-    # Provision shared ZFS volumes as part of the hypervisor setup
-    provision_shared_zfs_volumes
-
+ 
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
         log_info "Executing setup script: $script..."
         if [ ! -f "$script_path" ]; then
             log_fatal "Hypervisor setup script not found at $script_path."
         fi
-        if ! "$script_path" "$config_file"; then
+        if [[ "$script" == "hypervisor_feature_setup_zfs.sh" ]]; then
+            jq '.zfs' "$config_file" | "$script_path" --mode safe
+            if [ $? -ne 0 ]; then
+                log_fatal "Hypervisor setup script '$script' failed."
+            fi
+        elif ! "$script_path" "$config_file"; then
             log_fatal "Hypervisor setup script '$script' failed."
         fi
     done
-
+ 
+    # Provision shared ZFS volumes as part of the hypervisor setup
+    provision_shared_zfs_volumes
+ 
     log_info "Hypervisor setup completed successfully."
 }
 
