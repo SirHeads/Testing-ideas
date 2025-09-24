@@ -33,11 +33,18 @@ EXECUTION_MODE="safe" # Default to safe mode
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --config) HYPERVISOR_CONFIG_FILE="$2"; shift ;;
-        --mode) EXECUTION_MODE="$2"; shift ;;
-        *) log_fatal "Unknown parameter passed: $1" ;;
+        --config)
+            HYPERVISOR_CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --mode)
+            EXECUTION_MODE="$2"
+            shift 2
+            ;;
+        *)
+            log_fatal "Unknown parameter passed: $1"
+            ;;
     esac
-    shift
 done
 
 # --- Read Configuration ---

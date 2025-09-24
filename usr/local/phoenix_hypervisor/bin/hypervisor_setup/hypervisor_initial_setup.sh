@@ -1,9 +1,3 @@
-# Determine the absolute path of the directory containing this script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-
-# Source the common utilities script using the calculated absolute path
-# This ensures the script can be called from any directory
-source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 #!/bin/bash
 
 # File: hypervisor_initial_setup.sh
@@ -228,7 +222,11 @@ install_samba_packages() {
 # =====================================================================================
 set_system_timezone() {
     local timezone
-    timezone=$(jq -r '.timezone // "America/New_York"' "$HYPERVISOR_CONFIG_FILE")
+    timezone=$(jq -r '.timezone' "$HYPERVISOR_CONFIG_FILE" 2>/dev/null) || timezone=""
+    if [ -z "$timezone" ]; then
+        log_warn "Timezone not found in configuration file. Defaulting to America/New_York."
+        timezone="America/New_York"
+    fi
     log_info "Setting timezone to ${timezone}..."
     if ! timedatectl set-timezone "${timezone}"; then
         log_fatal "Failed to set timezone to ${timezone}"
