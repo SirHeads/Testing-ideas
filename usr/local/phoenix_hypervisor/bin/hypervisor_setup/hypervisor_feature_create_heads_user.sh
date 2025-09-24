@@ -83,7 +83,40 @@ main() {
         log_fatal "Failed to assign Administrator role to 'heads@pam'."
     fi
 
+    # --- Set Password Interactively ---
+    set_heads_password
+
     log_info "'heads' user creation and configuration script completed successfully."
+}
+
+# --- Function to set password interactively ---
+set_heads_password() {
+    log_info "Please set the password for the 'heads' user."
+    local password
+    local password_confirm
+
+    while true; do
+        read -s -p "Enter password for 'heads': " password
+        echo
+        read -s -p "Confirm password: " password_confirm
+        echo
+
+        if [ "$password" != "$password_confirm" ]; then
+            log_error "Passwords do not match. Please try again."
+        elif [ -z "$password" ]; then
+            log_error "Password cannot be empty. Please try again."
+        else
+            break
+        fi
+    done
+
+    log_info "Setting password for 'heads' user..."
+    echo "heads:$password" | chpasswd
+    if [ $? -eq 0 ]; then
+        log_info "Password for 'heads' user set successfully."
+    else
+        log_fatal "Failed to set password for 'heads' user."
+    fi
 }
 
 # --- Execute Main ---

@@ -40,10 +40,18 @@ deploy_apparmor_profiles() {
     for profile in "${source_dir}"/*; do
         if [ -f "$profile" ]; then
             local profile_name=$(basename "$profile")
-            local dest_path="${dest_dir}/${profile_name}"
+            local dest_path
+
+            if [ "$profile_name" == "tunables.home" ]; then
+                dest_path="${dest_dir}/tunables/home"
+            else
+                dest_path="${dest_dir}/${profile_name}"
+            fi
 
             if [ ! -f "$dest_path" ] || ! diff -q "$profile" "$dest_path" >/dev/null; then
-                log_info "Copying AppArmor profile ${profile_name} to ${dest_path}..."
+                log_info "Copying AppArmor file ${profile_name} to ${dest_path}..."
+                # Ensure the destination directory exists, especially for tunables
+                mkdir -p "$(dirname "$dest_path")"
                 cp "$profile" "$dest_path"
                 profiles_changed=true
             fi
@@ -52,9 +60,11 @@ deploy_apparmor_profiles() {
 
     if [ "$profiles_changed" = true ]; then
         log_info "Reloading AppArmor profiles..."
-        apparmor_parser -r -W "$dest_dir"
-        systemctl reload apparmor.service
-        log_success "AppArmor profiles reloaded successfully."
+        if systemctl reload apparmor; then
+            log_success "AppArmor profiles reloaded successfully."
+        else
+            log_fatal "Failed to reload AppArmor profiles."
+        fi
     else
         log_info "AppArmor profiles are already up-to-date. No changes needed."
     fi

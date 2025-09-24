@@ -1,7 +1,7 @@
 # Do not load this file. Rather, load /etc/apparmor.d/lxc-containers, which
 # sources this file.
 
-profile lxc-nvidia-gpu-docker flags=(attach_disconnected,mediate_deleted) {
+profile lxc-gpu-docker-storage flags=(attach_disconnected,mediate_deleted) {
   #include <tunables/global>
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
@@ -12,21 +12,22 @@ profile lxc-nvidia-gpu-docker flags=(attach_disconnected,mediate_deleted) {
   mount fstype=cgroup2,
   mount fstype=debugfs,
   mount fstype=proc,
-  mount,
   mount options=(rw,nosuid,nodev,noexec,relatime) -> /sys/kernel/debug/,
-  
+
   # Allow NVIDIA GPU device files
   /dev/nvidia* rwm,
   /dev/nvidia-uvm rwm,
   /dev/nvidia-uvm-tools rwm,
   /dev/nvidia-caps/* rwm,
 
-  # Additional permissions for Docker
-  mount fstype=overlay,
-  mount fstype=aufs,
-  mount fstype=tmpfs,
-  mount options=(rw,nosuid,nodev,noexec,relatime) -> /var/lib/docker/,
+  # Allow Docker
+  /var/lib/docker/ r,
+  /var/lib/docker/** rwm,
+  /run/docker.sock rw,
+
+  # Allow shared storage
+  /mnt/shared/** rwm,
 
   # Deny writes to /proc/sys/fs/binfmt_misc/register
-  deny mount fstype=binfmt_misc,
+  deny mount fstype=binfmt_misc
 }

@@ -161,7 +161,7 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-docker"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "920": {
             "name": "Template-VLLM",
@@ -283,7 +283,7 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc-nvidia-gpu-base"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "951": {
             "name": "vllm-granite-embed-r2",
@@ -350,7 +350,7 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc-nvidia-gpu-base"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "952": {
             "name": "qdrant-VSCodeRag",
@@ -409,7 +409,7 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-docker"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -495,7 +495,7 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-docker"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "955": {
             "name": "ollama-oWUI",
@@ -562,7 +562,7 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-docker"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "957": {
             "name": "llamacpp",
@@ -594,7 +594,7 @@
             "start_at_boot": true,
             "boot_order": 2,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-base"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         },
         "960": {
             "name": "monitoring-stack",
@@ -627,7 +627,7 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-nvidia-gpu-docker"
+            "apparmor_profile": "lxc-gpu-docker-storage"
         }
     }
 }

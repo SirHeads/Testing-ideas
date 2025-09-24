@@ -439,30 +439,7 @@ apply_configurations() {
     run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
  
     # --- Apply AppArmor Profile ---
-    local apparmor_profile
-    apparmor_profile=$(jq_get_value "$CTID" ".apparmor_profile" || echo "unconfined")
-    local conf_file="/etc/pve/lxc/${CTID}.conf"
-
-    if [ ! -f "$conf_file" ]; then
-        log_fatal "Container configuration file not found at $conf_file."
-    fi
-
-    log_info "Applying AppArmor profile: ${apparmor_profile}"
-    if [ "$apparmor_profile" == "unconfined" ]; then
-        # Remove the profile line if it exists
-        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
-            log_info "Setting AppArmor profile to unconfined."
-            sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
-        fi
-    else
-        local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
-        # Add or update the profile line
-        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
-            sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file"
-        else
-            echo "$profile_line" >> "$conf_file"
-        fi
-    fi
+    apply_apparmor_profile "$CTID"
 
     # Apply Phoenix AppArmor profile for unprivileged containers
     local unprivileged_bool
@@ -1084,6 +1061,40 @@ create_final_form_snapshot() {
 }
 
 # =====================================================================================
+# Function: apply_apparmor_profile
+# Description: Applies the AppArmor profile to the container's configuration file.
+# Arguments:
+#   $1 - The CTID of the container.
+# =====================================================================================
+apply_apparmor_profile() {
+    local CTID="$1"
+    log_info "Applying AppArmor profile for CTID: $CTID"
+
+    local apparmor_profile
+    apparmor_profile=$(jq_get_value "$CTID" ".apparmor_profile" || echo "unconfined")
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
+
+    if [ ! -f "$conf_file" ]; then
+        log_fatal "Container configuration file not found at $conf_file."
+    fi
+
+    log_info "Setting AppArmor profile to: ${apparmor_profile}"
+    if [ "$apparmor_profile" == "unconfined" ]; then
+        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
+            log_info "Removing existing AppArmor profile setting."
+            sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
+        fi
+    else
+        local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
+        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
+            sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file"
+        else
+            echo "$profile_line" >> "$conf_file"
+        fi
+    fi
+}
+
+# =====================================================================================
 # Function: run_qm_command
 # Description: Executes a qm command, logging the command and its output.
 # Arguments:
@@ -1153,12 +1164,14 @@ setup_hypervisor() {
         "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
-        "hypervisor_feature_setup_apparmor.sh"
+        "hypervisor_feature_initialize_nvidia_gpus.sh"
         "hypervisor_feature_setup_firewall.sh"
         "hypervisor_feature_setup_nfs.sh"
+        "hypervisor_feature_create_heads_user.sh"
         "hypervisor_feature_setup_samba.sh"
         "hypervisor_feature_create_admin_user.sh"
         "hypervisor_feature_provision_shared_resources.sh"
+        "hypervisor_feature_setup_apparmor.sh"
     )
 
     for script in "${setup_scripts[@]}"; do
@@ -1175,7 +1188,7 @@ setup_hypervisor() {
             log_fatal "Hypervisor setup script '$script' failed."
         fi
     done
- 
+
     log_info "Hypervisor setup completed successfully."
 }
 
@@ -1498,6 +1511,7 @@ main_state_machine() {
         "validate_inputs"
         "ensure_container_defined"
         "apply_configurations"
+        "apply_apparmor_profile"
         "apply_zfs_volumes"
         "apply_dedicated_volumes"
         "ensure_container_disk_size"
