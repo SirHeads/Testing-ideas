@@ -420,6 +420,7 @@ clone_container() {
 apply_configurations() {
     local CTID="$1"
     log_info "Applying configurations for CTID: $CTID"
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
 
     # --- Retrieve configuration values ---
     # Retrieve configuration values from the JSON config
@@ -440,40 +441,6 @@ apply_configurations() {
  
     # --- Apply AppArmor Profile ---
     apply_apparmor_profile "$CTID"
-
-    # Apply Phoenix AppArmor profile for unprivileged containers
-    local unprivileged_bool
-    unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
-    if [ "$unprivileged_bool" == "true" ]; then
-        log_info "Configuring full-range idmap for container $CTID..."
-
-        # Define idmap lines for a full 65536 UID/GID mapping
-        local idmap_lines=(
-            "lxc.idmap: u 0 100000 65536"
-            "lxc.idmap: g 0 100000 65536"
-        )
-
-        # Remove existing idmap lines to ensure idempotency
-        sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
-
-        # Add new idmap lines
-        for line in "${idmap_lines[@]}"; do
-            echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
-        done
-
-        log_info "Successfully configured full-range idmap for container $CTID."
-
-        log_info "Configuring cgroup2 device rules for NVIDIA devices..."
-        local cgroup_rules=(
-            "lxc.cgroup2.devices.allow: c 195:* rwm"
-            "lxc.cgroup2.devices.allow: c 506:* rwm"
-            "lxc.cgroup2.devices.allow: c 509:* rwm"
-        )
-        for rule in "${cgroup_rules[@]}"; do
-            echo "$rule" >> "$conf_file" || log_fatal "Failed to add cgroup2 rule to $conf_file: $rule"
-        done
-        log_info "Successfully configured cgroup2 device rules."
-    fi
 
    # --- Apply pct options ---
    local pct_options
@@ -1085,6 +1052,31 @@ apply_apparmor_profile() {
             sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
         fi
     else
+        # If a specific profile is named, apply it and its dependent configurations.
+        if [ "$apparmor_profile" == "lxc-gpu-docker-storage" ]; then
+            log_info "Configuring full-range idmap for container $CTID..."
+            local idmap_lines=(
+                "lxc.idmap: u 0 100000 65536"
+                "lxc.idmap: g 0 100000 65536"
+            )
+            sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
+            for line in "${idmap_lines[@]}"; do
+                echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
+            done
+            log_info "Successfully configured full-range idmap for container $CTID."
+
+            log_info "Configuring cgroup2 device rules for NVIDIA devices..."
+            local cgroup_rules=(
+                "lxc.cgroup2.devices.allow: c 195:* rwm"
+                "lxc.cgroup2.devices.allow: c 506:* rwm"
+                "lxc.cgroup2.devices.allow: c 509:* rwm"
+            )
+            for rule in "${cgroup_rules[@]}"; do
+                echo "$rule" >> "$conf_file" || log_fatal "Failed to add cgroup2 rule to $conf_file: $rule"
+            done
+            log_info "Successfully configured cgroup2 device rules."
+        fi
+
         local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
         if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
             sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file"
@@ -1511,7 +1503,6 @@ main_state_machine() {
         "validate_inputs"
         "ensure_container_defined"
         "apply_configurations"
-        "apply_apparmor_profile"
         "apply_zfs_volumes"
         "apply_dedicated_volumes"
         "ensure_container_disk_size"
