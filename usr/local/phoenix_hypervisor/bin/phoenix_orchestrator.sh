@@ -1151,8 +1151,6 @@ setup_hypervisor() {
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
         "hypervisor_feature_setup_zfs.sh"
-        "hypervisor_feature_create_heads_user.sh"
-        "hypervisor_feature_set_heads_password.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
         "hypervisor_feature_setup_apparmor.sh"
@@ -1160,8 +1158,9 @@ setup_hypervisor() {
         "hypervisor_feature_setup_nfs.sh"
         "hypervisor_feature_setup_samba.sh"
         "hypervisor_feature_create_admin_user.sh"
+        "hypervisor_feature_provision_shared_resources.sh"
     )
- 
+
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
         log_info "Executing setup script: $script..."
@@ -1169,8 +1168,7 @@ setup_hypervisor() {
             log_fatal "Hypervisor setup script not found at $script_path."
         fi
         if [[ "$script" == "hypervisor_feature_setup_zfs.sh" ]]; then
-            jq '.zfs' "$config_file" | "$script_path" --mode safe
-            if [ $? -ne 0 ]; then
+            if ! "$script_path" --config "$config_file" --mode safe; then
                 log_fatal "Hypervisor setup script '$script' failed."
             fi
         elif ! "$script_path" "$config_file"; then
@@ -1178,42 +1176,7 @@ setup_hypervisor() {
         fi
     done
  
-    # Provision shared ZFS volumes as part of the hypervisor setup
-    provision_shared_zfs_volumes
- 
     log_info "Hypervisor setup completed successfully."
-}
-
-# =====================================================================================
-# Function: provision_shared_zfs_volumes
-# Description: Idempotently creates shared ZFS volumes as hypervisor-level resources.
-# =====================================================================================
-provision_shared_zfs_volumes() {
-    log_info "Provisioning shared ZFS volumes..."
-    local shared_volumes
-    shared_volumes=$(jq -c '.shared_zfs_volumes // {}' "$VM_CONFIG_FILE")
-
-    for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
-        local volume_config
-        volume_config=$(echo "$shared_volumes" | jq -r --arg name "$volume_name" '.[$name]')
-        local storage_pool
-        storage_pool=$(echo "$volume_config" | jq -r '.pool')
-        local size_gb
-        size_gb=$(echo "$volume_config" | jq -r '.size_gb')
-        # Use a placeholder CTID like 99999 for hypervisor-level resources
-        local placeholder_ctid="99999"
-        local volume_id="vm-${placeholder_ctid}-disk-${volume_name}"
-
-        # Check if the volume already exists
-        if ! pvesm list "$storage_pool" | grep -q "$volume_id"; then
-            log_info "Creating shared ZFS volume: $volume_id of size ${size_gb}G in pool $storage_pool"
-            if ! run_pvesm_command alloc "$storage_pool" "$placeholder_ctid" "$volume_id" "${size_gb}G" --format raw; then
-                log_fatal "Failed to create shared ZFS volume: $volume_id"
-            fi
-        else
-            log_info "Shared ZFS volume $volume_id already exists."
-        fi
-    done
 }
 
 # =====================================================================================
