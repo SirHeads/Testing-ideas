@@ -422,6 +422,14 @@ main() {
 
     install_ufw # Install ufw if not present
     configure_firewall_rules # Configure firewall rules
+
+    # Deploy custom AppArmor profiles
+    if [ -f "${SCRIPT_DIR}/hypervisor_feature_setup_apparmor.sh" ]; then
+        log_info "Running AppArmor setup script..."
+        source "${SCRIPT_DIR}/hypervisor_feature_setup_apparmor.sh"
+    else
+        log_warning "AppArmor setup script not found. Skipping."
+    fi
     
     log_info "Successfully completed hypervisor_initial_setup.sh"
     exit 0
