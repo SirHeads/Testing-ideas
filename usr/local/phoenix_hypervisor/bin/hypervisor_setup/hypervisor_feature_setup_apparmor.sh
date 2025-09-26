@@ -42,11 +42,7 @@ deploy_apparmor_profiles() {
             local profile_name=$(basename "$profile")
             local dest_path
 
-            if [ "$profile_name" == "tunables.home" ]; then
-                dest_path="${dest_dir}/tunables/home"
-            else
-                dest_path="${dest_dir}/${profile_name}"
-            fi
+            dest_path="${dest_dir}/${profile_name}"
 
             if [ ! -f "$dest_path" ] || ! diff -q "$profile" "$dest_path" >/dev/null; then
                 log_info "Copying AppArmor file ${profile_name} to ${dest_path}..."

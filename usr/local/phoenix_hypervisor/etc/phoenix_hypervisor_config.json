@@ -164,7 +164,7 @@
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "fastData-shared-iso",

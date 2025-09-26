@@ -29,5 +29,8 @@ profile lxc-gpu-docker-storage flags=(attach_disconnected,mediate_deleted) {
   /mnt/shared/** rwm,
 
   # Deny writes to /proc/sys/fs/binfmt_misc/register
-  deny mount fstype=binfmt_misc
+  deny audit mount fstype=binfmt_misc,
+
+  # Audit write attempts to /etc/ for monitoring
+  audit /etc/** w,
 }
