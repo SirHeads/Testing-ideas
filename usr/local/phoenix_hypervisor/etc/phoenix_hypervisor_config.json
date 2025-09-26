@@ -149,14 +149,14 @@
                 "name": "shared-backups",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=zstd,sync=standard,quota=2T",
-                "proxmox_storage_type": "zfspool",
+                "proxmox_storage_type": "dir",
                 "proxmox_content_type": "backup"
             },
             {
                 "name": "shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "zfspool",
+                "proxmox_storage_type": "dir",
                 "proxmox_content_type": "iso,vztmpl"
             },
             {
@@ -164,13 +164,13 @@
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "fastData-shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "zfspool",
+                "proxmox_storage_type": "dir",
                 "proxmox_content_type": "iso,vztmpl"
             }
         ]
@@ -178,7 +178,7 @@
     "proxmox_storage_ids": {
         "quickos_vm": "quickOS-vm-disks",
         "quickos_lxc": "quickOS-lxc-disks",
-        "fastdata_backup": "fastData-shared-backups",
+        "fastData_shared_backups": "fastData-shared-backups",
         "fastdata_iso": "fastData-shared-iso",
         "quickos_volumes": "quickOS-shared-prod-data-volumes"
     },

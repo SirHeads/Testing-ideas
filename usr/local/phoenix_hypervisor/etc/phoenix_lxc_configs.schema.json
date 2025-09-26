@@ -219,6 +219,13 @@
                             },
                             "description": "Additional options for the pct command."
                         },
+                        "lxc_options": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Additional lxc options for the container."
+                        },
                         "ports": {
                             "type": "array",
                             "items": {
@@ -351,6 +358,10 @@
                                     "mount_point"
                                 ]
                             }
+                        },
+                        "apparmor_profile": {
+                            "type": "string",
+                            "description": "The AppArmor profile to apply to the container. Use 'unconfined' for no profile."
                         }
                     },
                     "required": [

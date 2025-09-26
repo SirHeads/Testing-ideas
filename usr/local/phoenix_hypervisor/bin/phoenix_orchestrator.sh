@@ -420,6 +420,7 @@ clone_container() {
 apply_configurations() {
     local CTID="$1"
     log_info "Applying configurations for CTID: $CTID"
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
 
     # --- Retrieve configuration values ---
     # Retrieve configuration values from the JSON config
@@ -438,86 +439,8 @@ apply_configurations() {
     run_pct_command set "$CTID" --onboot "${start_at_boot_val}" || log_fatal "Failed to set onboot."
     run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
  
-     # Apply Phoenix AppArmor profile for unprivileged containers
-     local unprivileged_bool
-    unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
-    if [ "$unprivileged_bool" == "true" ]; then
-        if [[ " ${features[*]} " =~ " docker " ]]; then
-            log_info "Docker feature detected, ensuring AppArmor profile is unconfined."
-            sed -i '/^lxc.apparmor.profile:/d' "/etc/pve/lxc/${CTID}.conf"
-        else
-        log_info "Applying Phoenix AppArmor profile for unprivileged container $CTID..."
-        local conf_file="/etc/pve/lxc/${CTID}.conf"
-        local profile_line="lxc.apparmor.profile: lxc-container-default-with-mounting-phoenix"
-        
-        if [ ! -f "$conf_file" ]; then
-            log_fatal "Container configuration file not found at $conf_file."
-        fi
-
-        # Ensure the profile is set correctly, making the operation idempotent
-        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
-            # If a profile is already set, update it to the correct one
-            if ! grep -qF "$profile_line" "$conf_file"; then
-                log_info "Updating existing AppArmor profile in $conf_file."
-                sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file" || log_fatal "Failed to update AppArmor profile in $conf_file."
-            else
-                log_info "AppArmor profile is already correctly set in $conf_file."
-            fi
-        else
-            # If no profile is set, add it
-            log_info "Adding AppArmor profile to $conf_file."
-            echo "$profile_line" >> "$conf_file" || log_fatal "Failed to add AppArmor profile to $conf_file."
-            # Get phoenix_admin UID and GID
-            local admin_user
-            admin_user=$(jq -r '.users.username' "$VM_CONFIG_FILE")
-            if [ -z "$admin_user" ] || [ "$admin_user" == "null" ]; then
-                log_fatal "Admin user not defined in configuration file."
-            fi
-            local admin_uid
-            admin_uid=$(id -u "$admin_user") || log_fatal "Could not get UID for admin user '$admin_user'."
-            local admin_gid
-            admin_gid=$(id -g "$admin_user") || log_fatal "Could not get GID for admin user '$admin_user'."
-    
-            log_info "Configuring idmap for container $CTID to map container root to host user $admin_user (UID: $admin_uid, GID: $admin_gid)..."
-    
-            # Define idmap lines
-            local idmap_lines=(
-                "lxc.idmap: u 0 $admin_uid 1"
-                "lxc.idmap: g 0 $admin_gid 1"
-                "lxc.idmap: u 1 100001 65534"
-                "lxc.idmap: g 1 100001 65534"
-            )
-    
-            # Remove existing idmap lines to ensure idempotency
-            sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
-    
-            # Add new idmap lines
-            for line in "${idmap_lines[@]}"; do
-                echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
-            done
-    
-            log_info "Successfully configured idmap for container $CTID."
-        fi
-
-        log_info "Configuring full-range idmap for container $CTID..."
-
-        # Define idmap lines for a full 65536 UID/GID mapping
-        local idmap_lines=(
-            "lxc.idmap: u 0 100000 65536"
-            "lxc.idmap: g 0 100000 65536"
-        )
-
-        # Remove existing idmap lines to ensure idempotency
-        sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
-
-        # Add new idmap lines
-        for line in "${idmap_lines[@]}"; do
-            echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
-        done
-
-        log_info "Successfully configured full-range idmap for container $CTID."
-        fi
-    fi
+    # --- Apply AppArmor Profile ---
+    apply_apparmor_profile "$CTID"
 
    # --- Apply pct options ---
    local pct_options
@@ -532,8 +455,21 @@ apply_configurations() {
           fi
        done
    fi
+ 
+    # --- Apply lxc options ---
+    local lxc_options
+    lxc_options=$(jq_get_value "$CTID" ".lxc_options // [] | .[]" || echo "")
+    if [ -n "$lxc_options" ]; then
+        log_info "Applying lxc options for CTID $CTID..."
+        local conf_file="/etc/pve/lxc/${CTID}.conf"
+        for option in $lxc_options; do
+            if ! grep -qF "$option" "$conf_file"; then
+                echo "$option" >> "$conf_file" || log_fatal "Failed to add lxc option to $conf_file: $option"
+            fi
+        done
+    fi
 
-    # --- Enable Nesting for Docker ---
+     # --- Enable Nesting for Docker ---
     # Enable nesting feature if 'docker' is specified, which is required for Docker-in-LXC
     if [[ " ${features[*]} " =~ " docker " ]]; then
         log_info "Docker feature detected. Enabling nesting for CTID $CTID..."
@@ -1092,6 +1028,65 @@ create_final_form_snapshot() {
 }
 
 # =====================================================================================
+# Function: apply_apparmor_profile
+# Description: Applies the AppArmor profile to the container's configuration file.
+# Arguments:
+#   $1 - The CTID of the container.
+# =====================================================================================
+apply_apparmor_profile() {
+    local CTID="$1"
+    log_info "Applying AppArmor profile for CTID: $CTID"
+
+    local apparmor_profile
+    apparmor_profile=$(jq_get_value "$CTID" ".apparmor_profile" || echo "unconfined")
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
+
+    if [ ! -f "$conf_file" ]; then
+        log_fatal "Container configuration file not found at $conf_file."
+    fi
+
+    log_info "Setting AppArmor profile to: ${apparmor_profile}"
+    if [ "$apparmor_profile" == "unconfined" ]; then
+        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
+            log_info "Removing existing AppArmor profile setting."
+            sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
+        fi
+    else
+        # If a specific profile is named, apply it and its dependent configurations.
+        if [ "$apparmor_profile" == "lxc-gpu-docker-storage" ]; then
+            log_info "Configuring full-range idmap for container $CTID..."
+            local idmap_lines=(
+                "lxc.idmap: u 0 100000 65536"
+                "lxc.idmap: g 0 100000 65536"
+            )
+            sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
+            for line in "${idmap_lines[@]}"; do
+                echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
+            done
+            log_info "Successfully configured full-range idmap for container $CTID."
+
+            log_info "Configuring cgroup2 device rules for NVIDIA devices..."
+            local cgroup_rules=(
+                "lxc.cgroup2.devices.allow: c 195:* rwm"
+                "lxc.cgroup2.devices.allow: c 506:* rwm"
+                "lxc.cgroup2.devices.allow: c 509:* rwm"
+            )
+            for rule in "${cgroup_rules[@]}"; do
+                echo "$rule" >> "$conf_file" || log_fatal "Failed to add cgroup2 rule to $conf_file: $rule"
+            done
+            log_info "Successfully configured cgroup2 device rules."
+        fi
+
+        local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
+        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
+            sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file"
+        else
+            echo "$profile_line" >> "$conf_file"
+        fi
+    fi
+}
+
+# =====================================================================================
 # Function: run_qm_command
 # Description: Executes a qm command, logging the command and its output.
 # Arguments:
@@ -1161,14 +1156,15 @@ setup_hypervisor() {
         "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
+        "hypervisor_feature_initialize_nvidia_gpus.sh"
         "hypervisor_feature_setup_firewall.sh"
         "hypervisor_feature_setup_nfs.sh"
+        "hypervisor_feature_create_heads_user.sh"
         "hypervisor_feature_setup_samba.sh"
         "hypervisor_feature_create_admin_user.sh"
+        "hypervisor_feature_provision_shared_resources.sh"
+        "hypervisor_feature_setup_apparmor.sh"
     )
-
-    # Provision shared ZFS volumes as part of the hypervisor setup
-    provision_shared_zfs_volumes
 
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
@@ -1176,44 +1172,16 @@ setup_hypervisor() {
         if [ ! -f "$script_path" ]; then
             log_fatal "Hypervisor setup script not found at $script_path."
         fi
-        if ! "$script_path" "$config_file"; then
+        if [[ "$script" == "hypervisor_feature_setup_zfs.sh" ]]; then
+            if ! "$script_path" --config "$config_file" --mode safe; then
+                log_fatal "Hypervisor setup script '$script' failed."
+            fi
+        elif ! "$script_path" "$config_file"; then
             log_fatal "Hypervisor setup script '$script' failed."
         fi
     done
 
     log_info "Hypervisor setup completed successfully."
-}
-
-# =====================================================================================
-# Function: provision_shared_zfs_volumes
-# Description: Idempotently creates shared ZFS volumes as hypervisor-level resources.
-# =====================================================================================
-provision_shared_zfs_volumes() {
-    log_info "Provisioning shared ZFS volumes..."
-    local shared_volumes
-    shared_volumes=$(jq -c '.shared_zfs_volumes // {}' "$VM_CONFIG_FILE")
-
-    for volume_name in $(echo "$shared_volumes" | jq -r 'keys[]'); do
-        local volume_config
-        volume_config=$(echo "$shared_volumes" | jq -r --arg name "$volume_name" '.[$name]')
-        local storage_pool
-        storage_pool=$(echo "$volume_config" | jq -r '.pool')
-        local size_gb
-        size_gb=$(echo "$volume_config" | jq -r '.size_gb')
-        # Use a placeholder CTID like 99999 for hypervisor-level resources
-        local placeholder_ctid="99999"
-        local volume_id="vm-${placeholder_ctid}-disk-${volume_name}"
-
-        # Check if the volume already exists
-        if ! pvesm list "$storage_pool" | grep -q "$volume_id"; then
-            log_info "Creating shared ZFS volume: $volume_id of size ${size_gb}G in pool $storage_pool"
-            if ! run_pvesm_command alloc "$storage_pool" "$placeholder_ctid" "$volume_id" "${size_gb}G" --format raw; then
-                log_fatal "Failed to create shared ZFS volume: $volume_id"
-            fi
-        else
-            log_info "Shared ZFS volume $volume_id already exists."
-        fi
-    done
 }
 
 # =====================================================================================
@@ -1381,6 +1349,105 @@ run_smoke_tests() {
 }
 
 # =====================================================================================
+# Function: all_dependencies_built
+# Description: Checks if all dependencies for a given container have been built.
+# Arguments:
+#   $1 - CTID of the container to check.
+#   $2 - Array of built CTIDs.
+# Returns:
+#   0 if all dependencies are built, 1 otherwise.
+# =====================================================================================
+all_dependencies_built() {
+    local ctid="$1"
+    shift
+    local built_ctids=("$@")
+    local dependencies
+    dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
+
+    if [ -z "$dependencies" ]; then
+        return 0
+    fi
+
+    for dep in $dependencies; do
+        if ! [[ " ${built_ctids[*]} " =~ " ${dep} " ]]; then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# =====================================================================================
+# Function: is_clone_ready
+# Description: Checks if a container that needs to be cloned is ready.
+# Arguments:
+#   $1 - CTID of the container to check.
+#   $2 - Array of built CTIDs.
+# Returns:
+#   0 if the clone is ready, 1 otherwise.
+# =====================================================================================
+is_clone_ready() {
+    local ctid="$1"
+    shift
+    local built_ctids=("$@")
+    local clone_from_ctid
+    clone_from_ctid=$(jq_get_value "$ctid" ".clone_from_ctid" || echo "")
+
+    if [ -z "$clone_from_ctid" ]; then
+        return 0
+    fi
+
+    if ! [[ " ${built_ctids[*]} " =~ " ${clone_from_ctid} " ]]; then
+        return 1
+    fi
+
+    local source_snapshot_name
+    source_snapshot_name=$(jq_get_value "$clone_from_ctid" ".template_snapshot_name")
+    if ! pct listsnapshot "$clone_from_ctid" | grep -q "$source_snapshot_name"; then
+        return 1
+    fi
+
+    return 0
+}
+
+# =====================================================================================
+# Function: run_letsg_mode
+# Description: Orchestrates the building of all containers based on dependencies.
+# =====================================================================================
+run_letsg_mode() {
+    log_info "Starting LetsGo mode with dependency resolution..."
+    local to_build
+    to_build=($(jq -r '.lxc_configs | keys[]' "$LXC_CONFIG_FILE"))
+    local built=()
+    local build_progress=true
+
+    while [ ${#to_build[@]} -gt 0 ] && [ "$build_progress" = true ]; do
+        build_progress=false
+        local remaining_builds=()
+        for ctid in "${to_build[@]}"; do
+            if all_dependencies_built "$ctid" "${built[@]}" && is_clone_ready "$ctid" "${built[@]}"; then
+                log_info "Container $ctid is ready to build."
+                if main_state_machine "$ctid"; then
+                    built+=("$ctid")
+                    build_progress=true
+                else
+                    log_fatal "Failed to build container $ctid. Aborting LetsGo mode."
+                fi
+            else
+                remaining_builds+=("$ctid")
+            fi
+        done
+        to_build=("${remaining_builds[@]}")
+    done
+
+    if [ ${#to_build[@]} -gt 0 ]; then
+        log_fatal "Could not build all containers. Check for circular or missing dependencies. Remaining containers: ${to_build[*]}"
+    fi
+
+    log_info "LetsGo mode completed successfully."
+}
+
+# =====================================================================================
 # Function: main
 # Description: The main function of the script. It orchestrates the entire process
 #              of setting up the hypervisor or creating and configuring containers.
@@ -1415,44 +1482,7 @@ main() {
     elif [ "$SMOKE_TEST" = true ]; then
         run_smoke_tests
     elif [ "$LETSGO" = true ]; then
-        log_info "Starting LetsGo mode..."
-        # Get all container IDs from the config file that have a boot_order > 0
-        local ctid_boot_order
-        ctid_boot_order=$(jq -r '.lxc_configs | to_entries[] | select(.value.boot_order > 0) | "\(.value.boot_order) \(.key)"' "$LXC_CONFIG_FILE" | sort -n)
-
-        if [ -z "$ctid_boot_order" ]; then
-            log_info "No containers with boot_order > 0 found. Exiting LetsGo mode."
-            exit_script 0
-        fi
-
-        # Create an associative array to group CTIDs by boot order
-        declare -A boot_groups
-        while read -r order ctid; do
-            boot_groups["$order"]+=" $ctid"
-        done <<< "$ctid_boot_order"
-
-        # Process containers in parallel within each boot order group
-        for order in $(echo "${!boot_groups[@]}" | tr ' ' '\n' | sort -n); do
-            log_info "Processing boot order group: $order"
-            local pids=()
-            for ctid in ${boot_groups["$order"]}; do
-                (
-                    # Each container gets its own log file in LetsGo mode
-                    local letsgo_log_file="/var/log/phoenix_hypervisor/orchestrator_letsgp_${ctid}_$(date +%Y%m%d-%H%M%S).log"
-                    # Redirect output of the state machine to the specific log file
-                    main_state_machine "$ctid" > "$letsgo_log_file" 2>&1
-                ) &
-                pids+=($!)
-            done
-
-            # Wait for all containers in the current boot order group to finish
-            for pid in "${pids[@]}"; do
-                wait "$pid"
-            done
-            log_info "Finished processing boot order group: $order"
-        done
-
-        log_info "LetsGo mode completed."
+        run_letsg_mode
         exit_script 0
     fi
 

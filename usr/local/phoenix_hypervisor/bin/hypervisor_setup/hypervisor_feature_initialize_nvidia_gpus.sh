@@ -23,9 +23,8 @@ if [ -f "${SERVICE_FILE}" ]; then
 fi
 
 # Check if nvidia-smi is available
-if ! command -v nvidia-smi &> /dev/null; then
-    echo "nvidia-smi command not found. Skipping service creation."
-    exit 0
+if [ ! -f "/usr/bin/nvidia-smi" ]; then
+    echo "Warning: nvidia-smi not found at /usr/bin/nvidia-smi. The service will be created, but will not function until the NVIDIA drivers are installed."
 fi
 
 echo "Creating systemd service for NVIDIA GPU initialization..."

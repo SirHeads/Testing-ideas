@@ -410,29 +410,36 @@ ensure_nvidia_repo_is_configured() {
     local ctid="$1"
     log_info "Ensuring NVIDIA CUDA repository is configured in CTID $ctid..."
 
-
     local nvidia_repo_url
     nvidia_repo_url=$(jq_get_value "$ctid" ".nvidia_repo_url")
-    local expected_repo_line="deb [signed-by=/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg] ${nvidia_repo_url} /"
-    
+    local cuda_keyring_path="/usr/share/keyrings/cuda-archive-keyring.gpg"
+    local expected_repo_line="deb [signed-by=${cuda_keyring_path}] ${nvidia_repo_url} /"
     local repo_file_path="/etc/apt/sources.list.d/cuda.list"
-    if pct_exec "$ctid" -- test -f "$repo_file_path" && pct_exec "$ctid" -- grep -Fxq -- "${expected_repo_line}" "$repo_file_path"; then
+
+    # Idempotency Check: Verify if the repo is already correctly configured
+    if pct_exec "$ctid" -- test -f "$repo_file_path" && \
+       pct_exec "$ctid" -- grep -Fxq -- "${expected_repo_line}" "$repo_file_path" && \
+       pct_exec "$ctid" -- test -f "$cuda_keyring_path"; then
         log_info "NVIDIA CUDA repository is already correctly configured. Skipping."
         return 0
     fi
 
     log_info "NVIDIA CUDA repository not configured or misconfigured. Proceeding with setup."
 
-    local os_version=$(echo "$nvidia_repo_url" | grep -oP 'ubuntu\K[0-9]{4}')
+    local os_version
+    os_version=$(echo "$nvidia_repo_url" | grep -oP 'ubuntu\K[0-9]{4}')
     local cuda_pin_url="${nvidia_repo_url}cuda-ubuntu${os_version}.pin"
     local cuda_key_url="${nvidia_repo_url}3bf863cc.pub"
-    local cuda_keyring_path="/etc/apt/trusted.gpg.d/cuda-archive-keyring.gpg"
 
+    # Setup repository and keyring
     pct_exec "$ctid" -- wget -qO "/etc/apt/preferences.d/cuda-repository-pin-600" "$cuda_pin_url"
-    pct_exec "$ctid" -- rm -f "/usr/share/keyrings/cuda-archive-keyring.gpg"
     pct_exec "$ctid" -- bash -c "curl -fsSL \"$cuda_key_url\" | gpg --dearmor -o \"$cuda_keyring_path\""
-    pct_exec "$ctid" -- bash -c "echo \"$expected_repo_line\" > /etc/apt/sources.list.d/cuda.list"
+    pct_exec "$ctid" -- chmod 644 "$cuda_keyring_path"
+    pct_exec "$ctid" -- bash -c "echo \"$expected_repo_line\" > \"$repo_file_path\""
+    
+    log_info "Updating package lists in CTID $ctid..."
     pct_exec "$ctid" -- apt-get update
+    log_success "NVIDIA CUDA repository configured successfully for CTID $ctid."
 }
 
 # --- Initial Environment Check (only run once per main script execution) ---

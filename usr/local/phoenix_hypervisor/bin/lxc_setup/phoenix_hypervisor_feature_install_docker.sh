@@ -132,7 +132,8 @@ install_and_configure_docker() {
         local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }'
 
         pct_exec "$CTID" bash -c "mkdir -p /etc/docker && [ -f $docker_daemon_config_file ] || echo '{}' > $docker_daemon_config_file"
-        pct_exec "$CTID" bash -c "jq -s '.[0] * .[1]' '$docker_daemon_config_file' <(echo '$nvidia_runtime_config') > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '$docker_daemon_config_file'"
+        pct_exec "$CTID" bash -c "sed -i 's/\"default-runtime\": \"[^\"]*\"/\"default-runtime\": \"nvidia\"/' '$docker_daemon_config_file'"
+        pct_exec "$CTID" bash -c "sed -i '/\"runtimes\"/a \        \"nvidia\": { \"path\": \"/usr/bin/nvidia-container-runtime\", \"runtimeArgs\": [] }' '$docker_daemon_config_file'"
     else
         log_info "NVIDIA feature not detected. Skipping NVIDIA Container Toolkit installation."
     fi
