@@ -1,0 +1,31 @@
+#include <tunables/global>
+
+profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
+  # Include standard LXC abstractions for container base and startup
+  #include <abstractions/lxc/container-base>
+  #include <abstractions/lxc/start-container>
+
+  # Capabilities for basic container operation and nesting
+  capability sys_admin,
+  capability sys_chroot,
+  capability mknod,
+  capability sys_nice,
+  capability sys_resource,
+
+  # Rules for nesting support
+  deny /dev/.lxc/proc/** rw,
+  deny /dev/.lxc/sys/** rw,
+  mount fstype=proc -> /var/cache/lxc/**,
+  mount fstype=sysfs -> /var/cache/lxc/**,
+  mount fstype=cgroup -> /sys/fs/cgroup/**,
+  mount fstype=cgroup2 -> /sys/fs/cgroup/**,
+  mount fstype=tmpfs -> /run/**,
+  mount fstype=devpts -> /dev/pts/**,
+  mount fstype=mqueue -> /dev/mqueue/**,
+
+  # Deny specific mounts for security
+  audit deny mount fstype=binfmt_misc,
+
+  # Allow read-only access to home directories
+  /home/*/ r,
+}

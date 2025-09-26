@@ -13,9 +13,9 @@ log_error() {
 }
 
 # Create a directory for n8n data
-mkdir -p /root/.n8n
+mkdir -p /home/node/.n8n
 
 # Run the n8n Docker container
-docker run -d --restart always --name n8n -p 5678:5678 -v /root/.n8n:/root/.n8n n8nio/n8n
+docker run -d --restart always --name n8n -p 5678:5678 -v /home/node/.n8n:/home/node/.n8n n8nio/n8n
 
 log_info "n8n container started successfully."

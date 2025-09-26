@@ -431,7 +431,8 @@ apply_configurations() {
     # Retrieve configuration values from the JSON config
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
-    local features=$(jq_get_value "$CTID" ".features[]" || echo "") # Retrieve features as an array
+    local features
+    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
     local start_at_boot=$(jq_get_value "$CTID" ".start_at_boot")
     local boot_order=$(jq_get_value "$CTID" ".boot_order")
     local boot_delay=$(jq_get_value "$CTID" ".boot_delay")
@@ -447,20 +448,27 @@ apply_configurations() {
     # --- Apply AppArmor Profile ---
     apply_apparmor_profile "$CTID"
 
-   # --- Apply pct options ---
-   local pct_options
-   pct_options=$(jq_get_value "$CTID" ".pct_options // [] | .[]" || echo "")
-   if [ -n "$pct_options" ]; then
-       log_info "Applying pct options for CTID $CTID..."
-       for option in $pct_options; do
-          if [[ "$option" == "nesting=1" ]]; then
-              run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
-          else
-              run_pct_command set "$CTID" --"$option" || log_fatal "Failed to set pct option: $option"
-          fi
-       done
-   fi
- 
+    # --- Apply pct options ---
+    local pct_options
+    pct_options=$(jq_get_value "$CTID" ".pct_options // [] | .[]" || echo "")
+    if [ -n "$pct_options" ]; then
+        log_info "Applying pct options for CTID $CTID..."
+        for option in $pct_options; do
+            if [[ "$option" == "nesting=1" ]]; then
+                local apparmor_manages_nesting
+                apparmor_manages_nesting=$(jq_get_value "$CTID" ".apparmor_manages_nesting" || echo "false")
+                if [ "$apparmor_manages_nesting" = true ]; then
+                    log_info "AppArmor profile manages nesting. Skipping explicit 'nesting=1' feature to prevent conflicts."
+                else
+                    log_info "Applying 'nesting=1' feature."
+                    run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+                fi
+            else
+                run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+            fi
+        done
+    fi
+
     # --- Apply lxc options ---
     local lxc_options
     lxc_options=$(jq_get_value "$CTID" ".lxc_options // [] | .[]" || echo "")
@@ -468,17 +476,18 @@ apply_configurations() {
         log_info "Applying lxc options for CTID $CTID..."
         local conf_file="/etc/pve/lxc/${CTID}.conf"
         for option in $lxc_options; do
-            if ! grep -qF "$option" "$conf_file"; then
+            if [[ "$option" == "lxc.cap.keep="* ]]; then
+                local caps_to_keep=$(echo "$option" | cut -d'=' -f2)
+                # Remove existing lxc.cap.keep entries to avoid duplicates
+                sed -i '/^lxc.cap.keep/d' "$conf_file"
+                # Add each capability on a new line
+                for cap in $(echo "$caps_to_keep" | tr ',' ' '); do
+                    echo "lxc.cap.keep: $cap" >> "$conf_file" || log_fatal "Failed to add capability to $conf_file: $cap"
+                done
+            elif ! grep -qF "$option" "$conf_file"; then
                 echo "$option" >> "$conf_file" || log_fatal "Failed to add lxc option to $conf_file: $option"
             fi
         done
-    fi
-
-     # --- Enable Nesting for Docker ---
-    # Enable nesting feature if 'docker' is specified, which is required for Docker-in-LXC
-    if [[ " ${features[*]} " =~ " docker " ]]; then
-        log_info "Docker feature detected. Enabling nesting for CTID $CTID..."
-        run_pct_command set "$CTID" --features nesting=1 || log_fatal "Failed to enable nesting."
     fi
     # Note: The --features flag here is for Proxmox's internal features.
     # Custom feature scripts are applied in a later state.
@@ -653,12 +662,12 @@ start_container() {
 
     # Loop to attempt container startup with retries
     while [ "$attempts" -lt "$max_attempts" ]; do
-        if run_pct_command start "$CTID"; then # Attempt to start the container
+        if run_pct_command start "$CTID" 2>&1 | tee -a "$LOG_FILE"; then
             log_info "Container $CTID started successfully."
-            return 0 # Return success if container starts
+            return 0
         else
-            attempts=$((attempts + 1)) # Increment attempt counter
-            log_error "WARNING: 'pct start' command failed for CTID $CTID (Attempt $attempts/$max_attempts)."
+            attempts=$((attempts + 1))
+            log_error "WARNING: 'pct start' command failed for CTID $CTID (Attempt $attempts/$max_attempts). Check $LOG_FILE for details."
             if [ "$attempts" -lt "$max_attempts" ]; then
                 log_info "Retrying in $interval seconds..."
                 sleep "$interval" # Wait before retrying
@@ -689,7 +698,7 @@ apply_features() {
     local CTID="$1"
     log_info "Applying features for CTID: $CTID"
     local features
-    features=$(jq_get_value "$CTID" ".features[]" || echo "")
+    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
 
     if [ -z "$features" ]; then
         log_info "No features to apply for CTID $CTID."
@@ -762,6 +771,8 @@ run_portainer_script() {
 # =====================================================================================
 run_application_script() {
     local CTID="$1"
+    log_info "Waiting for container to settle before running application script..."
+    sleep 10
     log_info "Checking for application script for CTID: $CTID"
     local app_script_name # Variable to store the application script name
     app_script_name=$(jq_get_value "$CTID" ".application_script" || echo "") # Retrieve application script name from config
@@ -872,7 +883,7 @@ run_health_check() {
     log_info "Checking for health check for CTID: $CTID"
     # --- NVIDIA Health Check ---
     local features
-    features=$(jq_get_value "$CTID" ".features[]" || echo "")
+    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
     if [[ " ${features[*]} " =~ " nvidia " ]]; then
         log_info "NVIDIA feature detected. Running NVIDIA health check..."
         local nvidia_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_nvidia.sh"
@@ -1057,29 +1068,15 @@ apply_apparmor_profile() {
             sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
         fi
     else
-        # If a specific profile is named, apply it and its dependent configurations.
-        if [ "$apparmor_profile" == "lxc-gpu-docker-storage" ]; then
-            log_info "Configuring full-range idmap for container $CTID..."
-            local idmap_lines=(
-                "lxc.idmap: u 0 100000 65536"
-                "lxc.idmap: g 0 100000 65536"
-            )
-            sed -i '/^lxc.idmap:/d' "$conf_file" || log_fatal "Failed to remove existing idmap lines from $conf_file."
-            for line in "${idmap_lines[@]}"; do
-                echo "$line" >> "$conf_file" || log_fatal "Failed to add idmap line to $conf_file: $line"
-            done
-            log_info "Successfully configured full-range idmap for container $CTID."
-
-            log_info "Configuring cgroup2 device rules for NVIDIA devices..."
-            local cgroup_rules=(
-                "lxc.cgroup2.devices.allow: c 195:* rwm"
-                "lxc.cgroup2.devices.allow: c 506:* rwm"
-                "lxc.cgroup2.devices.allow: c 509:* rwm"
-            )
-            for rule in "${cgroup_rules[@]}"; do
-                echo "$rule" >> "$conf_file" || log_fatal "Failed to add cgroup2 rule to $conf_file: $rule"
-            done
-            log_info "Successfully configured cgroup2 device rules."
+        # Load the AppArmor profile
+        local profile_file="/etc/apparmor.d/${apparmor_profile}"
+        if [ -f "$profile_file" ]; then
+            log_info "Loading AppArmor profile from $profile_file"
+            if ! apparmor_parser -r "$profile_file"; then
+                log_fatal "Failed to load AppArmor profile $apparmor_profile"
+            fi
+        else
+            log_fatal "AppArmor profile file $profile_file not found"
         fi
 
         local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
@@ -1087,6 +1084,15 @@ apply_apparmor_profile() {
             sed -i "s|^lxc.apparmor.profile:.*|$profile_line|" "$conf_file"
         else
             echo "$profile_line" >> "$conf_file"
+        fi
+
+        # Add nesting support if specified
+        local apparmor_manages_nesting
+        apparmor_manages_nesting=$(jq_get_value "$CTID" ".apparmor_manages_nesting" || echo "false")
+        if [ "$apparmor_manages_nesting" = true ]; then
+            log_info "Adding nesting support for CTID $CTID"
+            echo "lxc.apparmor.allow_nesting: 1" >> "$conf_file" || log_fatal "Failed to add nesting support"
+            echo "lxc.include: /usr/share/lxc/config/nesting.conf" >> "$conf_file" || log_fatal "Failed to add nesting config"
         fi
     fi
 }

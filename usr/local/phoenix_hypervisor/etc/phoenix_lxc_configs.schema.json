@@ -362,6 +362,10 @@
                         "apparmor_profile": {
                             "type": "string",
                             "description": "The AppArmor profile to apply to the container. Use 'unconfined' for no profile."
+                        },
+                        "apparmor_manages_nesting": {
+                            "type": "boolean",
+                            "description": "If true, indicates the AppArmor profile handles nesting, and the orchestrator should not apply the 'nesting=1' feature flag."
                         }
                     },
                     "required": [
@@ -372,7 +376,9 @@
                         "storage_size_gb",
                         "network_config",
                         "portainer_role",
-                        "unprivileged"
+                        "unprivileged",
+                        "apparmor_profile",
+                        "apparmor_manages_nesting"
                     ],
                     "additionalProperties": false
                 }

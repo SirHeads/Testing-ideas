@@ -1,30 +1,16 @@
 #include <tunables/global>
 
-profile lxc_gpu_docker_storage flags=(attach_disconnected,mediate_deleted) {
+profile lxc_nesting_v1 flags=(attach_disconnected,mediate_deleted) {
   # Include standard LXC abstractions for container base and startup
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Capabilities required for nesting, Docker, and GPU access
+  # Capabilities required for nesting
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
   capability sys_nice,
   capability sys_resource,
-
-  # Allow access to NVIDIA GPU devices (supporting two GPUs)
-  /dev/nvidia0 rwm,
-  /dev/nvidia1 rwm,
-  /dev/nvidia-uvm rwm,
-  /dev/nvidia-uvm-tools rwm,
-  /dev/nvidia-caps/* rwm,
-  /dev/dri/* rwm,
-
-  # Allow Docker-related paths for nesting
-  /var/lib/docker/** rwm,
-  /run/docker.sock rw,
-  /usr/bin/docker rix,
-  /usr/libexec/docker/** rix,
 
   # Allow shared storage (directory or ZFS mounts)
   /mnt/shared/** rwm,
@@ -41,8 +27,7 @@ profile lxc_gpu_docker_storage flags=(attach_disconnected,mediate_deleted) {
   mount fstype=devpts -> /dev/pts/**,
   mount fstype=mqueue -> /dev/mqueue/**,
 
-  # Allow necessary mounts for Docker, nesting, and storage
-  mount fstype=overlay -> /var/lib/docker/**,
+  # Allow necessary mounts for nesting and storage
   mount fstype=bpf -> /sys/fs/bpf/**,
   mount fstype=securityfs -> /sys/kernel/security/**,
   mount fstype=sysfs -> /sys/**,
