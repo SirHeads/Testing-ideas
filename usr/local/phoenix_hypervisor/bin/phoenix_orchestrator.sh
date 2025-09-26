@@ -44,6 +44,7 @@ DELETE_VM=false
 RECONFIGURE=false
 LETSGO=false
 SMOKE_TEST=false # Flag for smoke test mode
+WIPE_DISKS=false # Flag to wipe disks during hypervisor setup
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.json"
@@ -82,6 +83,10 @@ parse_arguments() {
         case "$1" in
             --dry-run)
                 DRY_RUN=true # Enable dry-run mode
+                shift
+                ;;
+            --wipe-disks)
+                WIPE_DISKS=true
                 shift
                 ;;
             --setup-hypervisor)
@@ -1151,6 +1156,12 @@ setup_hypervisor() {
         log_fatal "Hypervisor setup requires a valid configuration file."
     fi
 
+    local zfs_setup_mode="safe"
+    if [ "$WIPE_DISKS" = true ]; then
+        log_warn "Disk wiping is enabled for this run."
+        zfs_setup_mode="force-destructive"
+    fi
+
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
         "hypervisor_feature_setup_zfs.sh"
@@ -1173,7 +1184,7 @@ setup_hypervisor() {
             log_fatal "Hypervisor setup script not found at $script_path."
         fi
         if [[ "$script" == "hypervisor_feature_setup_zfs.sh" ]]; then
-            if ! "$script_path" --config "$config_file" --mode safe; then
+            if ! "$script_path" --config "$config_file" --mode "$zfs_setup_mode"; then
                 log_fatal "Hypervisor setup script '$script' failed."
             fi
         elif ! "$script_path" "$config_file"; then
