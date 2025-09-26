@@ -37,22 +37,19 @@ deploy_apparmor_profiles() {
         log_fatal "AppArmor profiles source directory not found at ${source_dir}."
     fi
 
-    for profile in "${source_dir}"/*; do
-        if [ -f "$profile" ]; then
-            local profile_name=$(basename "$profile")
-            local dest_path
+    local profile_name="lxc-gpu-docker-storage"
+    local source_profile="${source_dir}/${profile_name}"
+    local dest_path="${dest_dir}/${profile_name}"
 
-            dest_path="${dest_dir}/${profile_name}"
+    if [ ! -f "$source_profile" ]; then
+        log_fatal "AppArmor profile ${profile_name} not found at ${source_profile}."
+    fi
 
-            if [ ! -f "$dest_path" ] || ! diff -q "$profile" "$dest_path" >/dev/null; then
-                log_info "Copying AppArmor file ${profile_name} to ${dest_path}..."
-                # Ensure the destination directory exists, especially for tunables
-                mkdir -p "$(dirname "$dest_path")"
-                cp "$profile" "$dest_path"
-                profiles_changed=true
-            fi
-        fi
-    done
+    if [ ! -f "$dest_path" ] || ! diff -q "$source_profile" "$dest_path" >/dev/null; then
+        log_info "Copying AppArmor profile ${profile_name} to ${dest_path}..."
+        cp "$source_profile" "$dest_path"
+        profiles_changed=true
+    fi
 
     if [ "$profiles_changed" = true ]; then
         log_info "Reloading AppArmor profiles..."
