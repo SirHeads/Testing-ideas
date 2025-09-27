@@ -5,12 +5,25 @@ profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Capabilities for basic container operation and nesting
+  # Capabilities for basic container operation, nesting, and network
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
   capability sys_nice,
   capability sys_resource,
+  capability net_bind_service,  # For binding to privileged ports (<1024)
+
+  # Network access rules
+  network inet stream,   # TCP over IPv4
+  network inet6 stream,  # TCP over IPv6
+  network inet dgram,    # UDP over IPv4
+  network inet6 dgram,   # UDP over IPv6
+
+  # DNS resolution (specific rules instead of nameservice abstraction)
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  network inet dgram port 53,  # DNS queries (UDP)
+  network inet stream port 53, # DNS queries (TCP, for large responses)
 
   # Rules for nesting support
   deny /dev/.lxc/proc/** rw,
@@ -22,6 +35,37 @@ profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
   mount fstype=tmpfs -> /run/**,
   mount fstype=devpts -> /dev/pts/**,
   mount fstype=mqueue -> /dev/mqueue/**,
+
+  # Allow access to NVIDIA GPU devices (supporting two GPUs)
+  /dev/nvidia0 rwm,
+  /dev/nvidia1 rwm,
+  /dev/nvidia-uvm rwm,
+  /dev/nvidia-uvm-tools rwm,
+  /dev/nvidia-caps/* rwm,
+  /dev/dri/* rwm,
+
+  # Allow Docker-related paths for nesting
+  /var/lib/docker/** rwm,
+  /run/docker.sock rw,
+  /usr/bin/docker rix,
+  /usr/libexec/docker/** rix,
+
+  # Allow shared storage (directory or ZFS mounts)
+  /mnt/shared/** rwm,
+  /zfs/storage/** rwm,
+
+  # Allow necessary mounts for Docker, nesting, and storage
+  mount fstype=overlay -> /var/lib/docker/**,
+  mount fstype=bpf -> /sys/fs/bpf/**,
+  mount fstype=securityfs -> /sys/kernel/security/**,
+  mount fstype=sysfs -> /sys/**,
+  mount fstype=tracefs -> /sys/kernel/tracing/**,
+  mount fstype=zfs -> /zfs/storage/**,
+
+  # Allow bind mounts for shared storage
+  mount options=(rw,bind) -> /mnt/**,
+  mount options=(rw,remount) -> /mnt/**,
+  mount options=(rw,nosuid,nodev,noexec,relatime,bind) -> /mnt/**,
 
   # Deny specific mounts for security
   audit deny mount fstype=binfmt_misc,

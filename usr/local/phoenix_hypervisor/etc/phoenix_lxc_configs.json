@@ -28,10 +28,11 @@
                 "base_setup"
             ],
             "lxc_options": [
-                "lxc.mount.auto=sys:rw"
+                "lxc.mount.auto=sys:rw",
+                "lxc.apparmor.profile=unconfined"
             ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "lxc_phoenix_v1",
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "901": {
@@ -57,8 +58,11 @@
             "features": [
                 "nvidia"
             ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "lxc_phoenix_v1",
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "902": {
@@ -84,8 +88,11 @@
             "features": [
                 "docker"
             ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "lxc_phoenix_v1",
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "903": {
@@ -111,8 +118,11 @@
             "features": [
                 "docker"
             ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "lxc_gpu_docker_storage",
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "910": {
@@ -165,7 +175,10 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_phoenix_v1",
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "920": {
@@ -194,8 +207,11 @@
             ],
             "pct_options": [],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "950": {
             "name": "vllm-qwen2.5-7b-awq",
@@ -289,8 +305,11 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "951": {
             "name": "vllm-granite-embed-r2",
@@ -357,8 +376,11 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "952": {
             "name": "qdrant-VSCodeRag",
@@ -417,8 +439,11 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -451,8 +476,11 @@
             "start_at_boot": true,
             "boot_order": 1,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_nesting_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "954": {
             "name": "n8n-phoenix",
@@ -483,7 +511,8 @@
                 "lxc.cgroup2.devices.allow=a",
                 "lxc.cap.keep=sys_admin,mknod,sys_chroot",
                 "lxc.mount.auto=proc:rw sys:rw",
-                "lxc.apparmor.allow_nesting=1"
+                "lxc.apparmor.allow_nesting=1",
+                "lxc.apparmor.profile=unconfined"
             ],
             "firewall": {
                 "enabled": true,
@@ -511,7 +540,7 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_nesting_v1",
+            "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true
         },
         "955": {
@@ -546,8 +575,11 @@
             "start_at_boot": true,
             "boot_order": 2,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "956": {
             "name": "openWebUI-phoenix",
@@ -580,8 +612,11 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "957": {
             "name": "llamacpp",
@@ -613,8 +648,11 @@
             "start_at_boot": true,
             "boot_order": 2,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_phoenix_v1",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "960": {
             "name": "monitoring-stack",
@@ -647,8 +685,11 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc_gpu_docker_storage",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         }
     }
 }

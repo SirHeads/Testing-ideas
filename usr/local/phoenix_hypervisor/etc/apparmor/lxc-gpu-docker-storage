@@ -5,12 +5,25 @@ profile lxc_gpu_docker_storage flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Capabilities required for nesting, Docker, and GPU access
+  # Capabilities required for nesting, Docker, GPU access, and network
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
   capability sys_nice,
   capability sys_resource,
+  capability net_bind_service,  # For binding to privileged ports (<1024)
+
+  # Network access rules
+  network inet stream,   # TCP over IPv4
+  network inet6 stream,  # TCP over IPv6
+  network inet dgram,    # UDP over IPv4
+  network inet6 dgram,   # UDP over IPv6
+
+  # DNS resolution (specific rules instead of nameservice abstraction)
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  network inet dgram port 53,  # DNS queries (UDP)
+  network inet stream port 53, # DNS queries (TCP, for large responses)
 
   # Allow access to NVIDIA GPU devices (supporting two GPUs)
   /dev/nvidia0 rwm,

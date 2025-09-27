@@ -340,6 +340,7 @@ create_container_from_template() {
         --storage "$storage_pool"
         --rootfs "${storage_pool}:${storage_size_gb}"
         --net0 "$net0_string"
+        # --gw "$net0_gw"
         --unprivileged "$unprivileged_val"
     )
 

@@ -5,12 +5,23 @@ profile lxc_nesting_v1 flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Capabilities required for nesting
+  # Capabilities required for nesting and network
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
   capability sys_nice,
   capability sys_resource,
+  capability net_bind_service,
+
+  # Network access rules
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # DNS resolution (specific rules instead of nameservice abstraction)
+  /etc/resolv.conf r,
+  /etc/hosts r,
 
   # Allow shared storage (directory or ZFS mounts)
   /mnt/shared/** rwm,
