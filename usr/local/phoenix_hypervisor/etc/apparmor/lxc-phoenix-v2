@@ -1,0 +1,69 @@
+#include <tunables/global>
+
+profile lxc_phoenix_v2 flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/lxc/container-base>
+  #include <abstractions/lxc/start-container>
+
+  # Capabilities
+  capability sys_admin,
+  capability sys_chroot,
+  capability mknod,
+  capability sys_nice,
+  capability sys_resource,
+  capability net_bind_service,
+
+  # Network
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # DNS
+  /etc/resolv.conf r,
+  /etc/hosts r,
+
+  # GPU Devices
+  /dev/nvidia0 rwm,
+  /dev/nvidia1 rwm,
+  /dev/nvidia-uvm rwm,
+  /dev/nvidia-uvm-tools rwm,
+  /dev/nvidia-caps/* rwm,
+
+  # Docker
+  /var/lib/docker/** rwm,
+  /run/docker.sock rw,
+  /usr/bin/docker rix,
+  /usr/libexec/docker/** rix,
+
+  # Shared Storage
+  /mnt/shared/** rwm,
+  /zfs/storage/** rwm,
+
+  # Mounts - Fixed to avoid conflicts
+  mount fstype=proc -> /**,
+  mount fstype=sysfs -> /**,
+  mount fstype=cgroup -> /sys/fs/cgroup/**,
+  mount fstype=cgroup2 -> /sys/fs/cgroup/**,
+  mount fstype=tmpfs -> /run/**,
+  mount fstype=devpts -> /dev/pts/**,
+  mount fstype=mqueue -> /dev/mqueue/**,
+
+  # Filesystem mounts
+  mount fstype=overlay -> /var/lib/docker/**,
+  mount fstype=bpf -> /sys/fs/bpf/**,
+  mount fstype=securityfs -> /sys/kernel/security/**,
+  mount fstype=tracefs -> /sys/kernel/tracing/**,
+  mount fstype=zfs -> /zfs/storage/**,
+  mount options=(rw,bind) -> /**,
+  mount options=(rw,remount) -> /**,
+
+  # Explicit read access for AppArmor profiles
+  /sys/kernel/security/apparmor/profiles r,
+
+  # Deny
+  audit deny mount fstype=binfmt_misc,
+  audit deny mount fstype=debugfs,
+
+  # Home
+  /home/*/ r,
+}

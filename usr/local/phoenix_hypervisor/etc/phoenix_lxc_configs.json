@@ -28,7 +28,6 @@
                 "base_setup"
             ],
             "lxc_options": [
-                "lxc.mount.auto=sys:rw",
                 "lxc.apparmor.profile=unconfined"
             ],
             "template_snapshot_name": "pre-configured",
@@ -187,9 +186,9 @@
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 10,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 128,
+            "storage_size_gb": 64,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -216,7 +215,7 @@
         "950": {
             "name": "vllm-qwen2.5-7b-awq",
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -314,7 +313,7 @@
         "951": {
             "name": "vllm-granite-embed-r2",
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -412,7 +411,11 @@
                 "retries": 5,
                 "interval": 5
             },
-            "pct_options": [],
+            "pct_options": [
+                "keyctl=1",
+                "nesting=1",
+                "mknod=1"
+            ],
             "firewall": {
                 "enabled": true,
                 "rules": [
@@ -440,10 +443,8 @@
             "boot_order": 3,
             "boot_delay": 5,
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ]
+            "apparmor_manages_nesting": false,
+            "lxc_options": []
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -546,7 +547,7 @@
         "955": {
             "name": "ollama-oWUI",
             "memory_mb": 32768,
-            "cores": 8,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -621,7 +622,7 @@
         "957": {
             "name": "llamacpp",
             "memory_mb": 32768,
-            "cores": 8,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {

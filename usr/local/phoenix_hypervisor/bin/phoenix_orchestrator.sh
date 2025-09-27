@@ -454,6 +454,7 @@ apply_configurations() {
     pct_options=$(jq_get_value "$CTID" ".pct_options // [] | .[]" || echo "")
     if [ -n "$pct_options" ]; then
         log_info "Applying pct options for CTID $CTID..."
+        local features_to_set=()
         for option in $pct_options; do
             if [[ "$option" == "nesting=1" ]]; then
                 local apparmor_manages_nesting
@@ -461,13 +462,19 @@ apply_configurations() {
                 if [ "$apparmor_manages_nesting" = true ]; then
                     log_info "AppArmor profile manages nesting. Skipping explicit 'nesting=1' feature to prevent conflicts."
                 else
-                    log_info "Applying 'nesting=1' feature."
-                    run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+                    log_info "Adding 'nesting=1' to features to be set."
+                    features_to_set+=("$option")
                 fi
             else
-                run_pct_command set "$CTID" --features "$option" || log_fatal "Failed to set pct option: $option"
+                features_to_set+=("$option")
             fi
         done
+        if [ ${#features_to_set[@]} -gt 0 ]; then
+            local features_string
+            features_string=$(IFS=,; echo "${features_to_set[*]}")
+            log_info "Applying features: $features_string"
+            run_pct_command set "$CTID" --features "$features_string" || log_fatal "Failed to set pct options: ${features_to_set[*]}"
+        fi
     fi
 
     # --- Apply lxc options ---
