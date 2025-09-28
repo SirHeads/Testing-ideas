@@ -213,6 +213,22 @@
             ]
         }
     ],
+    "tests": {
+        "system_validation": [
+            {
+                "name": "Validate Systemic Fixes",
+                "type": "script",
+                "path": "hypervisor/validate_systemic_fixes.sh"
+            }
+        ],
+        "hypervisor_health_check": [
+            {
+                "name": "Phoenix Hypervisor Tests",
+                "type": "script",
+                "path": "hypervisor/phoenix_hypervisor_tests.sh"
+            }
+        ]
+    },
     "nvidia_driver": {
         "install": true,
         "version": "580.76.05",

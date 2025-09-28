@@ -1,6 +1,6 @@
 #include <tunables/global>
 
-profile lxc-phoenix-v2 flags=(attach_disconnected,mediate_deleted,audit) {
+profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
@@ -61,11 +61,6 @@ profile lxc-phoenix-v2 flags=(attach_disconnected,mediate_deleted,audit) {
   mount options=(rw,remount) -> /mnt/**,
   mount options=(rw,nosuid,nodev,noexec,relatime,bind) -> /mnt/**,
 
-  # Allow Portainer data volume and Docker namespace checks
-  /data/** rwm,
-  /proc/sys/kernel/unprivileged_userns_clone r,
-  /sys/fs/cgroup/** rw,
-
   # Deny binfmt_misc by default for security
   # To enable multi-architecture container support, comment out the following line
   # and uncomment the line after it.
@@ -75,22 +70,7 @@ profile lxc-phoenix-v2 flags=(attach_disconnected,mediate_deleted,audit) {
   # Read-only access to home directories
   /home/*/ r,
 
-  # Allow Docker to manage/load AppArmor profiles inside container
-  /etc/apparmor.d/** rwk,
-  /usr/sbin/apparmor_parser ix,
-  /run/apparmor/** rw,
-
-  # Allow overlay2 mounts for Docker storage
-  mount fstype=overlay -> /var/lib/docker/overlay2/**,
-
-  # Allow fuse-overlayfs mounts
-  mount fstype=fuse.fuse-overlayfs -> /var/lib/docker/fuse-overlayfs/**,
-  allow /dev/fuse r,
-  allow /sys/fs/fuse/connections r,
-
-  # Extra for nested devices/volumes (if Portainer hits issues)
-  /dev/fuse rw,
-  /var/lib/docker/overlay2/** rwm,
-  /dev/shm/** rw,
-  /run/systemd/mount-rootfs/** rw,
+  # Docker-specific permissions
+  /var/run/docker.sock rw,
+  /var/lib/docker/** rwm,
 }

@@ -1092,3 +1092,34 @@ wait_for_container_initialization() {
 
     log_fatal "Timeout reached: Container $ctid did not initialize within $timeout seconds."
 }
+# =====================================================================================
+# Function: verify_lxc_network_connectivity
+# Description: Verifies network connectivity and DNS resolution within a container.
+# Arguments:
+#   $1 - The CTID of the container.
+# Returns:
+#   0 if network is healthy, 1 otherwise.
+# =====================================================================================
+verify_lxc_network_connectivity() {
+    local CTID="$1"
+    log_info "Verifying network connectivity for CTID: $CTID..."
+    local attempts=0
+    local max_attempts=5
+    local interval=10
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        log_info "Attempting to resolve google.com (Attempt $((attempts + 1))/$max_attempts)..."
+        if pct exec "$CTID" -- ping -c 1 google.com &> /dev/null; then
+            log_info "DNS resolution and network connectivity are operational for CTID $CTID."
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        if [ "$attempts" -lt "$max_attempts" ]; then
+            log_info "Network check failed. Retrying in $interval seconds..."
+            sleep "$interval"
+        fi
+    done
+
+    log_error "Network connectivity check failed for CTID $CTID after $max_attempts attempts."
+    return 1
+}

@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #
 # File: phoenix_orchestrator.sh
@@ -73,7 +72,7 @@ LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 parse_arguments() {
     # Display usage and exit if no arguments are provided
     if [ "$#" -eq 0 ]; then
-        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo | $0 --smoke-test"
+        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo | $0 --smoke-test | $0 --test <CTID|all>:<test_suite>"
         exit_script 2
     fi
 
@@ -132,6 +131,11 @@ parse_arguments() {
                 operation_mode_set=true
                 shift
                 ;;
+            --test)
+                TEST_SUITE="$2"
+                operation_mode_set=true
+                shift 2
+                ;;
             -*) # Handle unknown flags
                 log_error "Unknown option: $1"
                 exit_script 2
@@ -186,6 +190,8 @@ parse_arguments() {
         log_info "LetsGo mode enabled. Orchestrating all containers based on boot order."
     elif [ "$SMOKE_TEST" = true ]; then
         log_info "Smoke test mode enabled."
+    elif [ -n "$TEST_SUITE" ]; then
+        log_info "Test mode enabled for suite: $TEST_SUITE"
     else
         if [ ${#CTID_LIST[@]} -eq 0 ]; then # Ensure at least one CTID is provided
             log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID>... [--dry-run]"
@@ -456,18 +462,7 @@ apply_configurations() {
         log_info "Applying pct options for CTID $CTID..."
         local features_to_set=()
         for option in $pct_options; do
-            if [[ "$option" == "nesting=1" ]]; then
-                local apparmor_manages_nesting
-                apparmor_manages_nesting=$(jq_get_value "$CTID" ".apparmor_manages_nesting" || echo "false")
-                if [ "$apparmor_manages_nesting" = true ]; then
-                    log_info "AppArmor profile manages nesting. Skipping explicit 'nesting=1' feature to prevent conflicts."
-                else
-                    log_info "Adding 'nesting=1' to features to be set."
-                    features_to_set+=("$option")
-                fi
-            else
-                features_to_set+=("$option")
-            fi
+            features_to_set+=("$option")
         done
         if [ ${#features_to_set[@]} -gt 0 ]; then
             local features_string
@@ -723,8 +718,9 @@ apply_features() {
             log_fatal "Feature script not found at $feature_script_path."
         fi
 
-        if ! "$feature_script_path" "$CTID"; then
-            log_fatal "Feature script '$feature' failed for CTID $CTID."
+        if ! (set +e; "$feature_script_path" "$CTID"); then
+            log_error "Feature script '$feature' failed for CTID $CTID."
+            return 1
         fi
     done
 
@@ -937,20 +933,26 @@ run_health_check() {
 run_post_deployment_validation() {
     local CTID="$1"
     log_info "Checking for post-deployment validation for CTID: $CTID"
-    local run_tests
-    run_tests=$(jq_get_value "$CTID" ".run_integration_tests" || echo "false")
+    local test_suites
+    test_suites=$(jq -r ".lxc_configs.\"$CTID\".tests | keys[]" "$LXC_CONFIG_FILE")
 
-    if [ "$run_tests" != "true" ]; then
-        log_info "Post-deployment validation skipped for CTID $CTID (run_integration_tests is not true)."
+    if [ -z "$test_suites" ]; then
+        log_info "No test suites found for CTID $CTID. Skipping post-deployment validation."
         return 0
     fi
 
-    log_info "Starting post-deployment validation for CTID $CTID..."
-    local test_script_path="/usr/local/phoenix_hypervisor/bin/tests/run_vllm_integration_tests.sh"
-
-    if ! "$test_script_path" "$CTID"; then
-        log_fatal "Post-deployment validation failed for CTID $CTID."
-    fi
+    for suite in $test_suites; do
+        log_info "Running test suite '$suite' for CTID $CTID..."
+        local test_runner_script="${PHOENIX_BASE_DIR}/bin/tests/test_runner.sh"
+        if [ ! -x "$test_runner_script" ]; then
+            log_info "Making test runner script executable..."
+            chmod +x "$test_runner_script"
+        fi
+        if ! "$test_runner_script" "$CTID" "$suite"; then
+            log_error "Test suite '$suite' failed for CTID $CTID."
+            return 1
+        fi
+    done
 
     log_info "Post-deployment validation completed successfully for CTID $CTID."
 }
@@ -1077,14 +1079,16 @@ apply_apparmor_profile() {
         fi
     else
         # Load the AppArmor profile
-        local profile_file="/etc/apparmor.d/${apparmor_profile}"
-        if [ -f "$profile_file" ]; then
-            log_info "Loading AppArmor profile from $profile_file"
-            if ! apparmor_parser -r "$profile_file"; then
-                log_fatal "Failed to load AppArmor profile $apparmor_profile"
-            fi
-        else
-            log_fatal "AppArmor profile file $profile_file not found"
+        local custom_profile_path="${PHOENIX_BASE_DIR}/etc/apparmor/${apparmor_profile}"
+        local system_profile_path="/etc/apparmor.d/${apparmor_profile}"
+
+        if [ ! -f "$custom_profile_path" ]; then
+            log_fatal "Custom AppArmor profile file not found at $custom_profile_path"
+        fi
+
+        log_info "Copying custom AppArmor profile to $system_profile_path"
+        if ! cp "$custom_profile_path" "$system_profile_path"; then
+            log_fatal "Failed to copy AppArmor profile to system directory."
         fi
 
         local profile_line="lxc.apparmor.profile: ${apparmor_profile}"
@@ -1103,6 +1107,10 @@ apply_apparmor_profile() {
             echo "lxc.include: /usr/share/lxc/config/nesting.conf" >> "$conf_file" || log_fatal "Failed to add nesting config"
         fi
     fi
+
+    # Reload AppArmor profiles to apply changes
+    log_info "Reloading AppArmor profiles..."
+    systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
 
 # =====================================================================================
@@ -1189,6 +1197,7 @@ setup_hypervisor() {
         "hypervisor_feature_create_admin_user.sh"
         "hypervisor_feature_provision_shared_resources.sh"
         "hypervisor_feature_setup_apparmor.sh"
+        "hypervisor_feature_fix_apparmor_tunables.sh"
     )
 
     for script in "${setup_scripts[@]}"; do
@@ -1333,225 +1342,114 @@ run_smoke_tests() {
         local health_check_script="health_checks/check_service_status.sh"
         local script_in_container="/tmp/check_service_status.sh"
 
-        # Copy the script to the container
-        if ! pct push "$ctid" "${PHOENIX_BASE_DIR}/bin/${health_check_script}" "$script_in_container" >/dev/null 2>&1; then
+        # 1. Copy health check script to container
+        log_info "Copying health check script to $ctid:$script_in_container..."
+        if ! pct push "$ctid" "${PHOENIX_BASE_DIR}/bin/${health_check_script}" "$script_in_container"; then
             log_error "Failed to copy health check script to container $ctid."
             all_tests_passed=false
             continue
         fi
 
-        # Make the script executable
+        # 2. Make script executable
+        log_info "Making health check script executable in container..."
         if ! pct exec "$ctid" -- chmod +x "$script_in_container"; then
             log_error "Failed to make health check script executable in container $ctid."
             all_tests_passed=false
             continue
         fi
 
-        # Build the command to execute inside the container
-        local exec_cmd=("$script_in_container" "--service" "$service")
+        # 3. Execute script
+        log_info "Executing health check script for service '$service' in container '$ctid'..."
+        local exec_cmd=("$script_in_container" "$service")
         if [ -n "$port" ]; then
-            exec_cmd+=("--port" "$port")
+            exec_cmd+=("$port")
         fi
 
-        # Execute the health check
         if ! pct exec "$ctid" -- "${exec_cmd[@]}"; then
-            log_error "Smoke test failed for service '$service' in container '$ctid'."
+            log_error "Health check for service '$service' in container '$ctid' failed."
             all_tests_passed=false
         else
-            log_info "Smoke test passed for service '$service' in container '$ctid'."
+            log_info "Health check for service '$service' in container '$ctid' passed."
         fi
 
-        # Clean up the script
-        pct exec "$ctid" -- rm "$script_in_container" >/dev/null 2>&1
+        # 4. Clean up
+        log_info "Cleaning up health check script in container..."
+        if ! pct exec "$ctid" -- rm -f "$script_in_container"; then
+            log_warn "Failed to clean up health check script in container $ctid."
+        fi
     done
 
     if [ "$all_tests_passed" = true ]; then
         log_info "All smoke tests passed successfully."
-        exit_script 0
     else
         log_fatal "One or more smoke tests failed."
     fi
 }
 
 # =====================================================================================
-# Function: all_dependencies_built
-# Description: Checks if all dependencies for a given container have been built.
-# Arguments:
-#   $1 - CTID of the container to check.
-#   $2 - Array of built CTIDs.
-# Returns:
-#   0 if all dependencies are built, 1 otherwise.
-# =====================================================================================
-all_dependencies_built() {
-    local ctid="$1"
-    shift
-    local built_ctids=("$@")
-    local dependencies
-    dependencies=$(jq_get_value "$ctid" ".dependencies // [] | .[]" || echo "")
-
-    if [ -z "$dependencies" ]; then
-        return 0
-    fi
-
-    for dep in $dependencies; do
-        if ! [[ " ${built_ctids[*]} " =~ " ${dep} " ]]; then
-            return 1
-        fi
-    done
-
-    return 0
-}
-
-# =====================================================================================
-# Function: is_clone_ready
-# Description: Checks if a container that needs to be cloned is ready.
-# Arguments:
-#   $1 - CTID of the container to check.
-#   $2 - Array of built CTIDs.
-# Returns:
-#   0 if the clone is ready, 1 otherwise.
-# =====================================================================================
-is_clone_ready() {
-    local ctid="$1"
-    shift
-    local built_ctids=("$@")
-    local clone_from_ctid
-    clone_from_ctid=$(jq_get_value "$ctid" ".clone_from_ctid" || echo "")
-
-    if [ -z "$clone_from_ctid" ]; then
-        return 0
-    fi
-
-    if ! [[ " ${built_ctids[*]} " =~ " ${clone_from_ctid} " ]]; then
-        return 1
-    fi
-
-    local source_snapshot_name
-    source_snapshot_name=$(jq_get_value "$clone_from_ctid" ".template_snapshot_name")
-    if ! pct listsnapshot "$clone_from_ctid" | grep -q "$source_snapshot_name"; then
-        return 1
-    fi
-
-    return 0
-}
-
-# =====================================================================================
-# Function: run_letsg_mode
-# Description: Orchestrates the building of all containers based on dependencies.
-# =====================================================================================
-run_letsg_mode() {
-    log_info "Starting LetsGo mode with dependency resolution..."
-    local to_build
-    to_build=($(jq -r '.lxc_configs | keys[]' "$LXC_CONFIG_FILE"))
-    local built=()
-    local build_progress=true
-
-    while [ ${#to_build[@]} -gt 0 ] && [ "$build_progress" = true ]; do
-        build_progress=false
-        local remaining_builds=()
-        for ctid in "${to_build[@]}"; do
-            if all_dependencies_built "$ctid" "${built[@]}" && is_clone_ready "$ctid" "${built[@]}"; then
-                log_info "Container $ctid is ready to build."
-                if main_state_machine "$ctid"; then
-                    built+=("$ctid")
-                    build_progress=true
-                else
-                    log_fatal "Failed to build container $ctid. Aborting LetsGo mode."
-                fi
-            else
-                remaining_builds+=("$ctid")
-            fi
-        done
-        to_build=("${remaining_builds[@]}")
-    done
-
-    if [ ${#to_build[@]} -gt 0 ]; then
-        log_fatal "Could not build all containers. Check for circular or missing dependencies. Remaining containers: ${to_build[*]}"
-    fi
-
-    log_info "LetsGo mode completed successfully."
-}
-
-# =====================================================================================
 # Function: main
-# Description: The main function of the script. It orchestrates the entire process
-#              of setting up the hypervisor or creating and configuring containers.
+# Description: Main execution logic of the script. Parses arguments and calls the
+#              appropriate functions based on the selected operation mode.
 # =====================================================================================
 main() {
-    setup_logging "$LOG_FILE"
     parse_arguments "$@"
-
-    if [ "$DRY_RUN" = true ]; then
-        log_info "Dry-run mode is enabled. No actual changes will be made."
-    fi
 
     if [ "$SETUP_HYPERVISOR" = true ]; then
         setup_hypervisor "$VM_CONFIG_FILE"
     elif [ "$CREATE_VM" = true ]; then
-        log_info "Starting VM creation for: $VM_NAME"
         create_vm "$VM_NAME"
-        log_info "VM creation process for $VM_NAME completed."
-        exit_script 0
     elif [ "$START_VM" = true ]; then
-        log_info "Starting VM: $VM_ID"
         start_vm "$VM_ID"
-        exit_script 0
     elif [ "$STOP_VM" = true ]; then
-        log_info "Stopping VM: $VM_ID"
         stop_vm "$VM_ID"
-        exit_script 0
     elif [ "$DELETE_VM" = true ]; then
-        log_info "Deleting VM: $VM_ID"
         delete_vm "$VM_ID"
-        exit_script 0
     elif [ "$SMOKE_TEST" = true ]; then
         run_smoke_tests
-    elif [ "$LETSGO" = true ]; then
-        run_letsg_mode
-        exit_script 0
+    elif [ ${#CTID_LIST[@]} -gt 0 ]; then
+        for CTID in "${CTID_LIST[@]}"; do
+            log_info "================================================================="
+            log_info "Starting orchestration for CTID: $CTID"
+            log_info "================================================================="
+            
+            validate_inputs "$CTID"
+            local provisioning_failed=false
+            if ! ensure_container_defined "$CTID"; then
+                log_error "FATAL: Container definition failed for $CTID. Cannot proceed with this container."
+                provisioning_failed=true
+            else
+                apply_configurations "$CTID" || { log_error "Configuration application failed for $CTID."; provisioning_failed=true; }
+                apply_zfs_volumes "$CTID" || { log_error "ZFS volume application failed for $CTID."; provisioning_failed=true; }
+                ensure_container_disk_size "$CTID" || { log_error "Disk size adjustment failed for $CTID."; provisioning_failed=true; }
+                start_container "$CTID" || { log_error "Container start failed for $CTID."; provisioning_failed=true; }
+                
+                if [ "$provisioning_failed" = false ]; then
+                    apply_features "$CTID" || { log_error "Feature application failed for $CTID."; provisioning_failed=true; }
+                    run_application_script "$CTID" || { log_error "Application script failed for $CTID."; provisioning_failed=true; }
+                    run_health_check "$CTID" || { log_error "Health check failed for $CTID."; provisioning_failed=true; }
+                    create_template_snapshot "$CTID" || { log_warn "Template snapshot creation failed for $CTID."; }
+                    create_final_form_snapshot "$CTID" || { log_warn "Final form snapshot creation failed for $CTID."; }
+                else
+                    log_warn "Skipping feature application and subsequent steps due to earlier critical failure for CTID $CTID."
+                fi
+            fi
+
+            log_info "--- Running Post-Deployment Validation for CTID $CTID ---"
+            run_post_deployment_validation "$CTID" || log_error "Post-deployment validation failed for CTID $CTID."
+
+            log_info "================================================================="
+            if [ "$provisioning_failed" = true ]; then
+                log_warn "Orchestration for CTID $CTID completed with one or more failures."
+            else
+                log_info "Orchestration for CTID $CTID completed successfully."
+            fi
+            log_info "================================================================="
+        done
+    else
+        log_error "No valid operation mode determined. Exiting."
+        exit_script 1
     fi
-
-    for CTID in "${CTID_LIST[@]}"; do
-        main_state_machine "$CTID"
-    done
 }
 
-# =====================================================================================
-# State Machine for Container Orchestration
-# =====================================================================================
-main_state_machine() {
-    local CTID="$1"
-    log_info "Starting state machine for CTID: $CTID"
-
-    # Define the states in the order of execution
-    local states=(
-        "validate_inputs"
-        "ensure_container_defined"
-        "apply_configurations"
-        "apply_zfs_volumes"
-        "apply_dedicated_volumes"
-        "ensure_container_disk_size"
-        "start_container"
-        "apply_features"
-        "run_portainer_script"
-        "run_application_script"
-        "run_health_check"
-        "create_pre_configured_snapshot"
-        "run_post_deployment_validation"
-        "create_final_form_snapshot"
-        "create_template_snapshot"
-    )
-
-    # Execute each state function
-    for state in "${states[@]}"; do
-        log_info "Executing state: $state for CTID: $CTID"
-        if ! "$state" "$CTID"; then
-            log_fatal "State '$state' failed for CTID $CTID. Aborting."
-        fi
-    done
-
-    log_info "Orchestration for CTID $CTID completed successfully."
-}
-
-# --- Main script execution ---
+# --- Execute Main Function ---
 main "$@"

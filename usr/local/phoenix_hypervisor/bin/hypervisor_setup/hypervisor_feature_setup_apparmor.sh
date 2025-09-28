@@ -37,6 +37,9 @@ deploy_apparmor_profiles() {
         log_fatal "AppArmor profiles source directory not found at ${source_dir}."
     fi
 
+    log_info "Adding AppArmor nesting tunable for lxc-phoenix-v2..."
+    echo '@{apparmor_nesting_profiles} = lxc-phoenix-v2' > /etc/apparmor.d/tunables/nesting
+
     log_info "--- PRE-CHECK: AppArmor Status ---"
     aa-status || log_warn "Could not retrieve pre-check AppArmor status."
     log_info "------------------------------------"
@@ -79,6 +82,10 @@ deploy_apparmor_profiles() {
     done
 
     if [ "$profiles_changed" = false ]; then
+    log_info "Reloading AppArmor service to apply all profile changes..."
+    if ! systemctl reload apparmor; then
+        log_fatal "Failed to reload AppArmor service after deploying profiles."
+    fi
         log_info "No AppArmor profiles found to deploy."
     fi
 

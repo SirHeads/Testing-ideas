@@ -50,7 +50,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:AA:BB:CD",
-            "gpu_assignment": "0,1",
+            "gpu_assignment": "0, 1",
             "portainer_role": "none",
             "unprivileged": true,
             "clone_from_ctid": "900",
@@ -88,11 +88,48 @@
                 "docker"
             ],
             "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
+                "lxc.cgroup2.devices.allow=a",
+                "lxc.mount.entry=/dev/fuse dev/fuse none bind,create=file"
             ],
             "template_snapshot_name": "pre-configured",
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "apparmor_manages_nesting": true,
+            "tests": {
+                "health_checks": [
+                    {
+                        "name": "Check Docker Service",
+                        "type": "script",
+                        "path": "docker/check_docker_service.sh"
+                    },
+                    {
+                        "name": "Check Network Access",
+                        "type": "script",
+                        "path": "docker/check_network_access.sh"
+                    },
+                    {
+                        "name": "Check DNS Resolution",
+                        "type": "script",
+                        "path": "docker/check_dns_resolution.sh"
+                    }
+                ],
+                "integration_tests": [
+                    {
+                        "name": "Test Docker Hello World",
+                        "type": "script",
+                        "path": "docker/test_docker_hello_world.sh"
+                    },
+                    {
+                        "name": "Test Docker Storage Driver",
+                        "type": "script",
+                        "path": "docker/test_docker_storage_driver.sh"
+                    },
+                    {
+                        "name": "Test AppArmor Confinement",
+                        "type": "script",
+                        "path": "docker/test_apparmor_confinement.sh"
+                    }
+                ]
+            }
         },
         "903": {
             "name": "Template-Docker-GPU",
@@ -174,11 +211,15 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
+            "pct_options": [
+                "nesting=1",
+                "keyctl=1"
             ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "apparmor_profile": "lxc-phoenix-v2",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.mount.auto=sys:rw"
+            ]
         },
         "920": {
             "name": "Template-VLLM",
@@ -308,6 +349,39 @@
             "apparmor_manages_nesting": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
+            ],
+            "tests": {
+                "health_checks": [
+                    {
+                        "name": "Dummy Pass",
+                        "type": "script",
+                        "path": "health_checks/dummy_pass.sh"
+                    },
+                    {
+                        "name": "Dummy Fail",
+                        "type": "script",
+                        "path": "health_checks/dummy_fail.sh"
+                    }
+                ],
+                "integration_tests": [
+                    {
+                        "name": "vLLM Context Window Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_context_window.py"
+                    },
+                    {
+                        "name": "vLLM Responsiveness Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_responsiveness.py"
+                    }
+                ]
+            },
+            "vllm": [
+                {
+                    "name": "vLLM Integration Tests",
+                    "type": "script",
+                    "path": "run_vllm_integration_tests.sh"
+                }
             ]
         },
         "951": {
@@ -379,7 +453,21 @@
             "apparmor_manages_nesting": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "tests": {
+                "integration_tests": [
+                    {
+                        "name": "vLLM Context Window Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_context_window.py"
+                    },
+                    {
+                        "name": "vLLM Responsiveness Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_responsiveness.py"
+                    }
+                ]
+            }
         },
         "952": {
             "name": "qdrant-VSCodeRag",

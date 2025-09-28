@@ -74,6 +74,11 @@ parse_arguments() {
 install_and_configure_docker() {
     log_info "Starting Docker installation and configuration in CTID: $CTID"
 
+    # Wait for the container to initialize and have network connectivity
+    if ! verify_lxc_network_connectivity "$CTID"; then
+        log_warn "Container $CTID is not fully network-ready. Proceeding with caution."
+    fi
+
     # --- Pre-computation and Idempotency Checks ---
     local docker_installed=false
     # Use raw 'pct exec' for the systemctl check to prevent the script from exiting if the service is not active.
@@ -95,6 +100,8 @@ install_and_configure_docker() {
 
     # --- Docker Installation ---
     log_info "Adding Docker official repository in CTID: $CTID"
+    log_info "Verifying DNS resolution before download..."
+    pct_exec "$CTID" ping -c 1 google.com || log_warn "DNS resolution test failed. Proceeding with caution."
     pct_exec "$CTID" mkdir -p /etc/apt/keyrings
     pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
     pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
@@ -105,6 +112,22 @@ install_and_configure_docker() {
 
     log_info "Installing Docker Engine in CTID: $CTID"
     pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+    # --- Configure fuse-overlayfs ---
+    log_info "Configuring Docker to use fuse-overlayfs storage driver..."
+    if ! pct_exec "$CTID" dpkg -l | grep -q fuse-overlayfs; then
+        log_info "Installing fuse-overlayfs..."
+        pct_exec "$CTID" apt-get update
+        pct_exec "$CTID" apt-get install -y fuse-overlayfs
+    fi
+
+    log_info "Creating Docker daemon configuration..."
+    pct_exec "$CTID" mkdir -p /etc/docker
+    pct_exec "$CTID" bash -c 'cat <<EOF > /etc/docker/daemon.json
+{
+  "storage-driver": "fuse-overlayfs"
+}
+EOF'
 
     # --- Conditional NVIDIA Container Toolkit Installation ---
     if is_feature_present_on_container "$CTID" "nvidia"; then

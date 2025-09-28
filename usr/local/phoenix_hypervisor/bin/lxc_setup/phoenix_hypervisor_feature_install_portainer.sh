@@ -67,6 +67,8 @@ setup_portainer() {
 
             # Deploy the container
             log_info "Deploying Portainer server container in CTID: $CTID"
+            log_info "Verifying AppArmor status before Docker run..."
+            pct_exec "$CTID" -- aa-status || log_warn "Could not check AppArmor status. Proceeding with caution."
             pct_exec "$CTID" -- docker run -d -p 9443:9443 -p 9001:9001 --name portainer --restart=always \
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 -v portainer_data:/data \
