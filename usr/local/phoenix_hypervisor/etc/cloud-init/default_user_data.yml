@@ -1,0 +1,8 @@
+#cloud-config
+users:
+  - name: phoenix_admin
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - <INSERT_SSH_PUBLIC_KEY_HERE>

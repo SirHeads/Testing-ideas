@@ -1123,3 +1123,131 @@ verify_lxc_network_connectivity() {
     log_error "Network connectivity check failed for CTID $CTID after $max_attempts attempts."
     return 1
 }
+# =====================================================================================
+# Function: start_vm
+# Description: Starts a Proxmox VM if it is not already running.
+# Arguments:
+#   $1 - The VMID of the VM to start.
+# =====================================================================================
+start_vm() {
+    local VMID="$1"
+    log_info "Attempting to start VM $VMID..."
+
+    if qm status "$VMID" | grep -q "status: running"; then
+        log_info "VM $VMID is already running."
+        return 0
+    fi
+
+    if ! run_qm_command start "$VMID"; then
+        log_fatal "Failed to start VM $VMID."
+    fi
+    log_info "VM $VMID started successfully."
+}
+
+# =====================================================================================
+# Function: wait_for_guest_agent
+# Description: Waits for the QEMU guest agent to become responsive.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+wait_for_guest_agent() {
+    local VMID="$1"
+    log_info "Waiting for QEMU guest agent on VM $VMID..."
+    local max_attempts=30
+    local attempt=0
+    local interval=10
+
+    while [ $attempt -lt $max_attempts ]; do
+        if qm agent "$VMID" ping 1>/dev/null 2>&1; then
+            log_info "QEMU guest agent is responsive on VM $VMID."
+            return 0
+        fi
+        log_info "Guest agent not ready yet. Retrying in $interval seconds... (Attempt $((attempt + 1))/$max_attempts)"
+        sleep $interval
+        attempt=$((attempt + 1))
+    done
+
+    log_fatal "Timeout waiting for QEMU guest agent on VM $VMID."
+}
+
+# =====================================================================================
+# Function: apply_vm_features
+# Description: Executes feature installation scripts inside the VM.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+apply_vm_features() {
+    local VMID="$1"
+    log_info "Applying features for VMID: $VMID"
+    
+    local features
+    features=$(jq -r ".vms[] | select(.vmid == ${VMID}) | .features[]?" "$VM_CONFIG_FILE")
+
+    if [ -z "$features" ]; then
+        log_info "No features to apply for VMID $VMID."
+        return 0
+    fi
+
+    for feature in $features; do
+        local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
+        log_info "Applying feature: $feature ($feature_script_path)"
+
+        if [ ! -f "$feature_script_path" ]; then
+            log_fatal "Feature script not found at $feature_script_path."
+        fi
+
+        # Copy script to VM
+        local vm_script_path="/tmp/feature_install_${feature}.sh"
+        if ! run_qm_command push "$VMID" "$feature_script_path" "$vm_script_path"; then
+            log_fatal "Failed to copy feature script '$feature' to VM $VMID."
+        fi
+
+        # Make script executable
+        if ! qm agent "$VMID" exec -- /bin/chmod +x "$vm_script_path"; then
+             log_fatal "Failed to make feature script '$feature' executable in VM $VMID."
+        fi
+
+        # Execute script
+        if ! qm agent "$VMID" exec -- "$vm_script_path"; then
+            log_fatal "Feature script '$feature' failed for VMID $VMID."
+        fi
+        
+        # Cleanup script
+        if ! qm agent "$VMID" exec -- /bin/rm "$vm_script_path"; then
+            log_warn "Failed to remove feature script '$feature' from VM $VMID."
+        fi
+    done
+
+    log_info "All features applied successfully for VMID $VMID."
+}
+
+# =====================================================================================
+# Function: create_vm_snapshot
+# Description: Creates a snapshot of a VM if a snapshot name is defined.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+create_vm_snapshot() {
+    local VMID="$1"
+    log_info "Checking for snapshot creation for VMID: $VMID"
+    
+    local snapshot_name
+    snapshot_name=$(jq -r ".vms[] | select(.vmid == ${VMID}) | .template_snapshot_name // \"\"" "$VM_CONFIG_FILE")
+
+    if [ -z "$snapshot_name" ]; then
+        log_info "No template_snapshot_name defined for VMID $VMID. Skipping snapshot creation."
+        return 0
+    fi
+
+    if qm listsnapshot "$VMID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for VMID $VMID. Skipping."
+        return 0
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for VM $VMID..."
+    if ! run_qm_command snapshot "$VMID" "$snapshot_name"; then
+        log_fatal "Failed to create snapshot '$snapshot_name' for VMID $VMID."
+    fi
+
+    log_info "Snapshot '$snapshot_name' created successfully."
+}

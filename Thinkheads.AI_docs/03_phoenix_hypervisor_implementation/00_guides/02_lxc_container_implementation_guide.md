@@ -3,7 +3,7 @@ title: "LXC Container Implementation Guide"
 summary: "A comprehensive, RAG-optimized master document detailing all LXC Container Implementations within the Phoenix Hypervisor project."
 document_type: "Implementation Guide"
 status: "Approved"
-version: "1.0.0"
+version: "2.0.0"
 author: "Phoenix Hypervisor Team"
 owner: "Developer"
 tags:
@@ -16,7 +16,7 @@ tags:
   - "Ollama"
   - "n8n"
 review_cadence: "Annual"
-last_reviewed: "2025-09-23"
+last_reviewed: "2025-09-29"
 ---
 
 # LXC Container Implementation Guide
@@ -80,7 +80,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Hosts a vLLM instance serving the `Qwen/Qwen2.5-7B-Instruct-AWQ` model for high-performance chat completions.
 *   **Key Software**: vLLM
 *   **Resource Allocation**:
-    *   **CPU**: 12 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 72000 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -98,7 +98,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model for generating text embeddings.
 *   **Key Software**: vLLM
 *   **Resource Allocation**:
-    *   **CPU**: 12 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 72000 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -153,7 +153,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Provides a standardized, GPU-accelerated base for running Ollama models.
 *   **Key Software**: Ollama
 *   **Resource Allocation**:
-    *   **CPU**: 8 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 32768 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -179,7 +179,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Provides a GPU-accelerated environment for compiling and running models with `llama.cpp`.
 *   **Key Software**: `llama.cpp`
 *   **Resource Allocation**:
-    *   **CPU**: 8 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 32768 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `1`

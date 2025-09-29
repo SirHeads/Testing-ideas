@@ -11,11 +11,8 @@
 # Inputs:
 #   --dry-run: Optional flag to enable dry-run mode.
 #   --setup-hypervisor: Flag to enable hypervisor setup mode.
-#   --create-vm <vm_name>: Flag to create a new VM with a specified name.
-#   --start-vm <vm_id>: Flag to start a VM with a specified ID.
-#   --stop-vm <vm_id>: Flag to stop a VM with a specified ID.
-#   --delete-vm <vm_id>: Flag to delete a VM with a specified ID.
-#   <CTID>: Positional argument for the Container ID when orchestrating LXC containers.
+#   --delete <ID>: Flag to delete a VM or LXC container with a specified ID.
+#   <ID>: Positional argument for the Container or VM ID for orchestration.
 #   Configuration values from VM_CONFIG_FILE and LXC_CONFIG_FILE.
 # Outputs:
 #   Log messages to stdout and LOG_FILE, pct and qm command outputs, exit codes indicating success or failure.
@@ -32,21 +29,16 @@ source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID_LIST=()
-VM_NAME=""
-VM_ID=""
 DRY_RUN=false # Flag for dry-run mode
 SETUP_HYPERVISOR=false # Flag for hypervisor setup mode
-CREATE_VM=false
-START_VM=false
-STOP_VM=false
-DELETE_VM=false
+DELETE_ID="" # ID of the resource to delete
 RECONFIGURE=false
 LETSGO=false
 SMOKE_TEST=false # Flag for smoke test mode
 WIPE_DISKS=false # Flag to wipe disks during hypervisor setup
 LOG_FILE="/var/log/phoenix_hypervisor/orchestrator_$(date +%Y%m%d).log"
-VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
-VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.schema.json"
+VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
+VM_CONFIG_SCHEMA_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.schema.json"
 LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 
 
@@ -70,134 +62,109 @@ LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 #   None. Exits with status 2 or a fatal error if arguments are invalid or missing.
 # =====================================================================================
 parse_arguments() {
-    # Display usage and exit if no arguments are provided
-    if [ "$#" -eq 0 ]; then
-        log_error "Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run] | $0 <CTID> --reconfigure | $0 --LetsGo | $0 --smoke-test | $0 --test <CTID|all>:<test_suite>"
-        exit_script 2
-    fi
+   # Display usage and exit if no arguments are provided
+   if [ "$#" -eq 0 ]; then
+       log_error "Usage: $0 <ID>... [--dry-run] | $0 --delete <ID> [--dry-run] | $0 --setup-hypervisor [--dry-run]"
+       exit_script 2
+   fi
 
-    local operation_mode_set=false # Flag to ensure only one operation mode is set
+   local operation_mode_set=false # Flag to ensure only one operation mode is set
 
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            --dry-run)
-                DRY_RUN=true # Enable dry-run mode
-                shift
-                ;;
-            --wipe-disks)
-                WIPE_DISKS=true
-                shift
-                ;;
-            --setup-hypervisor)
-                SETUP_HYPERVISOR=true # Enable hypervisor setup mode
-                operation_mode_set=true
-                shift
-                ;;
-            --create-vm)
-                CREATE_VM=true # Enable VM creation mode
-                VM_NAME="$2" # Capture VM name
-                operation_mode_set=true
-                shift 2
-                ;;
-            --start-vm)
-                START_VM=true # Enable VM start mode
-                VM_ID="$2" # Capture VM ID
-                operation_mode_set=true
-                shift 2
-                ;;
-            --stop-vm)
-                STOP_VM=true # Enable VM stop mode
-                VM_ID="$2" # Capture VM ID
-                operation_mode_set=true
-                shift 2
-                ;;
-            --delete-vm)
-                DELETE_VM=true # Enable VM deletion mode
-                VM_ID="$2" # Capture VM ID
-                operation_mode_set=true
-                shift 2
-                ;;
-            --reconfigure)
-                RECONFIGURE=true
-                shift
-                ;;
-            --LetsGo)
-                LETSGO=true
-                operation_mode_set=true
-                shift
-                ;;
-            --smoke-test)
-                SMOKE_TEST=true # Enable smoke test mode
-                operation_mode_set=true
-                shift
-                ;;
-            --test)
-                TEST_SUITE="$2"
-                operation_mode_set=true
-                shift 2
-                ;;
-            -*) # Handle unknown flags
-                log_error "Unknown option: $1"
-                exit_script 2
-                ;;
-            *) # Handle positional arguments (CTIDs for LXC orchestration)
-                if [ "$operation_mode_set" = true ] && [ "$LETSGO" = false ]; then
-                    log_fatal "Cannot combine CTID with other operation modes (--create-vm, --start-vm, etc.)."
-                fi
-                # Append all remaining arguments to the CTID list
-                while [[ "$#" -gt 0 ]] && ! [[ "$1" =~ ^-- ]]; do
-                    CTID_LIST+=("$1")
-                    shift
-                done
-                operation_mode_set=true
-                # This allows --dry-run to appear after the CTIDs
-                if [[ "$#" -gt 0 ]]; then
-                   continue
-                fi
-                ;;
-        esac
-    done
+   while [[ "$#" -gt 0 ]]; do
+       case "$1" in
+           --dry-run)
+               DRY_RUN=true # Enable dry-run mode
+               shift
+               ;;
+           --wipe-disks)
+               WIPE_DISKS=true
+               shift
+               ;;
+           --setup-hypervisor)
+               SETUP_HYPERVISOR=true # Enable hypervisor setup mode
+               operation_mode_set=true
+               shift
+               ;;
+           --delete)
+               if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                   log_fatal "Missing ID for --delete flag."
+               fi
+               DELETE_ID="$2"
+               operation_mode_set=true
+               shift 2
+               ;;
+           --reconfigure)
+               RECONFIGURE=true
+               shift
+               ;;
+           --LetsGo)
+               LETSGO=true
+               operation_mode_set=true
+               shift
+               ;;
+           --smoke-test)
+               SMOKE_TEST=true # Enable smoke test mode
+               operation_mode_set=true
+               shift
+               ;;
+           --test)
+               TEST_SUITE="$2"
+               operation_mode_set=true
+               shift 2
+               ;;
+           --provision-template)
+               PROVISION_TEMPLATE=true
+               operation_mode_set=true
+               shift
+               ;;
+           -*) # Handle unknown flags
+               log_error "Unknown option: $1"
+               exit_script 2
+               ;;
+           *) # Handle positional arguments (CTIDs/VMIDs for orchestration)
+               if [ "$operation_mode_set" = true ] && [ "$LETSGO" = false ] && [ -z "$DELETE_ID" ]; then
+                   log_fatal "Cannot combine ID with other operation modes."
+               fi
+               # Append all remaining arguments to the ID list
+               while [[ "$#" -gt 0 ]] && ! [[ "$1" =~ ^-- ]]; do
+                   CTID_LIST+=("$1")
+                   shift
+               done
+               operation_mode_set=true
+               # This allows --dry-run to appear after the IDs
+               if [[ "$#" -gt 0 ]]; then
+                  continue
+               fi
+               ;;
+       esac
+   done
 
-    # If no operation mode was set, display usage and exit
-    if [ "$operation_mode_set" = false ]; then
-        log_fatal "Missing required arguments. Usage: $0 [--create-vm <vm_name> | --start-vm <vm_id> | --stop-vm <vm_id> | --delete-vm <vm_id> | <CTID>] [--dry-run] | $0 --setup-hypervisor [--dry-run]"
-    fi
+   # If no operation mode was set, display usage and exit
+   if [ "$operation_mode_set" = false ]; then
+       log_fatal "Missing required arguments. Usage: $0 <ID>... [--dry-run] | $0 --delete <ID> [--dry-run] | $0 --setup-hypervisor [--dry-run]"
+   fi
 
-    # Log the determined operation mode and validate specific arguments
-    if [ "$SETUP_HYPERVISOR" = true ]; then
-        log_info "Hypervisor setup mode enabled."
-    elif [ "$CREATE_VM" = true ]; then
-        if [ -z "$VM_NAME" ]; then # Ensure VM name is provided for creation
-            log_fatal "Missing VM name for --create-vm. Usage: $0 --create-vm <vm_name>"
-        fi
-        log_info "VM creation mode for VM: $VM_NAME"
-    elif [ "$START_VM" = true ]; then
-        if [ -z "$VM_ID" ]; then # Ensure VM ID is provided for starting
-            log_fatal "Missing VM ID for --start-vm. Usage: $0 --start-vm <vm_id>"
-        fi
-        log_info "VM start mode for VM ID: $VM_ID"
-    elif [ "$STOP_VM" = true ]; then
-        if [ -z "$VM_ID" ]; then # Ensure VM ID is provided for stopping
-            log_fatal "Missing VM ID for --stop-vm. Usage: $0 --stop-vm <vm_id>"
-        fi
-        log_info "VM stop mode for VM ID: $VM_ID"
-    elif [ "$DELETE_VM" = true ]; then
-        if [ -z "$VM_ID" ]; then # Ensure VM ID is provided for deletion
-            log_fatal "Missing VM ID for --delete-vm. Usage: $0 --delete-vm <vm_id>"
-        fi
-        log_info "VM delete mode for VM ID: $VM_ID"
-    elif [ "$LETSGO" = true ]; then
-        log_info "LetsGo mode enabled. Orchestrating all containers based on boot order."
-    elif [ "$SMOKE_TEST" = true ]; then
-        log_info "Smoke test mode enabled."
-    elif [ -n "$TEST_SUITE" ]; then
-        log_info "Test mode enabled for suite: $TEST_SUITE"
-    else
-        if [ ${#CTID_LIST[@]} -eq 0 ]; then # Ensure at least one CTID is provided
-            log_fatal "Missing CTID for container orchestration. Usage: $0 <CTID>... [--dry-run]"
-        fi
-        log_info "Container orchestration mode for CTIDs: ${CTID_LIST[*]}"
-    fi
+   # Log the determined operation mode and validate specific arguments
+   if [ "$SETUP_HYPERVISOR" = true ]; then
+       log_info "Hypervisor setup mode enabled."
+   elif [ -n "$DELETE_ID" ]; then
+       log_info "Delete mode for ID: $DELETE_ID"
+   elif [ "$LETSGO" = true ]; then
+       log_info "LetsGo mode enabled. Orchestrating all containers based on boot order."
+   elif [ "$SMOKE_TEST" = true ]; then
+       log_info "Smoke test mode enabled."
+   elif [ -n "$TEST_SUITE" ]; then
+       log_info "Test mode enabled for suite: $TEST_SUITE"
+   else
+       if [ ${#CTID_LIST[@]} -eq 0 ]; then
+           if [ "$PROVISION_TEMPLATE" = true ] || [ "$SETUP_HYPERVISOR" = true ] || [ -n "$DELETE_ID" ] || [ "$LETSGO" = true ] || [ "$SMOKE_TEST" = true ] || [ -n "$TEST_SUITE" ]; then
+               : # Other modes are active, so no ID is needed
+           else
+               log_fatal "Missing ID for orchestration. Usage: $0 <ID>... [--dry-run]"
+           fi
+       fi
+       log_info "Orchestration mode for IDs: ${CTID_LIST[*]}"
+   fi
 
     # Log if dry-run mode is enabled
     if [ "$DRY_RUN" = true ]; then
@@ -1131,6 +1098,7 @@ apply_apparmor_profile() {
 run_qm_command() {
     local cmd_description="qm $*" # Description of the command for logging
     log_info "Executing: $cmd_description"
+    echo "Executing: $cmd_description"
     # If dry-run mode is enabled, log the command without executing it
     if [ "$DRY_RUN" = true ]; then
         log_info "Dry-run: Skipping actual command execution."
@@ -1219,237 +1187,436 @@ setup_hypervisor() {
 }
 
 # =====================================================================================
-# Function: create_vm
-# Description: Creates a new VM based on a definition in the configuration file.
+# Function: orchestrate_vm
+# Description: Main state machine for VM provisioning.
 # Arguments:
-#   $1 - The name of the VM to create.
+#   $1 - The VMID of the VM to orchestrate.
 # =====================================================================================
-# =====================================================================================
-# Function: create_vm
-# Description: Creates a new virtual machine (VM) based on a definition in the
-#              configuration file, applies default settings, and executes post-creation scripts.
-# Arguments:
-#   $1 (vm_name) - The name of the VM to create.
-# Returns:
-#   None. Exits with a fatal error if VM configuration is not found, or if `qm`
-#   commands or post-creation scripts fail.
-# =====================================================================================
-create_vm() {
-    local vm_name="$1" # Name of the VM to create
-    log_info "Attempting to create VM: $vm_name"
+orchestrate_vm() {
+    local VMID="$1"
+    log_info "Starting orchestration for VMID: $VMID"
 
-    # 1. Parse Configuration
-    # Parse VM configuration from the VM_CONFIG_FILE
+    # --- VMID Validation ---
+    if ! jq -e ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > /dev/null; then
+        log_fatal "Configuration for VMID $VMID not found in $VM_CONFIG_FILE."
+    fi
+    log_info "VMID $VMID found in configuration file. Proceeding with orchestration."
+
+    log_info "Available storage pools before VM creation:"
+    pvesm status
+    ensure_vm_defined "$VMID"
+    apply_vm_configurations "$VMID"
+    start_vm "$VMID"
+    # Wait for the VM to boot and the guest agent to be ready
+    wait_for_guest_agent "$VMID"
+    apply_vm_features "$VMID"
+    create_vm_snapshot "$VMID"
+
+    # --- Template Finalization ---
+    local is_template
+    is_template=$(jq -r ".vms[] | select(.vmid == $VMID) | .is_template" "$VM_CONFIG_FILE")
+    if [ "$is_template" == "true" ]; then
+        log_info "Finalizing template for VM $VMID..."
+        run_qm_command stop "$VMID"
+        run_qm_command start "$VMID"
+        wait_for_guest_agent "$VMID"
+        log_info "Cleaning cloud-init state for template..."
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f /etc/machine-id"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "touch /etc/machine-id"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "systemctl stop cloud-init"
+        run_qm_command stop "$VMID"
+        log_info "Creating final template snapshot..."
+        create_vm_snapshot "$VMID"
+        log_info "Converting VM to template..."
+        run_qm_command template "$VMID"
+    fi
+
+    log_info "Available storage pools after VM creation:"
+    pvesm status
+
+    log_info "VM orchestration for VMID $VMID completed successfully."
+}
+
+# =====================================================================================
+# Function: ensure_vm_defined
+# Description: Checks if the VM exists. If not, it calls the create_vm function.
+# Arguments:
+#   $1 - The VMID to check.
+# =====================================================================================
+ensure_vm_defined() {
+    local VMID="$1"
+    log_info "Ensuring VM $VMID is defined..."
+    if qm status "$VMID" > /dev/null 2>&1; then
+        log_info "VM $VMID already exists. Skipping creation."
+        return 0
+    fi
+    log_info "VM $VMID does not exist. Proceeding with creation..."
+
     local vm_config
-    vm_config=$(jq ".vms[] | select(.name == \"$vm_name\")" "$VM_CONFIG_FILE")
+    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
+    local clone_from_vmid
+    clone_from_vmid=$(echo "$vm_config" | jq -r '.clone_from_vmid // ""')
+    local template_image
+    template_image=$(echo "$vm_config" | jq -r '.template_image // ""')
 
-    # Check if VM configuration was found
-    if [ -z "$vm_config" ]; then
-        log_fatal "VM configuration for '$vm_name' not found in $VM_CONFIG_FILE."
+    if [ -n "$clone_from_vmid" ]; then
+        clone_vm "$VMID" "$clone_from_vmid"
+    elif [ -n "$template_image" ]; then
+        create_vm_from_template "$VMID"
+    else
+        log_fatal "VM definition for $VMID must include either 'clone_from_vmid' or 'template_image'."
+    fi
+}
+
+# =====================================================================================
+# Function: create_vm_from_template
+# Description: Creates a new VM from a template image.
+# Arguments:
+#   $1 - The VMID of the VM to create.
+# =====================================================================================
+create_vm_from_template() {
+    local VMID="$1"
+    log_info "Creating VM $VMID from template image."
+
+    local vm_config
+    vm_config=$(jq -r "(.vm_defaults) + (.vms[] | select(.vmid == $VMID))" "$VM_CONFIG_FILE")
+    local name
+    name=$(echo "$vm_config" | jq -r '.name')
+    local template_image
+    template_image=$(echo "$vm_config" | jq -r '.template_image')
+    local storage_pool
+    storage_pool=$(echo "$vm_config" | jq -r '.storage_pool')
+    local disk_size_gb
+    disk_size_gb=$(echo "$vm_config" | jq -r '.disk_size_gb')
+    local memory_mb
+    memory_mb=$(echo "$vm_config" | jq -r '.memory_mb')
+    local cores
+    cores=$(echo "$vm_config" | jq -r '.cores')
+    local network_bridge
+    network_bridge=$(echo "$vm_config" | jq -r '.network_bridge')
+    local image_url="https://cloud-images.ubuntu.com/noble/current/${template_image}"
+    local download_path="/tmp/${template_image}"
+
+    # --- Download Image ---
+    if [ ! -f "$download_path" ]; then
+        log_info "Downloading Ubuntu cloud image from $image_url..."
+        if ! wget -O "$download_path" "$image_url"; then
+            log_fatal "Failed to download cloud image."
+        fi
+    else
+        log_info "Cloud image already downloaded."
     fi
 
-    # 2. Apply Defaults
-    # Apply default VM settings if not explicitly defined in the VM's configuration
-    local vm_defaults
-    vm_defaults=$(jq ".vm_defaults" "$VM_CONFIG_FILE")
+    log_info "Creating new VM $VMID: $name"
+    run_qm_command create "$VMID" --name "$name" --memory "$memory_mb" --cores "$cores" --net0 "virtio,bridge=${network_bridge}" --scsihw virtio-scsi-pci --serial0 socket --vga serial0
 
-    local template=$(echo "$vm_config" | jq -r ".template // \"$(echo "$vm_defaults" | jq -r ".template")\"") # VM template
-    local cores=$(echo "$vm_config" | jq -r ".cores // $(echo "$vm_defaults" | jq -r ".cores")") # Number of CPU cores
-    local memory_mb=$(echo "$vm_config" | jq -r ".memory_mb // $(echo "$vm_defaults" | jq -r ".memory_mb")") # Memory in MB
-    local disk_size_gb=$(echo "$vm_config" | jq -r ".disk_size_gb // $(echo "$vm_defaults" | jq -r ".disk_size_gb")") # Disk size in GB
-    local storage_pool=$(echo "$vm_config" | jq -r ".storage_pool // \"$(echo "$vm_defaults" | jq -r ".storage_pool")\"") # Storage pool
-    local network_bridge=$(echo "$vm_config" | jq -r ".network_bridge // \"$(echo "$vm_defaults" | jq -r ".network_bridge")\"") # Network bridge
-    local post_create_scripts=$(echo "$vm_config" | jq -c ".post_create_scripts // []") # Post-creation scripts
+    log_info "Importing downloaded disk to ${storage_pool}..."
+    run_qm_command set "$VMID" --scsi0 "${storage_pool}:0,import-from=${download_path}"
 
-    # Generate a unique VM ID (e.g., starting from 9000 and finding the next available)
-    # Generate a unique VM ID, starting from 9000 and incrementing until an unused ID is found
-    local vm_id=9000
-    while qm status "$vm_id" > /dev/null 2>&1; do
-        vm_id=$((vm_id + 1))
-    done
-    log_info "Assigned VM ID: $vm_id"
+    log_info "Configuring Cloud-Init drive..."
+    run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
 
-    # 3. Create VM
-    log_info "Creating VM $vm_name (ID: $vm_id) from template $template..."
-    # Construct the `qm create` command array
-    local qm_create_cmd=(
-        qm create "$vm_id" # VM ID
-        --name "$vm_name" # VM name
-        --memory "$memory_mb" # Allocated memory
-        --cores "$cores" # Number of CPU cores
-        --net0 "virtio,bridge=${network_bridge}" # Network configuration
-        --ostype "l26" # OS type (Linux 2.6+ kernel)
-        --scsi0 "${storage_pool}:${disk_size_gb},import-from=${template}" # SCSI disk with import from template
-    )
+    log_info "Setting boot order..."
+    run_qm_command set "$VMID" --boot order=scsi0
 
-    # Execute the `qm create` command
-    if ! run_qm_command "${qm_create_cmd[@]}"; then
-        log_fatal "'qm create' command failed for VM $vm_name (ID: $vm_id)."
+    log_info "Resizing disk for VM $VMID to ${disk_size_gb}G..."
+    run_qm_command resize "$VMID" scsi0 "${disk_size_gb}G"
+
+    log_info "VM $VMID created successfully from template image."
+}
+
+# =====================================================================================
+# Function: clone_vm
+# Description: Clones a new VM from a snapshot of an existing VM.
+# Arguments:
+#   $1 - The new VMID to create.
+#   $2 - The source VMID to clone from.
+# =====================================================================================
+clone_vm() {
+    local new_vmid="$1"
+    local source_vmid="$2"
+    log_info "Cloning VM $new_vmid from source template VM $source_vmid."
+
+    # --- Pre-flight Checks ---
+    if ! qm config "$source_vmid" | grep -q "template: 1"; then
+        log_fatal "Source VM $source_vmid is not a template. Cloning is only supported from templates."
     fi
 
-    # Set boot order
-    # Set the boot order for the VM
-    log_info "Setting boot order for VM $vm_id..."
-    if ! run_qm_command set "$vm_id" --boot "order=scsi0"; then
-        log_fatal "'qm set boot order' command failed for VM $vm_id."
+    local new_vm_config
+    new_vm_config=$(jq -r "(.vm_defaults) + (.vms[] | select(.vmid == $new_vmid))" "$VM_CONFIG_FILE")
+    local new_name
+    new_name=$(echo "$new_vm_config" | jq -r '.name')
+    local disk_size_gb
+    disk_size_gb=$(echo "$new_vm_config" | jq -r '.disk_size_gb')
+
+    # --- Execute Clone ---
+    run_qm_command clone "$source_vmid" "$new_vmid" --name "$new_name" --full
+
+    # --- Resize Disk ---
+    if [ -n "$disk_size_gb" ]; then
+        log_info "Resizing disk for VM $new_vmid to ${disk_size_gb}G..."
+        run_qm_command resize "$new_vmid" scsi0 "${disk_size_gb}G"
     fi
 
-    log_info "VM $vm_name (ID: $vm_id) created successfully."
+    log_info "VM $new_vmid cloned successfully from $source_vmid."
+}
 
-    # 4. Post-Creation Setup
-    # Execute post-creation scripts if defined
-    if [ "$(echo "$post_create_scripts" | jq 'length')" -gt 0 ]; then
-        log_info "Executing post-creation scripts for VM $vm_name (ID: $vm_id)..."
-        start_vm "$vm_id" # Start the VM to allow execution of post-creation scripts
+# =====================================================================================
+# Function: apply_vm_configurations
+# Description: Applies configurations to the VM using `qm set`.
+# Arguments:
+#   $1 - The VMID of the VM to configure.
+# =====================================================================================
+apply_vm_configurations() {
+    local VMID="$1"
+    log_info "Applying configurations for VMID: $VMID"
 
-        # Wait for VM to boot and get an IP address (simplified, can be improved)
-        # Wait for the VM to boot and acquire an IP address (simplified, can be improved with actual IP detection)
-        log_info "Waiting for VM $vm_id to boot and acquire an IP address..."
-        sleep 30 # Placeholder: Adjust sleep duration as needed for VM boot time
+    local vm_config
+    vm_config=$(jq -r "(.vm_defaults) + (.vms[] | select(.vmid == $VMID))" "$VM_CONFIG_FILE")
+    local name
+    name=$(echo "$vm_config" | jq -r '.name')
+    local cores
+    cores=$(echo "$vm_config" | jq -r '.cores')
+    local memory_mb
+    memory_mb=$(echo "$vm_config" | jq -r '.memory_mb')
+    local network_bridge
+    network_bridge=$(echo "$vm_config" | jq -r '.network_bridge')
+    
+    # Basic hardware settings
+    run_qm_command set "$VMID" --cores "$cores" --memory "$memory_mb"
+    
+    # --- Serial Console for Debugging ---
+    log_info "Configuring serial console for debugging..."
+    run_qm_command set "$VMID" --serial0 socket --vga serial0
+    
+    # --- Dynamic Cloud-Init Generation ---
+    log_info "Starting Cloud-Init generation for VM $VMID..."
+    # --- Secure Cloud-Init Generation ---
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    log_info "Created temporary directory for Cloud-Init files: $temp_dir"
+    # Ensure the temporary directory is cleaned up on script exit
+    trap 'rm -rf -- "$temp_dir"' EXIT
 
-        # Iterate through each post-creation script and execute it
-        for script in $(echo "$post_create_scripts" | jq -r '.[]'); do
-            local script_path="$(dirname "$0")/bin/${script}" # Construct full path to the script
-            log_info "Executing post-create script: $script for VM $vm_id"
-            # Check if the script file exists
-            if [ ! -f "$script_path" ]; then
-                log_fatal "Post-create script not found at $script_path."
+    local user_template="${PHOENIX_BASE_DIR}/etc/cloud-init/user-data.template.yml"
+    local network_template="${PHOENIX_BASE_DIR}/etc/cloud-init/network-config.template.yml"
+    local temp_user_data="${temp_dir}/user-data-${VMID}.yml"
+    local temp_network_data="${temp_dir}/network-config-${VMID}.yml"
+    local snippets_path="/var/lib/vz/snippets"
+
+    # Retrieve dynamic values from JSON
+    log_info "Retrieving Cloud-Init values from JSON config..."
+    local username
+    username=$(echo "$vm_config" | jq -r '.user_config.username')
+    local ip_address
+    ip_address=$(echo "$vm_config" | jq -r '.network_config.ip')
+    local gateway
+    gateway=$(echo "$vm_config" | jq -r '.network_config.gw')
+    log_info "Successfully retrieved Cloud-Init values."
+
+    # Generate user-data file
+    log_info "Generating user-data file from template: $user_template"
+    sed -e "s@__HOSTNAME__@${name}@g" \
+        -e "s@__USERNAME__@${username}@g" \
+        "$user_template" > "$temp_user_data"
+
+    # Embed feature scripts
+    local features
+    features=$(echo "$vm_config" | jq -r '.features[]? // ""')
+    if [ -n "$features" ]; then
+        local feature_files_content=""
+        for feature in $features; do
+            local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
+            if [ -f "$feature_script_path" ]; then
+                local script_content
+                script_content=$(cat "$feature_script_path" | sed 's/^/        /')
+                feature_files_content+=$(cat <<EOF
+  - path: /tmp/features/feature_install_${feature}.sh
+    permissions: '0755'
+    content: |
+${script_content}
+EOF
+)
             fi
         done
+        local temp_feature_files
+        temp_feature_files=$(mktemp)
+        echo "$feature_files_content" > "$temp_feature_files"
+        sed -i -e "/#FEATURE_FILES_PLACEHOLDER#/r ${temp_feature_files}" -e "/#FEATURE_FILES_PLACEHOLDER#/d" "$temp_user_data"
+        rm "$temp_feature_files"
     fi
-}
 
-# =====================================================================================
-# Function: run_smoke_tests
-# Description: Orchestrates a series of health checks against critical services
-#              to ensure the environment is stable and operational.
-# =====================================================================================
-run_smoke_tests() {
-    log_info "Starting smoke tests..."
-    local all_tests_passed=true
+    log_info "Generated user-data file: $temp_user_data"
 
-    # Define the services to be checked, their container IDs, and parameters
-    local services_to_check=(
-        "953:nginx"
-        "950:vllm:8000"
-        "952:qdrant"
-    )
-
-    for service_entry in "${services_to_check[@]}"; do
-        IFS=':' read -r ctid service port <<< "$service_entry"
-        log_info "Checking service '$service' in container '$ctid'..."
-
-        local health_check_script="health_checks/check_service_status.sh"
-        local script_in_container="/tmp/check_service_status.sh"
-
-        # 1. Copy health check script to container
-        log_info "Copying health check script to $ctid:$script_in_container..."
-        if ! pct push "$ctid" "${PHOENIX_BASE_DIR}/bin/${health_check_script}" "$script_in_container"; then
-            log_error "Failed to copy health check script to container $ctid."
-            all_tests_passed=false
-            continue
-        fi
-
-        # 2. Make script executable
-        log_info "Making health check script executable in container..."
-        if ! pct exec "$ctid" -- chmod +x "$script_in_container"; then
-            log_error "Failed to make health check script executable in container $ctid."
-            all_tests_passed=false
-            continue
-        fi
-
-        # 3. Execute script
-        log_info "Executing health check script for service '$service' in container '$ctid'..."
-        local exec_cmd=("$script_in_container" "$service")
-        if [ -n "$port" ]; then
-            exec_cmd+=("$port")
-        fi
-
-        if ! pct exec "$ctid" -- "${exec_cmd[@]}"; then
-            log_error "Health check for service '$service' in container '$ctid' failed."
-            all_tests_passed=false
-        else
-            log_info "Health check for service '$service' in container '$ctid' passed."
-        fi
-
-        # 4. Clean up
-        log_info "Cleaning up health check script in container..."
-        if ! pct exec "$ctid" -- rm -f "$script_in_container"; then
-            log_warn "Failed to clean up health check script in container $ctid."
-        fi
-    done
-
-    if [ "$all_tests_passed" = true ]; then
-        log_info "All smoke tests passed successfully."
+    # Generate network-config file
+    log_info "Generating network-config file from template: $network_template"
+    if [ "$ip_address" == "dhcp" ]; then
+        sed -e "s/__DHCP4_ENABLED__/true/g" \
+            -e "/addresses:/d" \
+            -e "/gateway4:/d" \
+            "$network_template" > "$temp_network_data"
     else
-        log_fatal "One or more smoke tests failed."
+        sed -e "s/__DHCP4_ENABLED__/false/g" \
+            -e "s|__IPV4_ADDRESS__|${ip_address}|g" \
+            -e "s|__IPV4_GATEWAY__|${gateway}|g" \
+            "$network_template" > "$temp_network_data"
     fi
+    log_info "Generated network-config file: $temp_network_data"
+
+    # Copy generated files to snippets directory
+    if [ "$DRY_RUN" = false ]; then
+        log_info "Creating snippets directory if it doesn't exist: $snippets_path"
+        mkdir -p "$snippets_path"
+        log_info "Copying generated Cloud-Init files to snippets directory..."
+        cp "$temp_user_data" "${snippets_path}/user-data-${VMID}.yml"
+        cp "$temp_network_data" "${snippets_path}/network-config-${VMID}.yml"
+        log_info "Successfully copied Cloud-Init files."
+        rm "$temp_user_data" "$temp_network_data"
+    fi
+
+    # Attach Cloud-Init drive
+    run_qm_command set "$VMID" --cicustom "user=local:snippets/user-data-${VMID}.yml,network=local:snippets/network-config-${VMID}.yml"
+
+    # Enable QEMU Guest Agent
+    run_qm_command set "$VMID" --agent enabled=1
+
+    log_info "VM configurations applied successfully for VMID $VMID."
 }
 
 # =====================================================================================
-# Function: main
-# Description: Main execution logic of the script. Parses arguments and calls the
-#              appropriate functions based on the selected operation mode.
+# Function: start_vm
+# Description: Starts the VM with retry logic.
+# Arguments:
+#   $1 - The VMID of the VM to start.
+# =====================================================================================
+start_vm() {
+    local VMID="$1"
+    log_info "Attempting to start VM $VMID..."
+    if qm status "$VMID" | grep -q "status: running"; then
+        log_info "VM $VMID is already running."
+        return 0
+    fi
+    log_info "Executing start command for VM $VMID..."
+    if ! run_qm_command start "$VMID"; then
+        log_error "Failed to start VM $VMID. Checking journalctl for related errors..."
+        journalctl -n 50 --unit pvedaemon --since "1 minute ago"
+        log_fatal "VM start command failed. Please review the logs above for details."
+    fi
+    log_info "VM $VMID start command issued successfully."
+}
+
+# =====================================================================================
+# Function: wait_for_guest_agent
+# Description: Waits for the QEMU Guest Agent to be ready.
+# Arguments:
+#   $1 - The VMID to check.
+# =====================================================================================
+wait_for_guest_agent() {
+    local VMID="$1"
+    log_info "Waiting for QEMU Guest Agent on VM $VMID..."
+    local max_attempts=60
+    local interval=5
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        attempt=$((attempt + 1))
+        log_info "Checking guest agent for VM $VMID, attempt $attempt. Uptime: $(qm guest exec $VMID -- cat /proc/uptime 2>/dev/null || echo 'N/A')"
+        if qm agent "$VMID" ping > /dev/null 2>&1; then
+            log_info "QEMU Guest Agent is ready."
+            return 0
+        fi
+        sleep $interval
+    done
+    log_error "Timed out waiting for QEMU Guest Agent on VM $VMID."
+    log_info "Attempting to connect to VM console to check for boot issues..."
+    if ! qm terminal "$VMID"; then
+        log_warn "Could not connect to VM console. The VM may be unresponsive."
+    fi
+    log_fatal "Guest agent did not become available."
+}
+
+# =====================================================================================
+# Function: apply_vm_features
+# Description: This function is now deprecated. Feature scripts are now applied
+#              via cloud-init.
+# =====================================================================================
+apply_vm_features() {
+    log_info "Applying VM features is now handled by cloud-init."
+}
+
+# =====================================================================================
+# Function: create_vm_snapshot
+# Description: Creates a snapshot of the VM if a snapshot name is defined.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+create_vm_snapshot() {
+    local VMID="$1"
+    local vm_config
+    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
+    local snapshot_name
+    snapshot_name=$(echo "$vm_config" | jq -r '.template_snapshot_name // ""')
+
+    if [ -z "$snapshot_name" ]; then
+        log_info "No template snapshot defined for VM $VMID. Skipping."
+        return 0
+    fi
+
+    if qm listsnapshot "$VMID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for VM $VMID. Skipping."
+        return 0
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for VM $VMID..."
+    run_qm_command snapshot "$VMID" "$snapshot_name"
+    log_info "Snapshot '$snapshot_name' created successfully."
+}
+
+# =====================================================================================
+#                                SCRIPT EXECUTION
 # =====================================================================================
 main() {
+    setup_logging "$LOG_FILE"
     parse_arguments "$@"
 
     if [ "$SETUP_HYPERVISOR" = true ]; then
-        setup_hypervisor "$VM_CONFIG_FILE"
-    elif [ "$CREATE_VM" = true ]; then
-        create_vm "$VM_NAME"
-    elif [ "$START_VM" = true ]; then
-        start_vm "$VM_ID"
-    elif [ "$STOP_VM" = true ]; then
-        stop_vm "$VM_ID"
-    elif [ "$DELETE_VM" = true ]; then
-        delete_vm "$VM_ID"
-    elif [ "$SMOKE_TEST" = true ]; then
-        run_smoke_tests
-    elif [ ${#CTID_LIST[@]} -gt 0 ]; then
-        for CTID in "${CTID_LIST[@]}"; do
-            log_info "================================================================="
-            log_info "Starting orchestration for CTID: $CTID"
-            log_info "================================================================="
-            
-            validate_inputs "$CTID"
-            local provisioning_failed=false
-            if ! ensure_container_defined "$CTID"; then
-                log_error "FATAL: Container definition failed for $CTID. Cannot proceed with this container."
-                provisioning_failed=true
-            else
-                apply_configurations "$CTID" || { log_error "Configuration application failed for $CTID."; provisioning_failed=true; }
-                apply_zfs_volumes "$CTID" || { log_error "ZFS volume application failed for $CTID."; provisioning_failed=true; }
-                ensure_container_disk_size "$CTID" || { log_error "Disk size adjustment failed for $CTID."; provisioning_failed=true; }
-                start_container "$CTID" || { log_error "Container start failed for $CTID."; provisioning_failed=true; }
-                
-                if [ "$provisioning_failed" = false ]; then
-                    apply_features "$CTID" || { log_error "Feature application failed for $CTID."; provisioning_failed=true; }
-                    run_application_script "$CTID" || { log_error "Application script failed for $CTID."; provisioning_failed=true; }
-                    run_health_check "$CTID" || { log_error "Health check failed for $CTID."; provisioning_failed=true; }
-                    create_template_snapshot "$CTID" || { log_warn "Template snapshot creation failed for $CTID."; }
-                    create_final_form_snapshot "$CTID" || { log_warn "Final form snapshot creation failed for $CTID."; }
-                else
-                    log_warn "Skipping feature application and subsequent steps due to earlier critical failure for CTID $CTID."
-                fi
-            fi
+        setup_hypervisor "$HYPERVISOR_CONFIG_FILE"
+        exit_script 0
+    fi
 
-            log_info "--- Running Post-Deployment Validation for CTID $CTID ---"
-            run_post_deployment_validation "$CTID" || log_error "Post-deployment validation failed for CTID $CTID."
+    if [ "$PROVISION_TEMPLATE" = true ]; then
+        local template_vmid
+        template_vmid=$(jq -r '.vms[] | select(.is_template == true) | .vmid' "$VM_CONFIG_FILE")
+        if [ -z "$template_vmid" ]; then
+            log_fatal "No VM template defined in $VM_CONFIG_FILE. Set 'is_template' to true for one VM."
+        fi
+        local storage_pool
+        storage_pool=$(jq -r '.vm_defaults.storage_pool' "$VM_CONFIG_FILE")
+        local network_bridge
+        network_bridge=$(jq -r '.vm_defaults.network_bridge' "$VM_CONFIG_FILE")
+        
+        "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/provision_cloud_template.sh" \
+            --vmid "$template_vmid" \
+            --storage-pool "$storage_pool" \
+            --bridge "$network_bridge"
+        exit_script $?
+    fi
 
-            log_info "================================================================="
-            if [ "$provisioning_failed" = true ]; then
-                log_warn "Orchestration for CTID $CTID completed with one or more failures."
-            else
-                log_info "Orchestration for CTID $CTID completed successfully."
-            fi
-            log_info "================================================================="
-        done
-    else
-        log_error "No valid operation mode determined. Exiting."
+    if [ -n "$DELETE_ID" ]; then
+        # Logic to delete VM or LXC
+        log_fatal "Delete functionality is not yet implemented."
         exit_script 1
     fi
+
+    for id in "${CTID_LIST[@]}"; do
+        if jq -e ".vms[] | select(.vmid == $id)" "$VM_CONFIG_FILE" > /dev/null; then
+            orchestrate_vm "$id"
+        elif jq -e ".lxc_configs.\"$id\"" "$LXC_CONFIG_FILE" > /dev/null; then
+            orchestrate_lxc "$id"
+        else
+            log_fatal "ID $id not found in VM or LXC configuration files."
+        fi
+    done
 }
 
-# --- Execute Main Function ---
 main "$@"

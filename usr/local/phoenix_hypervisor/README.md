@@ -14,6 +14,8 @@ The Phoenix Hypervisor project is built on a foundation of modern infrastructure
 *   **Centralized Configuration**: All container definitions and global settings are managed in well-structured JSON files, providing a single source of truth.
 *   **Container-Native Execution**: Application scripts are executed using container-native commands, enhancing portability and reducing host dependencies.
 *   **Dynamic NGINX Configuration**: The NGINX gateway configuration is generated dynamically, ensuring it remains in sync with container configurations.
+*   **vLLM Integration**: Seamless integration with vLLM for high-throughput and memory-efficient LLM inference.
+*   **Health Checks**: Comprehensive health check scripts to monitor the status of containers and services.
 
 ## Getting Started
 
@@ -30,7 +32,7 @@ To get started with the Phoenix Hypervisor, you will need to have a Proxmox VE e
 1.  Clone this repository to your Proxmox host:
 
     ```bash
-    git clone https://github.com/your-username/phoenix_hypervisor.git
+    git clone https://github.com/thinkheads-ai/phoenix_hypervisor.git
     ```
 
 2.  Navigate to the `bin` directory:
@@ -47,22 +49,25 @@ To get started with the Phoenix Hypervisor, you will need to have a Proxmox VE e
 
 ### Usage
 
-Once the hypervisor is set up, you can use the `phoenix_orchestrator.sh` script to provision and manage your containers and VMs. For example, to create a new container, you would run the following command:
+Once the hypervisor is set up, you can use the `phoenix_orchestrator.sh` script to provision and manage your containers and VMs.
 
-```bash
-./phoenix_orchestrator.sh CTID
-```
+*   **Create a container:**
 
-Where `CTID` is the ID of the container you want to create.
+    ```bash
+    ./phoenix_orchestrator.sh CTID
+    ```
+
+*   **Run health checks:**
+
+    ```bash
+    ./phoenix_orchestrator.sh --health-check CTID
+    ```
+
+Where `CTID` is the ID of the container you want to create or check.
 
 ## Documentation
 
-For more detailed information about the Phoenix Hypervisor, please refer to the following documents:
-
-*   [Phoenix Hypervisor Unified Architecture](project_documents/phoenix-hypervisor-architecture.md)
-*   [Unified Phoenix Hypervisor Strategy v2.0](project_documents/unified_phoenix_hypervisor_strategy_v2.md)
-*   [LXC Container Environment: An Overview](project_documents/lxc-container-environment-overview.md)
-*   [Phoenix Orchestrator: A Deep Dive](project_documents/orchestrator-deep-dive.md)
+For more detailed information about the Phoenix Hypervisor, please refer to the documentation in the `Thinkheads.AI_docs` directory.
 
 ## Contributing
 

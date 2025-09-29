@@ -36,7 +36,20 @@
         "portainer_agent_image": "portainer/agent:latest"
     },
     "nfs": {
-        "exports": []
+        "exports": [
+            {
+                "path": "/fastData/shared-bulk-data",
+                "clients": [
+                    "10.0.0.0/24"
+                ],
+                "options": [
+                    "rw",
+                    "sync",
+                    "no_subtree_check",
+                    "no_root_squash"
+                ]
+            }
+        ]
     },
     "samba": {
         "user": "heads",
@@ -194,25 +207,6 @@
             "nesting": 1
         }
     },
-    "vm_defaults": {
-        "template": "ubuntu-24.04-standard",
-        "cores": 4,
-        "memory_mb": 8192,
-        "disk_size_gb": 100,
-        "storage_pool": "local-lvm",
-        "network_bridge": "vmbr0"
-    },
-    "vms": [
-        {
-            "name": "webserver-vm",
-            "cores": 4,
-            "memory_mb": 8192,
-            "disk_size_gb": 100,
-            "post_create_scripts": [
-                "install_webserver.sh"
-            ]
-        }
-    ],
     "tests": {
         "system_validation": [
             {
@@ -221,7 +215,7 @@
                 "path": "hypervisor/validate_systemic_fixes.sh"
             }
         ],
-        "hypervisor_health_check": [
+        "hypervisor_health_.check": [
             {
                 "name": "Phoenix Hypervisor Tests",
                 "type": "script",

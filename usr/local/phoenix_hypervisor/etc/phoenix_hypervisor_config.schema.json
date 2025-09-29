@@ -380,42 +380,112 @@
             "items": {
                 "type": "object",
                 "properties": {
+                    "vmid": {
+                        "type": "integer",
+                        "description": "The unique ID for the VM."
+                    },
                     "name": {
                         "type": "string",
                         "minLength": 1,
-                        "description": "Name of the VM."
+                        "description": "The friendly name and hostname for the VM."
                     },
                     "cores": {
                         "type": "integer",
                         "minimum": 1,
-                        "description": "CPU cores for the VM."
+                        "description": "The number of CPU cores."
                     },
                     "memory_mb": {
                         "type": "integer",
                         "minimum": 512,
-                        "description": "Memory (RAM) in MB for the VM."
+                        "description": "The memory allocation in megabytes."
                     },
                     "disk_size_gb": {
                         "type": "integer",
                         "minimum": 10,
-                        "description": "Disk size in GB for the VM."
+                        "description": "The size of the root disk in gigabytes."
                     },
-                    "post_create_scripts": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "minLength": 1
+                    "storage_pool": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The Proxmox storage pool for the root disk."
+                    },
+                    "template_image": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The full path to the base VM template image."
+                    },
+                    "network_bridge": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The network bridge (e.g., `vmbr0`)."
+                    },
+                    "network_config": {
+                        "type": "object",
+                        "description": "Network configuration for the VM.",
+                        "properties": {
+                            "ip": {
+                                "type": "string",
+                                "description": "The static IPv4 address in CIDR format (e.g., 10.0.0.101/24)."
+                            },
+                            "gw": {
+                                "type": "string",
+                                "description": "The gateway IPv4 address."
+                            }
                         },
-                        "description": "List of scripts to execute inside the VM after creation."
+                        "required": [
+                            "ip",
+                            "gw"
+                        ]
+                    },
+                    "user_config": {
+                        "type": "object",
+                        "description": "User account configuration for the VM.",
+                        "properties": {
+                            "username": {
+                                "type": "string",
+                                "description": "The username for the default user."
+                            },
+                            "password_hash": {
+                                "type": "string",
+                                "description": "The hashed password for the user."
+                            },
+                            "ssh_public_key": {
+                                "type": "string",
+                                "description": "The SSH public key for the user."
+                            }
+                        },
+                        "required": [
+                            "username",
+                            "ssh_public_key"
+                        ]
+                    },
+                    "clone_from_vmid": {
+                        "type": "integer",
+                        "description": "The VMID of an existing VM to clone from."
+                    },
+                    "template_snapshot_name": {
+                        "type": "string",
+                        "description": "The name of the snapshot to create after provisioning."
+                    },
+                    "features": {
+                        "type": "array",
+                        "description": "An array of feature scripts to apply to the VM.",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 },
                 "required": [
+                    "vmid",
                     "name",
                     "cores",
                     "memory_mb",
-                    "disk_size_gb"
+                    "disk_size_gb",
+                    "storage_pool",
+                    "template_image",
+                    "network_bridge"
                 ],
-                "additionalProperties": false
+                "additionalProperties": true
             }
         },
         "behavior": {

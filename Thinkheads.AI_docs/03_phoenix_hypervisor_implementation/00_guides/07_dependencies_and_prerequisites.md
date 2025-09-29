@@ -40,3 +40,7 @@ This document lists all the external dependencies and prerequisites for setting 
 *   **Internet Access**: The Proxmox host must have access to the internet to download packages and container images.
 *   **Static IP Address**: It is recommended to assign a static IP address to the Proxmox host.
 *   **Firewall**: The firewall on the Proxmox host must be configured to allow access to the necessary ports.
+
+## Virtual Machine Template Dependencies
+
+*   **qemu-guest-agent**: All base VM templates **MUST** have the `qemu-guest-agent` installed and enabled to ensure proper communication with the `phoenix_orchestrator`.

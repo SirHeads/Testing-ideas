@@ -33,6 +33,32 @@ The core of the project is the `phoenix_orchestrator.sh` script, a single, idemp
 -   **Hierarchical Templating:** The system uses a hierarchical, snapshot-based template structure to optimize container creation. Base templates are built and snapshotted, and subsequent containers are cloned from these snapshots, ensuring consistency and speed.
 -   **Modular Feature Installation:** Container customization is handled through a series of modular, reusable "feature" scripts (e.g., for installing NVIDIA drivers, Docker, or vLLM). These are applied based on a `features` array in the container's configuration.
 
+### 1.2. Hierarchical Templating Diagram
+
+```mermaid
+graph TD
+    subgraph "Base Templates"
+        T900[900: Template-Base]
+        T901[901: Template-GPU]
+        T902[902: Template-Docker]
+        T903[903: Template-Docker-GPU]
+    end
+
+    subgraph "Application Containers"
+        C950[950: vllm-qwen2.5-7b-awq]
+        C951[951: vllm-granite-embed-r2]
+        C952[952: qdrant-VSCodeRag]
+        C955[955: ollama-oWUI]
+    end
+
+    T900 -- Cloned to --> T901
+    T900 -- Cloned to --> T902
+    T901 -- Cloned to --> T903
+    T901 -- Cloned to --> C955
+    T902 -- Cloned to --> C952
+    T903 -- Cloned to --> C950
+    T903 -- Cloned to --> C951
+```
 ## 2. Orchestration Workflow
 
 The `phoenix_orchestrator.sh` script is the single entry point for all provisioning tasks. It operates as a state machine to guide containers through a series of states, ensuring a predictable and resumable workflow.

@@ -136,6 +136,10 @@ configure_nfs_exports() {
     # Ensure the directory for the NFS export exists
     mkdir -p "$path" || log_fatal "Failed to create directory for NFS export: $path"
 
+    # Set ownership for NFS compatibility
+    chown nobody:nogroup "$path" || log_warn "Failed to set ownership on $path"
+    chmod 777 "$path" || log_warn "Failed to set permissions on $path"
+
     # Add export
     # Add the NFS export entry to the exports file if it doesn't already exist
     if grep -q "^$path " "$exports_file"; then
