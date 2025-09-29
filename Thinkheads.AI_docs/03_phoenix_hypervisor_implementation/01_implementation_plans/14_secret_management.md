@@ -2,7 +2,7 @@
 title: Secret Management
 summary: This document describes the design for a secret management system for the Phoenix Hypervisor.
 document_type: Design
-status: Draft
+status: "Future Consideration"
 version: '1.0'
 author: Roo
 owner: Thinkheads.AI
@@ -11,13 +11,15 @@ tags:
   - security
   - secret_management
 review_cadence: Annual
-last_reviewed: '2025-09-23'
+last_reviewed: '2025-09-29'
 ---
 # Secret Management
 
 ## 1. Introduction
 
-This document describes the design for a secret management system for the Phoenix Hypervisor. The current approach of storing sensitive information, such as API tokens and credentials, in configuration files poses a security risk. This enhancement will introduce a secure and centralized solution for managing secrets.
+This document describes a potential design for a secret management system for the Phoenix Hypervisor. The current approach of storing sensitive information, such as API tokens and credentials, in configuration files poses a security risk. This enhancement would introduce a secure and centralized solution for managing secrets.
+
+**Note:** This feature is currently under consideration for future development and is not implemented in the current version.
 
 ## 2. Problem Statement
 
@@ -29,30 +31,4 @@ Storing secrets in plaintext configuration files is a significant security vulne
 
 ## 3. Proposed Solution
 
-We propose to integrate the Phoenix Hypervisor with a dedicated secret management solution, such as HashiCorp Vault. This will provide a centralized and secure repository for all secrets. The `phoenix_orchestrator.sh` script will be modified to retrieve secrets from the vault at runtime, rather than reading them from configuration files.
-
-The proposed workflow is as follows:
-
-1.  **Store Secrets in Vault**: All sensitive information will be stored securely in HashiCorp Vault.
-2.  **Authentication**: The orchestrator will authenticate with Vault using a secure method (e.g., AppRole).
-3.  **Retrieve Secrets**: Once authenticated, the orchestrator will retrieve the necessary secrets from Vault.
-4.  **Inject Secrets**: The retrieved secrets will be securely injected into the container's environment at runtime.
-
-```mermaid
-graph TD
-    A[Start Orchestrator] --> B{Authenticate with Vault};
-    B --> C{Retrieve Secrets};
-    C --> D{Inject Secrets into Container};
-    D --> E[Proceed with Provisioning];
-```
-
-## 4. Implementation Details
-
-The integration with HashiCorp Vault will require the installation of the Vault client on the hypervisor. The `phoenix_orchestrator.sh` script will be updated to include functions for authenticating with Vault and reading secrets.
-
-## 5. Questions to be Answered
-
-*   What is the most appropriate authentication method for the orchestrator to use with Vault?
-*   How should we design the secret paths in Vault to ensure a logical and scalable structure?
-*   What is the best practice for injecting secrets into the container environment? Should we use environment variables, files, or another method?
-*   What is the plan for migrating existing secrets from configuration files to Vault?
+A potential future solution is to integrate the Phoenix Hypervisor with a dedicated secret management solution, such as HashiCorp Vault or AWS Secrets Manager. This would provide a centralized and secure repository for all secrets. The `phoenix_orchestrator.sh` script could be modified to retrieve secrets from the vault at runtime, rather than reading them from configuration files.

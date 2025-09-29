@@ -14,6 +14,8 @@ tags:
   - Firewall
   - Orchestration
   - vLLM
+  - Remediation
+  - Deployment
 review_cadence: Quarterly
 last_reviewed: 2025-09-23
 ---

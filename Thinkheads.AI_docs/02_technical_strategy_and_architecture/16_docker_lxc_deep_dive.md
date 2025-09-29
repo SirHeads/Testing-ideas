@@ -1,3 +1,22 @@
+---
+title: Docker in LXC Deep Dive Analysis
+summary: A deep dive analysis of running Docker in unprivileged LXC containers, covering storage drivers, AppArmor profiles, and script optimization.
+document_type: Analysis
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - Docker
+  - LXC
+  - Deep Dive
+  - Analysis
+  - fuse-overlayfs
+  - AppArmor
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Docker in LXC Deep Dive Analysis
 
 ## 1. Fuse-Overlayfs vs. Overlay2 in a ZFS Environment

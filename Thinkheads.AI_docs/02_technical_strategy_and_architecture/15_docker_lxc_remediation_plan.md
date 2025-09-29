@@ -1,3 +1,22 @@
+---
+title: 'Architectural Plan: Docker in Unprivileged LXC Remediation'
+summary: An architectural plan for running Docker securely and efficiently in unprivileged LXC containers.
+document_type: Architectural Plan
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - Docker
+  - LXC
+  - Remediation
+  - Security
+  - AppArmor
+  - fuse-overlayfs
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Architectural Plan: Docker in Unprivileged LXC Remediation
 
 ## 1. High-Level Summary

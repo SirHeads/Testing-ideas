@@ -1,3 +1,21 @@
+---
+title: Inter-Script Communication Strategy
+summary: A strategy for passing structured configuration data between the phoenix_orchestrator.sh script and its sub-scripts.
+document_type: Technical Strategy
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - Inter-Script Communication
+  - Shell Scripting
+  - JSON
+  - stdin
+  - Orchestration
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Inter-Script Communication Strategy for Phoenix Hypervisor
 
 **Author:** Roo, Architect

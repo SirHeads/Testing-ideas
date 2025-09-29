@@ -7,10 +7,13 @@ version: '1.0'
 author: Roo
 owner: Thinkheads.AI
 tags:
-  - phoenix_hypervisor
-  - architecture
-  - analysis
-  - refactoring
+  - Phoenix Hypervisor
+  - Architecture
+  - Analysis
+  - Refactoring
+  - Modularity
+  - Orchestration
+  - Configuration Management
 review_cadence: Annual
 last_reviewed: '2025-09-23'
 ---

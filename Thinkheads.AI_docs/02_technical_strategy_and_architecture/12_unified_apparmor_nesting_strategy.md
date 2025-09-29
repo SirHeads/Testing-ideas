@@ -1,3 +1,21 @@
+---
+title: Unified AppArmor and Nesting Strategy
+summary: A unified strategy for managing AppArmor profiles and LXC nesting in the Phoenix Hypervisor environment.
+document_type: Technical Strategy
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - AppArmor
+  - Nesting
+  - LXC
+  - Docker
+  - Security
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Unified AppArmor and Nesting Strategy for Phoenix Hypervisor
 
 ## 1. Introduction

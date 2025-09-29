@@ -1,3 +1,21 @@
+---
+title: AppArmor Deep Dive
+summary: A comprehensive overview of the AppArmor implementation within the Phoenix Hypervisor project.
+document_type: Technical Deep Dive
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - AppArmor
+  - Deep Dive
+  - Security
+  - LXC
+  - Orchestration
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # AppArmor Deep Dive for Phoenix Hypervisor
 
 This document provides a comprehensive overview of the AppArmor implementation within the Phoenix Hypervisor project. It is intended for an audience of technology consultants and internal architects.

@@ -7,10 +7,13 @@ version: '1.0'
 author: Roo
 owner: Thinkheads.AI
 tags:
-  - lxc
-  - nginx
-  - api_gateway
-  - architecture
+  - LXC
+  - Nginx
+  - API Gateway
+  - Architecture
+  - Reverse Proxy
+  - Security
+  - Performance
 review_cadence: Annual
 last_reviewed: '2025-09-23'
 ---

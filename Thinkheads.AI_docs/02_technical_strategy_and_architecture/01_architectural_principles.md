@@ -1,6 +1,6 @@
 ---
 title: Architectural Principles
-summary: This document outlines the architectural principles for Thinkheads.AI, including modularity, reusability, idempotency, configuration as code, and an open-source first approach.
+summary: This document outlines the architectural principles for Thinkheads.AI, including modularity, reusability, idempotency, configuration as code, and an open-source-first approach.
 document_type: Technical Strategy
 status: Approved
 version: 1.0.0
@@ -11,6 +11,10 @@ tags:
   - Strategy
   - Technical
   - Architecture
+  - Modularity
+  - Idempotency
+  - Configuration as Code
+  - Open Source
 review_cadence: Bi-Annually
 last_reviewed: 2025-09-23
 ---

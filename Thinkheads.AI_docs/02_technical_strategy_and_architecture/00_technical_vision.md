@@ -11,6 +11,11 @@ tags:
   - Strategy
   - Business
   - Architecture
+  - Automation
+  - Scalability
+  - Proxmox
+  - Hybrid Cloud
+  - Open Source
 review_cadence: Annual
 last_reviewed: 2025-09-23
 ---

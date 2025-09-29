@@ -20,7 +20,7 @@ This document provides instructions for new developers on how to set up their en
 
 ## 1. Introduction to the Declarative Architecture
 
-The Phoenix Hypervisor has transitioned to a declarative architecture, where the desired state of the system is defined in configuration files. The `phoenix_orchestrator.sh` script reads these configurations and makes the necessary changes to the Proxmox environment to match the desired state. This approach ensures that the system is predictable, repeatable, and easy to manage.
+The Phoenix Hypervisor uses a declarative architecture, where the desired state of the entire system—including Virtual Machines (VMs) and LXC containers—is defined in JSON configuration files. The `phoenix_orchestrator.sh` script reads these configurations and makes the necessary changes to the Proxmox environment to match the desired state. This approach ensures that the system is predictable, repeatable, and easy to manage.
 
 ## 2. Setting Up Your Environment
 
@@ -30,43 +30,46 @@ Before you can start working with the Phoenix Hypervisor, you need to set up you
 
 *   A Proxmox VE 7.x or later host
 *   A user with sudo privileges on the Proxmox host
-*   Access to the Proxmox API
-*   Git installed on your local machine
+*   Git and `jq` installed on the Proxmox host
 
 ### Cloning the Repository
 
-Clone the `phoenix_hypervisor` repository to your local machine:
+Clone the `phoenix_hypervisor` repository to your Proxmox host:
 
 ```bash
-git clone https://github.com/thinkheads-ai/phoenix_hypervisor.git
+git clone https://github.com/thinkheads-ai/phoenix_hypervisor.git /usr/local/phoenix_hypervisor
 ```
 
 ## 3. Running the Orchestrator
 
-The `phoenix_orchestrator.sh` script is the main entry point for managing the Phoenix Hypervisor. It is located in the `bin` directory of the repository.
+The `phoenix_orchestrator.sh` script is the single entry point for managing the Phoenix Hypervisor. It is located in the `bin` directory of the repository.
 
 ### Initial Setup
 
 Before you can create any containers or VMs, you need to run the initial setup command to configure the Proxmox host:
 
 ```bash
-./phoenix_orchestrator.sh --setup-hypervisor
+/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh --setup-hypervisor
 ```
 
-This command will install the necessary dependencies, configure the network, and set up the storage.
+This command will install the necessary dependencies, configure the network, and set up the ZFS storage pools.
 
-### Creating a Container
+### Creating a VM or LXC Container
 
-To create a new container, you need to define its configuration in the `phoenix_lxc_configs.json` file. Once you have defined the container, you can create it by running the following command:
+To create a new VM or LXC container, you first need to define its configuration in the appropriate JSON file:
+*   **For VMs:** `usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json`
+*   **For LXC Containers:** `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`
+
+Once you have defined the resource, you can create it by running the following unified command:
 
 ```bash
-./phoenix_orchestrator.sh CTID
+/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh <ID>
 ```
 
-Where `CTID` is the ID of the container you want to create.
+Where `<ID>` is the `vmid` or `ctid` of the resource you want to create or update. The orchestrator will automatically determine the resource type based on the configuration files.
 
-## 4. Refactored LXC Container Management
+## 4. Further Reading
 
-The LXC container management scripts have been refactored to be more modular and easier to maintain. The new scripts are located in the `bin/lxc_setup` directory. Each script is responsible for a specific feature, such as installing Docker or configuring the network.
-
-For more information about the refactored scripts, please refer to the [LXC Container Implementation Guide](02_lxc_container_implementation_guide.md).
+For more detailed information about the system architecture and specific container implementations, please refer to the following guides:
+*   [System Architecture Guide](00_system_architecture_guide.md)
+*   [LXC Container Implementation Guide](02_lxc_container_implementation_guide.md)

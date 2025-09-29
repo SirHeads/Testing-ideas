@@ -1,3 +1,23 @@
+---
+title: AppArmor Remediation and Architectural Redesign
+summary: A plan for refactoring the AppArmor implementation to be more robust, flexible, and configuration-driven.
+document_type: Architectural Plan
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - AppArmor
+  - Remediation
+  - Architecture
+  - Security
+  - LXC
+  - GPU
+  - Docker
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # AppArmor Remediation and Architectural Redesign
 
 This document outlines a new, more robust, and flexible architecture for managing AppArmor profiles within the Phoenix project. This redesign addresses the limitations of the current implementation and provides a more scalable and maintainable solution for securing LXC containers with NVIDIA GPU passthrough.

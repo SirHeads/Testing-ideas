@@ -7,9 +7,12 @@ version: '1.0'
 author: Roo
 owner: Thinkheads.AI
 tags:
-  - rag
-  - optimization
-  - strategy
+  - RAG
+  - Optimization
+  - Strategy
+  - Markdown
+  - Shell Scripts
+  - Documentation
 review_cadence: Annual
 last_reviewed: '2025-09-23'
 ---

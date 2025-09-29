@@ -11,6 +11,12 @@ tags:
   - Strategy
   - Technical
   - Architecture
+  - Proxmox
+  - LXC
+  - VM
+  - GPU
+  - AppArmor
+  - Docker
 review_cadence: Quarterly
 last_reviewed: 2025-09-29
 ---

@@ -11,10 +11,20 @@ tags:
   - Strategy
   - Technical
   - Architecture
+  - Proxmox
+  - Linode
+  - Docker
+  - Nginx
+  - PostgreSQL
+  - Python
+  - FastAPI
+  - vLLM
+  - Ollama
+  - RAG
 review_cadence: Quarterly
 last_reviewed: 2025-09-23
 ---
-# ThinkHeads.ai Technology Stack
+# Technology Stack
 
 ## Overview
 The ThinkHeads.ai technology stack is designed to support AI-driven project development, portfolio showcasing, and efficient solo operation. It leverages a combination of local and cloud infrastructure, open-source tools, and automation to enable rapid learning and deployment of AI/ML/DL applications. The stack is optimized for scalability, security, and cost-efficiency, aligning with the goal of building a job-ready portfolio in artificial intelligence.

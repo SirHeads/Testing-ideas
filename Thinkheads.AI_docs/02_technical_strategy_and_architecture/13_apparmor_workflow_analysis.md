@@ -1,3 +1,21 @@
+---
+title: AppArmor Workflow Analysis
+summary: A comprehensive analysis of the AppArmor workflow for the Phoenix Hypervisor, covering both hypervisor setup and LXC container creation.
+document_type: Analysis
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - AppArmor
+  - Workflow
+  - Analysis
+  - Security
+  - LXC
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # AppArmor Workflow Analysis
 
 ## 1. Overview

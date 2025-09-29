@@ -1,3 +1,21 @@
+---
+title: Declarative Storage Management Strategy
+summary: A strategy for safely managing ZFS pools and Proxmox storage in a declarative, automated environment.
+document_type: Technical Strategy
+status: Approved
+version: 1.0.0
+author: Roo
+owner: Technical VP
+tags:
+  - Storage Management
+  - ZFS
+  - Proxmox
+  - Declarative Configuration
+  - Data Safety
+review_cadence: Annual
+last_reviewed: 2025-09-23
+---
+
 # Declarative Storage Management Strategy
 
 **Version:** 1.0
