@@ -3,7 +3,7 @@ title: AppArmor Workflow Analysis
 summary: A comprehensive analysis of the AppArmor workflow for the Phoenix Hypervisor, covering both hypervisor setup and LXC container creation.
 document_type: Analysis
 status: Approved
-version: 1.0.0
+version: 1.1.0
 author: Roo
 owner: Technical VP
 tags:
@@ -13,14 +13,14 @@ tags:
   - Security
   - LXC
 review_cadence: Annual
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-30
 ---
 
 # AppArmor Workflow Analysis
 
 ## 1. Overview
 
-This document provides a comprehensive analysis of the AppArmor workflow for the Phoenix Hypervisor, covering both hypervisor setup and LXC container creation. The workflow is designed to be idempotent and driven by a single source of truth, ensuring a consistent and secure environment.
+This document provides a comprehensive analysis of the AppArmor workflow for the Phoenix Hypervisor, covering both hypervisor setup and LXC container creation. The workflow is designed to be idempotent and driven by a single source of truth, ensuring a consistent and secure environment. However, a recent analysis has revealed a significant discrepancy between the intended design and the current implementation, which will be detailed in this document.
 
 ## 2. Workflow Diagram
 
@@ -31,16 +31,19 @@ graph TD
     C --> D{Reload AppArmor Service};
     D --> E{LXC Container Creation};
     E --> F{Read LXC Configuration};
-    F --> G{Assign AppArmor Profile};
-    G --> H{Start Container};
-    H --> I[End];
+    F --> G{Profile Assigned?};
+    G -- Yes --> H{Assign AppArmor Profile};
+    G -- No --> I{Assign 'unconfined' Profile};
+    H --> J{Start Container};
+    I --> J;
+    J --> K[End];
 
     subgraph Hypervisor
         B; C; D;
     end
 
-    subgraph LXC Container
-        E; F; G; H;
+    subgraph "LXC Container"
+        E; F; G; H; I; J;
     end
 ```
 
@@ -60,23 +63,39 @@ The script is designed to be idempotent, meaning it can be run multiple times wi
 
 ## 4. LXC Container Creation
 
-The AppArmor profiles are assigned to LXC containers during the creation process, using the `phoenix_lxc_configs.json` file as the single source of truth.
+The AppArmor profiles are assigned to LXC containers during the creation process, using the `phoenix_lxc_configs.json` file as the single source of truth. The `phoenix_orchestrator.sh` script's `apply_apparmor_profile` function reads the `apparmor_profile` key from the configuration and applies it to the container.
 
 ### 4.1. Single Source of Truth
 
-The `phoenix_lxc_configs.json` file defines the AppArmor profile for each LXC container using the `apparmor_profile` key. This centralized approach ensures that all containers are configured consistently and securely.
+The `phoenix_lxc_configs.json` file defines the AppArmor profile for each LXC container using the `apparmor_profile` key. This centralized approach is intended to ensure that all containers are configured consistently and securely.
 
 ### 4.2. Workflow Steps
 
-1.  **Read LXC Configuration:** During container creation, the provisioning scripts read the `phoenix_lxc_configs.json` file to get the container's configuration.
-2.  **Assign AppArmor Profile:** The value of the `apparmor_profile` key is used to assign the appropriate AppArmor profile to the container.
+1.  **Read LXC Configuration:** During container creation, the `phoenix_orchestrator.sh` script reads the `phoenix_lxc_configs.json` file to get the container's configuration.
+2.  **Assign AppArmor Profile:** The value of the `apparmor_profile` key is used to assign the appropriate AppArmor profile to the container. If the value is `unconfined`, the container will run without AppArmor restrictions.
 3.  **Start Container:** The container is started with the specified AppArmor profile, enforcing the defined security policies.
 
-## 5. AppArmor Profiles
+## 5. Discrepancy Analysis and Recommendations
 
-The following AppArmor profiles are used in the Phoenix Hypervisor environment:
+### 5.1. Analysis
 
-### 5.1. `lxc-gpu-docker-storage`
+A review of the current `phoenix_lxc_configs.json` file reveals that nearly all container definitions are set to `"apparmor_profile": "unconfined"`. This means that despite the presence of custom AppArmor profiles (`lxc-gpu-docker-storage`, `lxc-nesting-v1`, etc.), they are not being applied to the containers. This represents a significant deviation from the intended security posture of the Phoenix Hypervisor environment.
+
+The root cause of this discrepancy appears to be a configuration oversight rather than a flaw in the workflow automation. The `hypervisor_feature_setup_apparmor.sh` and `phoenix_orchestrator.sh` scripts are functioning as designed, but they are being fed incorrect data from the configuration file.
+
+### 5.2. Recommendations
+
+To remediate this issue and align the implementation with the intended design, the following actions are recommended:
+
+1.  **Update `phoenix_lxc_configs.json`:** The `apparmor_profile` key for each container in `phoenix_lxc_configs.json` should be updated to reference the appropriate AppArmor profile. For example, containers requiring GPU, Docker, and storage access should use the `lxc-gpu-docker-storage` profile.
+2.  **Testing and Validation:** After updating the configuration, a thorough testing and validation phase should be conducted to ensure that the AppArmor profiles do not introduce any regressions or unexpected behavior. This should include testing all critical container functions, such as GPU passthrough, Docker operations, and storage access.
+3.  **Documentation Update:** The `13_apparmor_workflow_analysis.md` document has been updated to reflect the current state and the recommended remediation. Once the remediation is complete, this document should be reviewed again to ensure it accurately reflects the final implementation.
+
+## 6. AppArmor Profiles
+
+The following AppArmor profiles are available in the Phoenix Hypervisor environment:
+
+### 6.1. `lxc-gpu-docker-storage`
 
 This profile is designed for containers that require access to NVIDIA GPUs, Docker, and shared storage. It includes rules to:
 
@@ -85,7 +104,7 @@ This profile is designed for containers that require access to NVIDIA GPUs, Dock
 *   Allow access to shared storage mounts.
 *   Deny writes to sensitive system areas.
 
-### 5.2. `lxc-nesting-v1`
+### 6.2. `lxc-nesting-v1`
 
 This profile is designed for containers that require nesting capabilities. It includes rules to:
 
@@ -93,6 +112,6 @@ This profile is designed for containers that require nesting capabilities. It in
 *   Incorporate rules from Proxmox's default nesting profile.
 *   Add custom rules for GPU, Docker, and storage access.
 
-## 6. Conclusion
+## 7. Conclusion
 
-The AppArmor workflow for the Phoenix Hypervisor is a well-designed and robust system that ensures a secure and consistent environment for all LXC containers. The use of idempotent scripts and a single source of truth for configuration makes the workflow easy to manage and maintain.
+The AppArmor workflow for the Phoenix Hypervisor is a well-designed and robust system that ensures a secure and consistent environment for all LXC containers. However, the current implementation is not aligned with the intended design due to a configuration oversight. By updating the `phoenix_lxc_configs.json` file to use the correct AppArmor profiles, the security posture of the environment can be significantly improved. The use of idempotent scripts and a single source of truth for configuration will make the workflow easy to manage and maintain once the initial configuration is corrected.

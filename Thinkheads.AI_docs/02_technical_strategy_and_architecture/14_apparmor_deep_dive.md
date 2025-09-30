@@ -55,7 +55,17 @@ graph TD
 
 This architecture ensures that the hypervisor is always aware of our custom profiles, and that each container is configured with the correct profile during its creation and configuration lifecycle.
 
-## 3. Profile Analysis: `lxc-phoenix-v2`
+## 3. Profile Overview
+
+To provide a comprehensive security framework, we have developed a suite of custom AppArmor profiles, each tailored to a specific use case. This granular approach allows us to apply the principle of least privilege with precision.
+
+*   **`lxc-docker-nested`**: A general-purpose profile for containers that require Docker and nesting capabilities.
+*   **`lxc-gpu-docker-storage`**: A specialized profile for containers that need access to GPUs, Docker, and shared storage.
+*   **`lxc-nesting-v1`**: A foundational profile that enables nesting for containers that do not require Docker.
+*   **`lxc-phoenix-v1`**: An earlier iteration of our comprehensive profile, which has since been superseded by `v2`.
+*   **`lxc-phoenix-v2`**: Our most robust and current profile, designed for complex services like Portainer that require extensive permissions for Docker management, nesting, and system interaction.
+
+## 4. Detailed Profile Analysis: `lxc-phoenix-v2`
 
 The `lxc-phoenix-v2` profile is a prime example of our approach to custom, granular security. It is designed specifically for containers that require Docker and nesting capabilities.
 
@@ -68,12 +78,23 @@ The `lxc-phoenix-v2` profile is a prime example of our approach to custom, granu
 
 This targeted approach ensures that the container has all the permissions it needs to function correctly, without granting unnecessary access to the host system.
 
-## 4. Detailed Workflow Explanation
+## 5. Detailed Workflow Explanation
 
 The end-to-end workflow for applying an AppArmor profile is as follows:
 
 1.  **Configuration:** A container's desired AppArmor profile is defined in the `phoenix_lxc_configs.json` file using the `apparmor_profile` key.
-### 3.1. Capability Breakdown
+2.  **Orchestration:** When the `phoenix_orchestrator.sh` script is run for that container, it enters the `apply_configurations` state.
+3.  **Profile Application:** The `apply_apparmor_profile` function is called.
+    *   It reads the `apparmor_profile` value from the configuration file.
+    *   It copies the corresponding profile from our project's `/usr/local/phoenix_hypervisor/etc/apparmor/` directory to the system's `/etc/apparmor.d/` directory.
+    *   It modifies the container's configuration file (`/etc/pve/lxc/<CTID>.conf`) to set the `lxc.apparmor.profile` to the specified profile.
+    *   If `apparmor_manages_nesting` is true, it also adds the necessary lines to the configuration file to enable nesting.
+4.  **Enforcement:** The script reloads the AppArmor service using `systemctl reload apparmor`. This makes the host's kernel aware of the new or updated profile.
+5.  **Container Start:** When the container is started in a later state, LXC reads the configuration file and tells the kernel to apply the specified AppArmor profile to the container's processes.
+
+This workflow is robust, idempotent, and ensures that our security policies are consistently enforced across all containers.
+
+### 5.1. Capability Breakdown
 
 The following table details the specific Linux capabilities granted in the `lxc-phoenix-v2` profile, providing a clear rationale for each permission.
 
@@ -89,17 +110,8 @@ The following table details the specific Linux capabilities granted in the `lxc-
 | `net_admin`          | Allows performing various network-related administrative operations.                                       | Critical for Docker to create and manage its own network namespaces, bridges, and virtual interfaces. |
 | `mac_admin`          | Allows overriding Mandatory Access Control (MAC).                                                          | Necessary for the container to manage its own security policies, especially in a nested environment.  |
 | `net_broadcast`      | Allows sending broadcast messages.                                                                         | Used for network discovery and other network protocols that rely on broadcast packets.                |
-2.  **Orchestration:** When the `phoenix_orchestrator.sh` script is run for that container, it enters the `apply_configurations` state.
-3.  **Profile Application:** The `apply_apparmor_profile` function is called.
-    *   It reads the `apparmor_profile` value from the configuration file.
-    *   It copies the corresponding profile from our project's `/usr/local/phoenix_hypervisor/etc/apparmor/` directory to the system's `/etc/apparmor.d/` directory.
-    *   It modifies the container's configuration file (`/etc/pve/lxc/<CTID>.conf`) to set the `lxc.apparmor.profile` to the specified profile.
-    *   If `apparmor_manages_nesting` is true, it also adds the necessary lines to the configuration file to enable nesting.
-4.  **Enforcement:** The script reloads the AppArmor service using `systemctl reload apparmor`. This makes the host's kernel aware of the new or updated profile.
-5.  **Container Start:** When the container is started in a later state, LXC reads the configuration file and tells the kernel to apply the specified AppArmor profile to the container's processes.
 
-This workflow is robust, idempotent, and ensures that our security policies are consistently enforced across all containers.
-## 5. Lifecycle of a Container: The Story of LXC 910
+## 6. Lifecycle of a Container: The Story of LXC 910
 
 To illustrate the entire process, let's trace the lifecycle of container 910 (Portainer) from a single command to a fully operational state.
 
@@ -162,12 +174,12 @@ graph TD
 5.  **Finalization:** The orchestrator runs any defined health checks and creates snapshots, completing the process.
 
 This detailed lifecycle demonstrates how our declarative configuration drives a consistent and secure provisioning process, with AppArmor being a foundational part of the container's identity from the moment of its creation.
-## 6. Architectural Alignment with Proxmox Philosophy
+## 7. Architectural Alignment with Proxmox Philosophy
 
 An important consideration in our architecture is the minimalist nature of the Proxmox VE host environment. By default, Proxmox does not include the `apparmor-utils` package, which provides command-line tools for managing AppArmor profiles. This is a deliberate design choice that aligns with the philosophy of keeping the hypervisor lean, stable, and secure.
 
 Our declarative, code-driven approach to AppArmor management aligns perfectly with this philosophy. By treating the hypervisor as a production target and managing our security profiles within our version-controlled project, we enhance the stability and reproducibility of our entire system.
-## 7. The Role of Configuration Files
+## 8. The Role of Configuration Files
 
 Our AppArmor strategy is entirely driven by our declarative configuration files. This ensures that our security policies are version-controlled, auditable, and consistently applied.
 
@@ -178,12 +190,14 @@ This file is the heart of our container configuration and plays a direct role in
 *   `"apparmor_profile"`: This string specifies which AppArmor profile to apply to the container. The `phoenix_orchestrator.sh` script reads this value and uses it to select the correct profile from our custom profile directory. If the value is `"unconfined"`, no profile is applied.
 *   `"apparmor_manages_nesting"`: This boolean flag tells the orchestrator whether the selected AppArmor profile includes the necessary permissions for nesting. If `true`, the orchestrator will add the `lxc.apparmor.allow_nesting=1` line to the container's configuration, enabling nested virtualization.
 
+Our current strategy is to default to `"unconfined"` for most containers, which provides a baseline level of security while allowing for flexibility during development and testing. We apply our custom, more restrictive profiles to containers that are exposed to the network or that run critical services, such as the Portainer container (`CTID 910`), which uses the `lxc-phoenix-v2` profile.
+
 This declarative approach allows us to see the security posture of our entire container fleet at a glance, simply by reading this file.
 
 ### `phoenix_hypervisor_config.json`
 
 While this file does not directly reference AppArmor profiles, it plays a crucial supporting role. It defines the overall structure of the hypervisor, including storage locations and network configurations. A stable and well-defined hypervisor environment is a prerequisite for a successful AppArmor implementation, as it ensures that the paths and resources that our profiles are protecting are consistent and predictable.
-## 8. Deep Dive: Hypervisor Setup (`--setup-hypervisor`)
+## 9. Deep Dive: Hypervisor Setup (`--setup-hypervisor`)
 
 The initial setup of the hypervisor is a critical process that lays the foundation for our entire security architecture. The `hypervisor_feature_setup_apparmor.sh` script, called during the `--setup-hypervisor` run, is responsible for ensuring that our custom AppArmor profiles are correctly deployed and loaded on the Proxmox host.
 

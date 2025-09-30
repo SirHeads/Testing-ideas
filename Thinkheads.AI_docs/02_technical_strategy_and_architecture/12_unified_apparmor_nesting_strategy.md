@@ -3,7 +3,7 @@ title: Unified AppArmor and Nesting Strategy
 summary: A unified strategy for managing AppArmor profiles and LXC nesting in the Phoenix Hypervisor environment.
 document_type: Technical Strategy
 status: Approved
-version: 1.0.0
+version: 2.0.0
 author: Roo
 owner: Technical VP
 tags:
@@ -13,14 +13,14 @@ tags:
   - Docker
   - Security
 review_cadence: Annual
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-30
 ---
 
 # Unified AppArmor and Nesting Strategy for Phoenix Hypervisor
 
 ## 1. Introduction
 
-This document outlines a unified strategy for managing AppArmor profiles and LXC nesting within the Phoenix Hypervisor environment. The goal is to establish a consistent, scalable, and maintainable approach that enhances security and simplifies container management.
+This document outlines a unified strategy for managing AppArmor profiles and LXC nesting within the Phoenix Hypervisor environment. The goal is to establish a consistent, scalable, and maintainable approach that enhances security and simplifies container management. While the initial strategy focused on a single profile, the current implementation has evolved to a multi-profile system to accommodate a variety of use cases.
 
 ## 2. Core Principles
 
@@ -29,11 +29,13 @@ This document outlines a unified strategy for managing AppArmor profiles and LXC
 *   **Scalability:** The strategy should be able to accommodate a growing number of containers and a variety of use cases.
 *   **Single Source of Truth:** The `phoenix_lxc_configs.json` file should be the single source of truth for all container configurations.
 
-## 3. The `lxc-docker-nested` AppArmor Profile
+## 3. AppArmor Profiles
 
-To address the challenges of running Docker in a nested environment, we will introduce a new AppArmor profile named `lxc-docker-nested`. This profile is designed to be a secure baseline for nested Docker containers.
+The Phoenix Hypervisor environment utilizes a set of specialized AppArmor profiles to provide tailored security policies for different container roles. The following profiles are available:
 
-### 3.1. Profile Content
+### 3.1. `lxc-docker-nested`
+
+This profile is designed to be a secure baseline for nested Docker containers.
 
 ```
 #include <tunables/global>
@@ -49,8 +51,10 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   capability sys_nice,
   capability sys_resource,
   capability net_bind_service,
+  capability net_raw,
   capability net_admin,
   capability mac_admin,
+  capability net_broadcast,
 
   # Network access
   network inet stream,
@@ -62,6 +66,11 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   # DNS resolution
   /etc/resolv.conf r,
   /etc/hosts r,
+  /etc/nsswitch.conf r,
+
+  # Allow access to networking libraries
+  /lib/** mr,
+  /usr/lib/** mr,
 
   # Shared storage mounts
   /mnt/shared/** rwm,
@@ -83,6 +92,7 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   # Allow necessary mounts for nesting and storage
   mount fstype=bpf -> /sys/fs/bpf/**,
   mount fstype=securityfs -> /sys/kernel/security/**,
+  /sys/kernel/security/apparmor/profiles r,
   mount fstype=tracefs -> /sys/kernel/tracing/**,
   mount fstype=zfs -> /zfs/storage/**,
 
@@ -106,9 +116,25 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
 }
 ```
 
+### 3.2. `lxc-gpu-docker-storage`
+
+This profile provides a secure environment for containers that require access to GPUs, Docker, and shared storage.
+
+### 3.3. `lxc-nesting-v1`
+
+This profile is a general-purpose nesting profile that provides a secure baseline for nested containers that do not require Docker or GPU access.
+
+### 3.4. `lxc-phoenix-v1`
+
+This profile is an early version of the `lxc-phoenix-v2` profile and is considered deprecated.
+
+### 3.5. `lxc-phoenix-v2`
+
+This profile is a comprehensive profile for containers that require a wide range of permissions, including Docker, GPU access, and advanced nesting features. It is currently used by the Portainer container.
+
 ## 4. Standardized Configuration in `phoenix_lxc_configs.json`
 
-All containers that require Docker will have the following configuration in the `phoenix_lxc_configs.json` file:
+All containers will have their AppArmor profile and nesting options defined in the `phoenix_lxc_configs.json` file. The `apparmor_profile` key is used to select the appropriate profile for each container.
 
 ```json
 "pct_options": [
@@ -118,11 +144,11 @@ All containers that require Docker will have the following configuration in the 
 "apparmor_profile": "lxc-docker-nested"
 ```
 
-**Note on ZFS:** The `mount fstype=zfs` rule in the AppArmor profile is dependent on the orchestrator correctly generating the `lxc.mount.entry` from the `zfs_volumes` definition in the JSON configuration.
+**Note on ZFS:** The `mount fstype=zfs` rule in the AppArmor profiles is dependent on the orchestrator correctly generating the `lxc.mount.entry` from the `zfs_volumes` definition in the JSON configuration.
 
 ## 5. Orchestration Logic
 
-The `phoenix_orchestrator.sh` script will be updated to read the `apparmor_profile` and `pct_options` from the JSON configuration and apply them to each container. This ensures that the correct security policies and nesting features are enforced consistently.
+The `phoenix_orchestrator.sh` script reads the `apparmor_profile` and `pct_options` from the JSON configuration and applies them to each container. This ensures that the correct security policies and nesting features are enforced consistently.
 
 ## 6. Workflow Diagram
 

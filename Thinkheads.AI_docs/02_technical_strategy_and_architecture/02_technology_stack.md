@@ -1,9 +1,9 @@
 ---
 title: Technology Stack
-summary: This document outlines the technology stack for Thinkheads.AI, including hardware infrastructure, software stack, integration plan, and scalability considerations.
+summary: This document outlines the technology stack for Thinkheads.AI, including hardware infrastructure, software stack, integration plan, and scalability considerations, with a focus on the declarative infrastructure provided by the Phoenix Hypervisor project.
 document_type: Technical Strategy
 status: Approved
-version: 1.0.0
+version: 2.0.0
 author: Thinkheads.AI
 owner: Technical VP
 tags:
@@ -12,7 +12,7 @@ tags:
   - Technical
   - Architecture
   - Proxmox
-  - Linode
+  - LXC
   - Docker
   - Nginx
   - PostgreSQL
@@ -21,96 +21,78 @@ tags:
   - vLLM
   - Ollama
   - RAG
+  - Phoenix Hypervisor
 review_cadence: Quarterly
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-29
 ---
 # Technology Stack
 
 ## Overview
-The ThinkHeads.ai technology stack is designed to support AI-driven project development, portfolio showcasing, and efficient solo operation. It leverages a combination of local and cloud infrastructure, open-source tools, and automation to enable rapid learning and deployment of AI/ML/DL applications. The stack is optimized for scalability, security, and cost-efficiency, aligning with the goal of building a job-ready portfolio in artificial intelligence.
+The Thinkheads.AI technology stack is designed to support AI-driven project development, portfolio showcasing, and efficient solo operation. It leverages a combination of local and cloud infrastructure, open-source tools, and a declarative automation framework called Phoenix Hypervisor to enable rapid learning and deployment of AI/ML/DL applications. The stack is optimized for scalability, security, and cost-efficiency, aligning with the goal of building a job-ready portfolio in artificial intelligence.
+
+## Declarative Infrastructure with Phoenix Hypervisor
+The cornerstone of our technical strategy is the Phoenix Hypervisor project, a sophisticated, automated system for provisioning Proxmox LXC containers and Virtual Machines (VMs). It leverages a combination of shell scripts and JSON configuration files to create a stateless, idempotent, and highly customizable deployment pipeline.
+
+- **`phoenix_orchestrator.sh`**: The single point of entry for all provisioning and management tasks. It reads from the configuration files to create, configure, and manage the entire lifecycle of the virtualized infrastructure.
+- **`phoenix_hypervisor_config.json`**: Defines the global settings for the Proxmox environment, including networking, storage (ZFS), and shared volumes.
+- **`phoenix_lxc_configs.json`**: Provides detailed configurations for each LXC container, specifying resources, features (e.g., Docker, NVIDIA, vLLM, Ollama), and application-specific scripts.
+- **`phoenix_vm_configs.json`**: Defines the configurations for virtual machines, including their source templates and features.
+
+This declarative approach ensures that our infrastructure is reproducible, version-controlled, and can be easily modified and extended.
 
 ## Hardware Infrastructure
 - **Local Proxmox Server**:
   - **Specifications**: AMD 7700 CPU, 96 GB DDR5 RAM, dual RTX 5060 Ti GPUs, NVMe storage (1 TB).
-  - **Role**: Hosts compute-intensive tasks, including LLM training (Ollama), image processing (Imagen), and development environments.
+  - **Role**: Hosts compute-intensive tasks, including LLM hosting (vLLM, Ollama), image processing, and development environments.
   - **Configuration**:
     - Proxmox VE for virtualization.
-    - LXC containers: `dockProd1` (LLM hosting, 1 RTX 5060 Ti), `dockProd2` (image processing, PostgreSQL, dynamic GPU access), `dockTest1` (testing).
-    - VM for ML desktop with GPU passthrough for interactive development.
-    - Network: Shared network, SSH access, RustDesk for remote management.
+    - LXC containers for hosting AI/ML workloads and services, with resources and features defined in `phoenix_lxc_configs.json`.
+    - VMs for development environments with GPU passthrough for interactive development.
 - **Linode Cloud Server**:
   - **Specifications**: 4 GB RAM, 2 CPU cores, 80 GB SSD storage, Debian OS.
-  - **Role**: Hosts public-facing ThinkHeads.ai website and lightweight services.
+  - **Role**: Hosts public-facing Thinkheads.AI website and lightweight services.
   - **Configuration**: Docker for production/test environments, Nginx for web serving, Cloudflare Tunnel for secure access.
 
 ## Software Stack
-- **Cloudflare**:
-  - **Role**: DNS management, DDoS protection, and secure access to Linode server.
-  - **Usage**: Configures DNS for ThinkHeads.ai, enables Cloudflare Tunnel for secure remote access to services, and provides performance optimization (e.g., caching).
+- **Proxmox VE**:
+  - **Role**: Virtualization platform for the local server.
+  - **Usage**: Manages LXC containers and VMs, allocates GPU resources for ML tasks, and supports isolated environments for production and testing, all orchestrated by the Phoenix Hypervisor.
+- **LXC**:
+    - **Role**: Lightweight containerization for isolating services and applications.
+    - **Usage**: Used extensively on the Proxmox server to run various services, including Docker, vLLM, Ollama, and Nginx. Configurations are managed declaratively through `phoenix_lxc_configs.json`.
+- **Docker**:
+  - **Role**: Application containerization.
+  - **Usage**: Deployed as a feature within LXC containers to run applications like Portainer and other services. This nested virtualization approach provides a flexible and scalable environment for application deployment.
 - **Nginx**:
-  - **Role**: Web server for ThinkHeads.ai and API reverse proxy.
-  - **Usage**: Serves static Hugo site on Linode, proxies API requests to FastAPI, supports SSL/TLS for secure connections.
+  - **Role**: Web server and reverse proxy.
+  - **Usage**: Serves the static Hugo site on Linode and acts as a reverse proxy for services running in LXC containers on the Proxmox server. Configuration is managed through the Phoenix Hypervisor, with site configurations stored in the project repository.
 - **PostgreSQL**:
   - **Role**: Database for storing user data, project metadata, and RAG embeddings.
-  - **Usage**: Hosted in LXC container (`dockProd2`) on Proxmox for development and Linode for production. Stores game states (Online Card Game), user profiles, and learning notes (Learning Assistant).
+  - **Usage**: Deployed within an LXC container, its configuration and management are handled at the application level.
 - **Python/FastAPI**:
-  - **Role**: Backend API development for dynamic features and integrations.
-  - **Usage**: Powers APIs for chat interface (AI-driven website), note-taking (Learning Assistant), strategy outputs (Meeting Room), game logic (Online Card Game), and avatar processing (User Profiles). Hosted in Docker on Linode and LXC on Proxmox.
-- **Linux**:
-  - **Role**: Operating system for servers and development environments.
-  - **Usage**: Debian on Linode for stability, Ubuntu in Proxmox LXC/VMs for development flexibility. Manages all server operations and scripting.
-- **Proxmox VE**:
-  - **Role**: Virtualization platform for local server.
-  - **Usage**: Manages LXC containers and VMs, allocates GPU resources for ML tasks, supports isolated environments for production (dockProd1, dockProd2) and testing (dockTest1).
-- **RustDesk**:
-  - **Role**: Remote desktop and server management.
-  - **Usage**: Provides secure access to Proxmox server and ML desktop VM for monitoring and development from any location.
-- **n8n**:
-  - **Role**: Workflow automation for repetitive tasks.
-  - **Usage**: Automates backups (rsync to Linode), deployment updates (Docker pulls), monitoring (resource usage alerts), and scheduling (e.g., overnight avatar processing). Hosted in LXC container on Proxmox.
-- **Ollama**:
+  - **Role**: Backend API development.
+  - **Usage**: Powers the backend APIs for various projects. The FastAPI application is containerized and deployed within an LXC container.
+- **vLLM & Ollama**:
   - **Role**: Local LLM hosting for AI-driven features and RAG.
-  - **Usage**: Runs fine-tuned LLMs in `dockProd1` for chat interface (AI-driven website), Learning Assistant, and Meeting Room. Supports RAG with markdown documents stored in PostgreSQL.
-- **Hugo**:
-  - **Role**: Static site generator for ThinkHeads.ai.
-  - **Usage**: Generates public-facing website on Linode, hosting markdown documentation, project demos, and blog posts. Lightweight and fast, integrated with Nginx.
-- **Imagen (or equivalent AI image model)**:
-  - **Role**: AI-powered image processing for User Profiles.
-  - **Usage**: Generates avatars from webcam photos, running in `dockProd2` with GPU support. Processes images overnight via n8n-scheduled workflows.
+  - **Usage**: Deployed as features within dedicated LXC containers with GPU passthrough. Their configurations, including model selection and operational parameters, are managed declaratively in `phoenix_lxc_configs.json`.
+- **Cloudflare**:
+  - **Role**: DNS management, DDoS protection, and secure access.
+  - **Usage**: Manages DNS for Thinkheads.AI and provides a secure tunnel to the Linode server.
 - **Git**:
-  - **Role**: Version control for code and documentation.
-  - **Usage**: Stores markdown files and project code in a repository on Proxmox, synced to Linode for public access. Supports collaboration with open-source community if needed.
+  - **Role**: Version control for code, configuration, and documentation.
+  - **Usage**: The entire Phoenix Hypervisor project, including all configuration files and scripts, is stored in a Git repository, enabling versioning and collaborative development.
 
 ## Integration Plan
-- **Website Hosting**:
-  - Hugo generates static site on Linode, served by Nginx.
-  - Cloudflare manages DNS and security, with Tunnel for secure API access.
-- **AI/ML Workloads**:
-  - Ollama and Imagen run in Proxmox LXC containers (`dockProd1`, `dockProd2`) with GPU passthrough for LLM training and image processing.
-  - PostgreSQL stores RAG embeddings and project data, accessible via FastAPI.
-- **Automation**:
-  - n8n workflows automate backups (markdown files, PostgreSQL), deployments (Docker updates), and scheduling (e.g., Learning Assistant sessions, avatar generation).
-  - RustDesk enables remote monitoring of Proxmox tasks.
-- **Development Workflow**:
-  - Code and markdown edited in VS Code on Proxmox VM or local machine.
-  - Git pushes updates to Proxmox repository, synced to Linode for public site.
-  - FastAPI endpoints handle dynamic features, integrated with Ollama and PostgreSQL.
-- **RAG Pipeline**:
-  - Markdown documents parsed and embedded using Ollama, stored in PostgreSQL.
-  - FastAPI queries embeddings for Meeting Room LLM and Learning Assistant, enabling context-aware responses.
+- **Declarative Provisioning**: The `phoenix_orchestrator.sh` script reads the JSON configuration files to provision and configure the entire infrastructure, from the hypervisor itself to the individual LXC containers and VMs.
+- **AI/ML Workloads**: vLLM and Ollama are deployed as features within LXC containers, with their models and configurations managed by the Phoenix Hypervisor.
+- **Development Workflow**: Developers can modify the JSON configuration files to change the infrastructure, add new services, or update existing ones. These changes are then applied by running the `phoenix_orchestrator.sh` script.
 
 ## Scalability and Constraints
-- **Scalability**:
-  - Hugo and Nginx ensure low-resource website hosting on Linode.
-  - Proxmox’s LXC containers allow dynamic resource allocation (e.g., GPU sharing between `dockProd1` and `dockProd2`).
-  - Cloudflare caching reduces Linode load for public traffic.
-- **Constraints**:
-  - Linode’s 4 GB RAM limits complex backend services; offload heavy tasks to Proxmox.
-  - Solo operation requires automation (n8n) to manage 20-hour/week time budget.
-  - GPU availability (dual RTX 5060 Ti) requires careful scheduling for LLM and image tasks.
+- **Scalability**: The declarative nature of the Phoenix Hypervisor allows for easy scaling of the infrastructure. New containers and VMs can be added by simply defining them in the configuration files.
+- **Constraints**: The primary constraints are the hardware resources of the local Proxmox server. As the number of services and AI/ML workloads grows, it may be necessary to upgrade the hardware.
 
 ## Success Metrics
-- **Operational Stability**: Achieve 99% uptime for ThinkHeads.ai (Linode, Nginx, Cloudflare) and Proxmox services.
-- **Performance**: Ensure LLM responses (Ollama) under 2 seconds, avatar generation (Imagen) under 10 seconds per image.
-- **Automation**: Automate 80% of repetitive tasks (e.g., backups, deployments) via n8n within 3 months.
-- **Portfolio Readiness**: Deploy all stack components to support five sub-products within 6 months, documented on ThinkHeads.ai.
+- **Operational Stability**: Achieve 99.9% uptime for all services, managed and monitored through the Phoenix Hypervisor.
+- **Performance**: Maintain high performance for AI/ML workloads, with LLM response times under 2 seconds.
+- **Automation**: Automate 95% of infrastructure management tasks through the Phoenix Hypervisor.
+- **Portfolio Readiness**: Deploy and manage all project components through the declarative infrastructure provided by the Phoenix Hypervisor.

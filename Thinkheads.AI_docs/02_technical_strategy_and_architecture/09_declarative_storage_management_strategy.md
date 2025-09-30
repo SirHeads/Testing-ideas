@@ -3,7 +3,7 @@ title: Declarative Storage Management Strategy
 summary: A strategy for safely managing ZFS pools and Proxmox storage in a declarative, automated environment.
 document_type: Technical Strategy
 status: Approved
-version: 1.0.0
+version: 1.1.0
 author: Roo
 owner: Technical VP
 tags:
@@ -13,13 +13,13 @@ tags:
   - Declarative Configuration
   - Data Safety
 review_cadence: Annual
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-30
 ---
 
 # Declarative Storage Management Strategy
 
-**Version:** 1.0
-**Date:** 2025-09-23
+**Version:** 1.1
+**Date:** 2025-09-30
 **Author:** Roo, Architect
 
 ---
@@ -34,7 +34,7 @@ While effective for initial setup, this approach carries a significant risk in p
 
 ### 1.2. The Solution: Safety Over Unchecked Automation
 
-We propose a new strategy that shifts from a purely convergent model to a **"state-validation" model**. This model prioritizes data safety above all else.
+This document outlines our **"state-validation" model**, which prioritizes data safety above all else.
 
 **Our Guiding Principles:**
 
@@ -56,7 +56,7 @@ By implementing this strategy, we will:
 
 ### 2.1. Proposed Changes to Script Logic
 
-The `hypervisor_feature_setup_zfs.sh` script will be refactored to incorporate the new state-validation logic.
+The `hypervisor_feature_setup_zfs.sh` script incorporates state-validation logic to prevent accidental data loss.
 
 #### 2.1.1. `create_zfs_pools` Function Modifications
 
@@ -75,13 +75,13 @@ The `hypervisor_feature_setup_zfs.sh` script will be refactored to incorporate t
 
 ### 2.2. New Configuration Options and Execution Modes
 
-To manage destructive operations, we will introduce a new `--mode` command-line flag for the script:
+To manage destructive operations, the script uses a `--mode` command-line flag and a configuration setting.
 
 *   `--mode safe` (Default): The script will run in non-destructive mode. It will abort on any critical mismatch.
 *   `--mode interactive`: The script will prompt the user for confirmation before performing any destructive action.
 *   `--mode force-destructive`: The script will proceed with destructive actions without prompting. This mode should be used with extreme caution.
 
-Alternatively, a flag can be added to `phoenix_hypervisor_config.json`:
+Additionally, a flag in `phoenix_hypervisor_config.json` can override the command-line mode:
 
 ```json
 {

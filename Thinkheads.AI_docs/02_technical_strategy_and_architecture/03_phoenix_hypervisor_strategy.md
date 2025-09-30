@@ -3,7 +3,7 @@ title: Phoenix Hypervisor Strategy
 summary: This document outlines the strategic importance and configuration of the Phoenix Hypervisor, the central powerhouse for Thinkheads.AI's compute-intensive AI/ML/DL workloads.
 document_type: Technical Strategy
 status: Approved
-version: 2.0.0
+version: 2.1.0
 author: Thinkheads.AI
 owner: Technical VP
 tags:
@@ -22,7 +22,7 @@ last_reviewed: 2025-09-29
 ---
 # Phoenix Hypervisor Strategy
 
-The local Proxmox server, codenamed "Phoenix Hypervisor," serves as the central powerhouse for ThinkHeads.ai's compute-intensive AI/ML/DL workloads, orchestrating both LXC containers and Virtual Machines (VMs). Its strategic configuration and resource management are critical for supporting the project's ambitious goals in skill development and portfolio creation.
+The local Proxmox server, codenamed "Phoenix Hypervisor," serves as the central powerhouse for Thinkheads.AI's compute-intensive AI/ML/DL workloads, orchestrating both LXC containers and Virtual Machines (VMs). Its strategic configuration and resource management are critical for supporting the project's ambitious goals in skill development and portfolio creation.
 
 ## Hardware Specifications
 *   **CPU**: AMD 7700
@@ -39,9 +39,15 @@ The Phoenix Hypervisor is specifically designed to host and manage demanding AI 
 ## Configuration and Resource Management
 The Proxmox VE virtualization platform is configured to optimize resource utilization and ensure efficient operation across both LXC containers and Virtual Machines (VMs):
 *   **LXC Containers**:
-    *   `lxc-955`: Dedicated for LLM hosting with one RTX 5060 Ti GPU passthrough.
-    *   `lxc-956`: Configured for image processing, PostgreSQL, and dynamic GPU access, allowing flexible allocation of the second RTX 5060 Ti.
-    *   `lxc-957`: Used for testing and experimentation of new features and models.
+    *   `lxc-950`: Dedicated for vLLM with Qwen2.5-7B-Instruct-AWQ model, with one RTX 5060 Ti GPU passthrough.
+    *   `lxc-951`: Dedicated for vLLM with ibm-granite/granite-embedding-english-r2 model, with one RTX 5060 Ti GPU passthrough.
+    *   `lxc-952`: Configured for Qdrant vector database.
+    *   `lxc-953`: Nginx reverse proxy for routing requests to various services.
+    *   `lxc-954`: n8n workflow automation tool.
+    *   `lxc-955`: Ollama for running various LLMs.
+    *   `lxc-956`: OpenWebUI for interacting with Ollama models.
+    *   `lxc-957`: LlamaCPP for running GGUF models.
+    *   `lxc-960`: Monitoring stack with Prometheus and Grafana.
 *   **VM with GPU Passthrough**: A dedicated virtual machine provides an interactive ML desktop environment, leveraging direct GPU access for intensive development and debugging.
 *   **GPU Scheduling**: Careful scheduling and dynamic release mechanisms are implemented to manage the dual RTX 5060 Ti GPUs, preventing clashes between concurrent LLM and image processing tasks and ensuring optimal performance for each workload.
 *   **Network and Remote Access**: A shared network facilitates internal communication, while SSH access and RustDesk enable secure remote management and monitoring of the hypervisor and its hosted services.
@@ -49,4 +55,4 @@ The Proxmox VE virtualization platform is configured to optimize resource utiliz
 *   **Docker-LXC Integration**: Docker is seamlessly integrated into the LXC containers, allowing for the deployment of containerized applications within the Phoenix Hypervisor ecosystem.
 
 ## Strategic Importance
-The Phoenix Hypervisor's robust capabilities and flexible configuration are paramount to ThinkHeads.ai's success, enabling the execution of complex AI/ML/DL projects within defined resource constraints and supporting the rapid iteration and deployment of AI applications. Its ability to efficiently manage GPU-intensive tasks is a key enabler for achieving high-impact portfolio pieces.
+The Phoenix Hypervisor's robust capabilities and flexible configuration are paramount to Thinkheads.AI's success, enabling the execution of complex AI/ML/DL projects within defined resource constraints and supporting the rapid iteration and deployment of AI applications. Its ability to efficiently manage GPU-intensive tasks is a key enabler for achieving high-impact portfolio pieces.
