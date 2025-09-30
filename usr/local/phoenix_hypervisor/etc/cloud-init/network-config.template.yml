@@ -1,9 +1,27 @@
+# File: network-config.template.yml
+# Description: This Cloud-Init network configuration template is used by the phoenix_orchestrator.sh to dynamically
+#              generate network settings for a new VM. The orchestrator replaces the placeholders (e.g., __IPV4_ADDRESS__)
+#              with values from the 'network_config' section of a VM's definition in phoenix_vm_configs.json.
+#              This declarative approach allows for the automated, consistent, and error-free application of network
+#              configurations, supporting both static and DHCP setups during VM provisioning.
+#
+# Placeholders:
+#   - __DHCP4_ENABLED__: Replaced with 'true' or 'false' to enable or disable DHCP for the primary network interface.
+#   - __IPV4_ADDRESS__: Replaced with the static IPv4 address and subnet mask (e.g., '192.168.1.100/24').
+#   - __IPV4_GATEWAY__: Replaced with the default gateway address for the VM.
+#
+# Usage:
+#   The phoenix_orchestrator.sh script reads this template, performs a search-and-replace for the placeholders,
+#   and saves the output to a temporary file. This generated file is then passed to the VM via the Cloud-Init
+#   datasource to configure the guest operating system's network upon first boot.
+#
+
 network:
   version: 2
   ethernets:
-    ens18:
+    ens18: # Default network interface name for VMs in Proxmox.
       dhcp4: __DHCP4_ENABLED__
       addresses: [__IPV4_ADDRESS__]
       gateway4: __IPV4_GATEWAY__
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+        addresses: [8.8.8.8, 8.8.4.4] # Google's public DNS servers are used as a default.

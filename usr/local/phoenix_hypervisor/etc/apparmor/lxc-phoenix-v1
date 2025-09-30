@@ -1,33 +1,50 @@
+# AppArmor profile for Phoenix Hypervisor (Version 1 - Legacy).
+# This is a comprehensive profile for containers requiring a wide range of permissions,
+# including Docker, GPU access, and nesting. It has been superseded by lxc-phoenix-v2
+# but is retained for backward compatibility.
+# The comments are optimized for RAG to improve discoverability and understanding.
+
 #include <tunables/global>
 
 profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
-  # Include standard LXC abstractions for container base and startup
+  # Base abstractions for LXC containers. These provide the foundational rules
+  # for a standard unprivileged container.
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Capabilities for basic container operation, nesting, and network
+  # Capabilities for basic container operation, nesting, and network management.
+  # sys_admin: A broad capability needed for container nesting and management.
+  # sys_chroot: Allows changing the root directory, essential for containers.
+  # mknod: Permits the creation of special files (devices).
+  # sys_nice: Allows modification of process priority.
+  # sys_resource: Allows adjustments to resource limits.
+  # net_bind_service: Allows binding to privileged ports (below 1024).
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
   capability sys_nice,
   capability sys_resource,
-  capability net_bind_service,  # For binding to privileged ports (<1024)
+  capability net_bind_service,
 
-  # Network access rules
-  network inet stream,   # TCP over IPv4
-  network inet6 stream,  # TCP over IPv6
-  network inet dgram,    # UDP over IPv4
-  network inet6 dgram,   # UDP over IPv6
+  # Allow standard network protocols (TCP/UDP over IPv4/IPv6).
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
 
-  # DNS resolution (specific rules instead of nameservice abstraction)
+  # Allow read access to files required for DNS name resolution.
+  # Also permits network access to DNS ports (53) for queries.
   /etc/resolv.conf r,
   /etc/hosts r,
-  network inet dgram port 53,  # DNS queries (UDP)
-  network inet stream port 53, # DNS queries (TCP, for large responses)
+  network inet dgram port 53,
+  network inet stream port 53,
 
-  # Rules for nesting support
+  # Security: Explicitly deny access to sensitive host-level proc and sys files
+  # exposed by LXC. This is a critical security measure to prevent container escapes.
   deny /dev/.lxc/proc/** rw,
   deny /dev/.lxc/sys/** rw,
+
+  # Allow mounting of standard and temporary filesystems required for container operation.
   mount fstype=proc -> /var/cache/lxc/**,
   mount fstype=sysfs -> /var/cache/lxc/**,
   mount fstype=cgroup -> /sys/fs/cgroup/**,
@@ -36,7 +53,8 @@ profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
   mount fstype=devpts -> /dev/pts/**,
   mount fstype=mqueue -> /dev/mqueue/**,
 
-  # Allow access to NVIDIA GPU devices (supporting two GPUs)
+  # Allow read, write, and mount access to NVIDIA GPU devices. This is essential
+  # for passing through GPU hardware to the container for AI/ML workloads.
   /dev/nvidia0 rwm,
   /dev/nvidia1 rwm,
   /dev/nvidia-uvm rwm,
@@ -44,17 +62,20 @@ profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
   /dev/nvidia-caps/* rwm,
   /dev/dri/* rwm,
 
-  # Allow Docker-related paths for nesting
+  # Docker-specific permissions. These rules allow the container to interact with
+  # the Docker daemon, its executables, and its data directory for nested containerization.
   /var/lib/docker/** rwm,
   /run/docker.sock rw,
   /usr/bin/docker rix,
   /usr/libexec/docker/** rix,
 
-  # Allow shared storage (directory or ZFS mounts)
+  # Allow read, write, and mount access to shared storage locations.
+  # These paths are used for persistent data, models, and datasets.
   /mnt/shared/** rwm,
   /zfs/storage/** rwm,
 
-  # Allow necessary mounts for Docker, nesting, and storage
+  # Allow mounting of filesystems required for Docker (overlay), eBPF (bpf),
+  # security introspection (securityfs), and ZFS storage.
   mount fstype=overlay -> /var/lib/docker/**,
   mount fstype=bpf -> /sys/fs/bpf/**,
   mount fstype=securityfs -> /sys/kernel/security/**,
@@ -62,14 +83,16 @@ profile lxc_phoenix_v1 flags=(attach_disconnected,mediate_deleted) {
   mount fstype=tracefs -> /sys/kernel/tracing/**,
   mount fstype=zfs -> /zfs/storage/**,
 
-  # Allow bind mounts for shared storage
+  # Allow bind mounts, which are essential for mounting shared storage directories
+  # into the container from the host.
   mount options=(rw,bind) -> /mnt/**,
   mount options=(rw,remount) -> /mnt/**,
   mount options=(rw,nosuid,nodev,noexec,relatime,bind) -> /mnt/**,
 
-  # Deny specific mounts for security
+  # Security: Deny mounting of binfmt_misc by default to prevent the execution
+  # of arbitrary binary formats.
   audit deny mount fstype=binfmt_misc,
 
-  # Allow read-only access to home directories
+  # Allow read-only access to user home directories on the host.
   /home/*/ r,
 }

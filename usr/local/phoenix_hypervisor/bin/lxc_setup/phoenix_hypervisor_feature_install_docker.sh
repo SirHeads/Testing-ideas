@@ -1,22 +1,33 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_feature_install_docker.sh
-# Description: Automates the installation and configuration of Docker Engine,
-#              NVIDIA Container Toolkit (if GPU assigned), and Portainer (server or agent)
-#              within a Proxmox LXC container. This script is designed to be idempotent
-#              and is typically called by the main orchestrator.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), apt-get, curl, gnupg,
-#               lsb-release, mkdir, gpg, chmod, tee, dpkg, systemctl, jq, docker,
-#               nvidia-container-toolkit (conditional).
+# Description: This script is a modular feature installer responsible for creating a complete and secure
+#              containerization environment within a target LXC container using Docker. As part of the
+#              Phoenix Hypervisor's declarative setup, this script is invoked by the main orchestrator
+#              when "docker" is specified in a container's `features` array in `phoenix_lxc_configs.json`.
+#              It handles the installation of Docker Engine, configures the secure `fuse-overlayfs`
+#              storage driver, and, if a GPU is assigned to the container, installs and configures the
+#              NVIDIA Container Toolkit to enable GPU-accelerated Docker workloads. The script is
+#              idempotent, ensuring that repeated executions do not alter the final configured state.
+#
+# Dependencies:
+#   - phoenix_hypervisor_common_utils.sh: Provides shared functions for logging and container interaction.
+#   - An active internet connection within the container for downloading packages.
+#   - The 'nvidia' feature script must be run before this one if GPU support is required.
+#
 # Inputs:
-#   $1 (CTID) - The container ID for the LXC container.
-#   Configuration values from LXC_CONFIG_FILE: .gpu_assignment, .portainer_role,
-#   .portainer_server_ip, .portainer_agent_port.
+#   - $1 (CTID): The unique Container ID for the target LXC container.
+#   - Container configuration from `phoenix_lxc_configs.json`, specifically the `features` array
+#     to determine if the NVIDIA toolkit is needed.
+#
 # Outputs:
-#   Docker installation logs, NVIDIA Container Toolkit installation logs, Portainer
-#   deployment logs, Docker daemon configuration modifications, log messages to stdout
-#   and MAIN_LOG_FILE, exit codes indicating success or failure.
-# Version: 1.0.0
+#   - A fully installed and operational Docker environment inside the specified LXC container.
+#   - Configuration of Docker's daemon.json with the `fuse-overlayfs` storage driver and
+#     NVIDIA as the default runtime (if applicable).
+#   - Detailed logs of the installation process to stdout and the main log file.
+#   - Returns exit code 0 on success, non-zero on failure.
+#
+# Version: 1.1.0
 # Author: Phoenix Hypervisor Team
 
 # --- Shell Settings ---
@@ -40,20 +51,26 @@ CTID=""
 # =====================================================================================
 # =====================================================================================
 # Function: parse_arguments
-# Description: Parses command-line arguments to extract the Container ID (CTID).
+# Description: Validates and parses the command-line arguments provided to the script.
+#              It requires a single argument: the CTID of the target LXC container.
+#              This ensures that all subsequent operations are performed on the correct container.
 # Arguments:
 #   $1 - The Container ID (CTID) for the LXC container.
+# Globals:
+#   - CTID: This global variable is set with the value of $1 for use throughout the script.
 # Returns:
-#   Exits with status 2 if no CTID is provided.
+#   - None. The script will exit with status 2 if the CTID is not provided.
 # =====================================================================================
 parse_arguments() {
-    # Check if exactly one argument (CTID) is provided
+    # The script cannot proceed without a target container. This check enforces that requirement.
     if [ "$#" -ne 1 ]; then
         log_error "Usage: $0 <CTID>"
+        log_error "This script requires the LXC Container ID to install the Docker feature."
         exit_script 2
     fi
-    CTID="$1" # Assign the first argument to CTID
-    log_info "Executing Docker feature for CTID: $CTID"
+    # Set the global CTID variable to the validated command-line argument.
+    CTID="$1"
+    log_info "Executing Docker modular feature for CTID: $CTID"
 }
 
 # =====================================================================================
@@ -62,66 +79,63 @@ parse_arguments() {
 # =====================================================================================
 # =====================================================================================
 # Function: install_and_configure_docker
-# Description: Orchestrates the complete installation and configuration of Docker Engine.
-#              This includes adding Docker repositories, installing Docker components,
-#              and conditionally installing/configuring the NVIDIA Container Toolkit
-#              if a GPU is assigned to the container.
+# Description: This is the main workflow function that orchestrates the entire Docker setup process.
+#              It follows a structured, idempotent process to ensure a consistent outcome. The key stages are:
+#              1. Dependency Installation: Installs necessary tools like curl, gpg, and jq.
+#              2. Docker Repository Setup: Adds the official Docker APT repository to the container's sources.
+#              3. Docker Engine Installation: Installs docker-ce, cli, containerd, and the compose plugin.
+#              4. Secure Storage Driver Configuration: Installs and configures `fuse-overlayfs`, which is the
+#                 recommended storage driver for running Docker in unprivileged LXC containers for security.
+#              5. Conditional NVIDIA Toolkit Installation: If the container is configured with the "nvidia"
+#                 feature, it installs the NVIDIA Container Toolkit and sets NVIDIA as the default runtime,
+#                 enabling GPU passthrough to Docker containers.
+#              6. Service Management: Restarts and enables the Docker service to apply all configurations.
 # Arguments:
-#   None (uses global CTID).
+#   None. It relies on the global CTID variable.
 # Returns:
-#   None. Exits with a fatal error if any installation or configuration step fails.
+#   - None. The script will exit on failure due to `set -e`.
 # =====================================================================================
 install_and_configure_docker() {
     log_info "Starting Docker installation and configuration in CTID: $CTID"
 
-    # Wait for the container to initialize and have network connectivity
+    # A brief wait and network check can prevent failures in newly created containers that are not yet fully initialized.
     if ! verify_lxc_network_connectivity "$CTID"; then
         log_warn "Container $CTID is not fully network-ready. Proceeding with caution."
     fi
 
-    # --- Pre-computation and Idempotency Checks ---
-    local docker_installed=false
-    # Use raw 'pct exec' for the systemctl check to prevent the script from exiting if the service is not active.
-    # This ensures that if Docker is installed but not running, we can proceed to the installation/repair logic.
-    if pct exec "$CTID" -- command -v docker >/dev/null 2>&1 && pct exec "$CTID" -- systemctl is-active --quiet docker >/dev/null 2>&1; then
-        docker_installed=true
-    fi
-
     # --- Dependency Installation ---
-    # Always ensure dependencies are present, even if Docker is already installed.
-    # This makes the script more robust for partial installations or re-runs.
-    log_info "Ensuring dependencies are installed in CTID: $CTID"
+    # Ensure all necessary tools for the installation process are present.
+    log_info "Ensuring dependencies (ca-certificates, curl, gnupg, lsb-release, jq) are installed in CTID: $CTID"
     pct_exec "$CTID" apt-get update
     pct_exec "$CTID" apt-get install -y ca-certificates curl gnupg lsb-release jq
 
-    # --- NVIDIA Repository Configuration ---
-    # This must happen after dependency installation to ensure curl and gpg are available.
-    ensure_nvidia_repo_is_configured "$CTID"
-
     # --- Docker Installation ---
-    log_info "Adding Docker official repository in CTID: $CTID"
-    log_info "Verifying DNS resolution before download..."
-    pct_exec "$CTID" ping -c 1 google.com || log_warn "DNS resolution test failed. Proceeding with caution."
+    # This block follows the official Docker installation guide to add the repository and install the packages.
+    log_info "Adding Docker official GPG key and repository in CTID: $CTID"
     pct_exec "$CTID" mkdir -p /etc/apt/keyrings
+    # Download the GPG key, de-armor it, and store it in the keyrings directory.
     pct_exec "$CTID" curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
     pct_exec "$CTID" gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
     pct_exec "$CTID" chmod a+r /etc/apt/keyrings/docker.gpg
     pct_exec "$CTID" rm /tmp/docker.gpg
-    pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
+    # Add the official Docker repository to the APT sources list.
+    pct_exec "$CTID" bash -c "echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
     pct_exec "$CTID" apt-get update
 
-    log_info "Installing Docker Engine in CTID: $CTID"
+    log_info "Installing Docker Engine, CLI, Containerd, and Compose Plugin in CTID: $CTID"
     pct_exec "$CTID" apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-    # --- Configure fuse-overlayfs ---
-    log_info "Configuring Docker to use fuse-overlayfs storage driver..."
+    # --- Configure fuse-overlayfs for Security ---
+    # Using fuse-overlayfs is a critical security measure for running Docker inside an unprivileged LXC container.
+    # It avoids the need for privileged operations that the default overlay2 driver would require.
+    log_info "Configuring Docker to use fuse-overlayfs storage driver for enhanced security in unprivileged LXC."
     if ! pct_exec "$CTID" dpkg -l | grep -q fuse-overlayfs; then
-        log_info "Installing fuse-overlayfs..."
-        pct_exec "$CTID" apt-get update
+        log_info "Installing fuse-overlayfs package..."
         pct_exec "$CTID" apt-get install -y fuse-overlayfs
     fi
 
-    log_info "Creating Docker daemon configuration..."
+    # Create the Docker daemon configuration file to specify the storage driver.
+    log_info "Creating Docker daemon configuration at /etc/docker/daemon.json..."
     pct_exec "$CTID" mkdir -p /etc/docker
     pct_exec "$CTID" bash -c 'cat <<EOF > /etc/docker/daemon.json
 {
@@ -130,40 +144,44 @@ install_and_configure_docker() {
 EOF'
 
     # --- Conditional NVIDIA Container Toolkit Installation ---
+    # This section makes the script adaptable to both CPU-only and GPU-enabled containers.
     if is_feature_present_on_container "$CTID" "nvidia"; then
-        log_info "NVIDIA feature detected. Installing and configuring NVIDIA Container Toolkit..."
+        log_info "NVIDIA feature detected. Installing and configuring NVIDIA Container Toolkit for GPU support..."
 
-        # --- Dependency Check ---
+        # The 'nvidia' feature, which installs the driver, is a hard dependency for GPU-enabled Docker.
         log_info "Verifying NVIDIA driver installation (dependency check)..."
         if ! is_command_available "$CTID" "nvidia-smi"; then
             log_fatal "NVIDIA driver not found in CTID $CTID. The 'docker' feature with GPU assignment depends on the 'nvidia' feature. Please ensure 'nvidia' is listed before 'docker' in the features array of your configuration file."
         fi
 
-        ensure_nvidia_repo_is_configured "$CTID" # Ensure NVIDIA repository is configured
+        # The NVIDIA repo is required for installing the container toolkit.
+        ensure_nvidia_repo_is_configured "$CTID"
 
-        # Check if NVIDIA Container Toolkit is already installed
+        # Install the toolkit if it's not already present.
         if pct_exec "$CTID" bash -c "dpkg -l | grep -q nvidia-container-toolkit"; then
             log_info "NVIDIA Container Toolkit already installed in CTID $CTID."
         else
-            log_info "Installing NVIDIA Container Toolkit in CTID: $CTID"
+            log_info "Installing NVIDIA Container Toolkit..."
             pct_exec "$CTID" apt-get install -y nvidia-container-toolkit
         fi
 
         # --- Safely merge NVIDIA runtime configuration using jq ---
+        # This modifies the daemon.json file to make the NVIDIA runtime available and set it as the default.
         log_info "Configuring Docker daemon for NVIDIA runtime in CTID: $CTID"
         local docker_daemon_config_file="/etc/docker/daemon.json"
+        # This JSON snippet contains the necessary configuration for the NVIDIA runtime.
         local nvidia_runtime_config='{ "default-runtime": "nvidia", "runtimes": { "nvidia": { "path": "/usr/bin/nvidia-container-runtime", "runtimeArgs": [] } } }'
 
-        pct_exec "$CTID" bash -c "mkdir -p /etc/docker && [ -f $docker_daemon_config_file ] || echo '{}' > $docker_daemon_config_file"
-        pct_exec "$CTID" bash -c "sed -i 's/\"default-runtime\": \"[^\"]*\"/\"default-runtime\": \"nvidia\"/' '$docker_daemon_config_file'"
-        pct_exec "$CTID" bash -c "sed -i '/\"runtimes\"/a \        \"nvidia\": { \"path\": \"/usr/bin/nvidia-container-runtime\", \"runtimeArgs\": [] }' '$docker_daemon_config_file'"
+        # Use jq to safely merge the existing configuration with the new NVIDIA runtime settings.
+        # This is more robust than using sed, as it correctly handles JSON syntax.
+        pct_exec "$CTID" bash -c "jq --argjson nvidia_config '${nvidia_runtime_config}' '. * \$nvidia_config' '${docker_daemon_config_file}' > /tmp/daemon.json.tmp && mv /tmp/daemon.json.tmp '${docker_daemon_config_file}'"
     else
         log_info "NVIDIA feature not detected. Skipping NVIDIA Container Toolkit installation."
     fi
 
-    # Start and enable Docker service
-    # Start and enable Docker service
-    log_info "Starting and enabling Docker service in CTID: $CTID"
+    # Restarting the service applies all the configuration changes made to daemon.json.
+    # Enabling the service ensures Docker starts automatically on container boot.
+    log_info "Restarting and enabling Docker service in CTID: $CTID"
     pct_exec "$CTID" systemctl restart docker
     pct_exec "$CTID" systemctl enable docker
 
@@ -172,35 +190,56 @@ EOF'
 
 # =====================================================================================
 # Function: verify_docker_installation
-# Description: Verifies that Docker was installed and is running correctly.
+# Description: Performs a simple post-installation check to confirm that the Docker binary
+#              is executable and the Docker service is responsive. This acts as a final
+#              sanity check to catch any critical installation failures.
+# Arguments:
+#   None. Relies on the global CTID.
+# Returns:
+#   - Logs a success message or exits with a fatal error if verification fails.
 # =====================================================================================
 verify_docker_installation() {
     log_info "Verifying Docker installation in CTID: $CTID"
+    # Running `docker --version` is a reliable way to confirm that the Docker client
+    # can communicate with the Docker daemon.
     if ! pct_exec "$CTID" docker --version; then
-        log_fatal "Docker installation verification failed. The 'docker' command is not available."
+        log_fatal "Docker installation verification failed. The 'docker' command is not available or the daemon is not responding."
     fi
-    log_success "Docker installation verified successfully."
+    log_success "Docker installation verified successfully. Docker is active and ready."
 }
 
 
 # =====================================================================================
 # Function: main
-# Description: Main entry point for the Docker feature script.
+# Description: The main entry point for the script. It orchestrates the high-level
+#              workflow: argument parsing, an idempotency check, installation,
+#              verification, and final exit.
+# Arguments:
+#   $@ - All command-line arguments passed to the script.
+# Returns:
+#   - Exits with status 0 on successful completion.
 # =====================================================================================
 main() {
-    parse_arguments "$@" # Parse command-line arguments
+    parse_arguments "$@"
 
     # --- Idempotency Check ---
-    # Use a direct, silent check for the docker command to avoid log noise from is_command_available
+    # This check prevents the script from re-running the entire installation process if Docker
+    # is already installed. This makes the orchestrator's `apply_features` state more robust.
     if pct exec "$CTID" -- command -v docker >/dev/null 2>&1; then
-        log_info "Docker is already installed in CTID $CTID. Skipping installation."
+        log_info "Docker command is already available in CTID $CTID. Skipping installation process."
+        # Even if installed, ensure the service is running.
+        log_info "Ensuring Docker service is active..."
+        pct_exec "$CTID" systemctl restart docker
+        pct_exec "$CTID" systemctl enable docker
     else
+        # If Docker is not installed, run the full installation and verification workflow.
         install_and_configure_docker
         verify_docker_installation
     fi
-    # --- End Idempotency Check ---
     
-    exit_script 0 # Exit successfully
+    log_info "Successfully completed Docker feature for CTID $CTID."
+    exit_script 0
 }
 
+# Execute the main function, passing all script arguments to it.
 main "$@"

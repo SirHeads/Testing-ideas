@@ -1,10 +1,26 @@
+# AppArmor profile for nested Docker containers.
+# This profile provides a secure baseline for running Docker inside an LXC container,
+# enforcing the principle of least privilege while allowing necessary operations
+# for containerization and nesting. It is optimized for RAG by providing
+# descriptive comments and clear rule explanations.
+
 #include <tunables/global>
 
 profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
+  # Base abstractions for LXC containers. These provide the foundational rules
+  # for a standard unprivileged container.
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Core capabilities for container operation
+  # Core capabilities required for container management, networking, and system operations.
+  # sys_admin: A broad capability needed for container nesting and management.
+  # sys_chroot: Allows changing the root directory, essential for containers.
+  # mknod: Permits the creation of special files (devices).
+  # sys_nice: Allows modification of process priority.
+  # sys_resource: Allows adjustments to resource limits.
+  # net_bind_service: Allows binding to privileged ports (below 1024).
+  # net_raw/net_admin/net_broadcast: Required for advanced network configuration.
+  # mac_admin: Allows configuration of Mandatory Access Control (MAC) policies.
   capability sys_admin,
   capability sys_chroot,
   capability mknod,
@@ -16,31 +32,33 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   capability mac_admin,
   capability net_broadcast,
 
-  # Network access
+  # Allow standard network protocols (TCP/UDP over IPv4/IPv6) and bridge access.
   network inet stream,
   network inet6 stream,
   network inet dgram,
   network inet6 dgram,
   network bridge,
 
-  # DNS resolution
+  # Allow read access to files required for DNS name resolution.
   /etc/resolv.conf r,
   /etc/hosts r,
   /etc/nsswitch.conf r,
 
-  # Allow access to networking libraries
+  # Allow read and execute access to system libraries for networking and other functions.
   /lib/** mr,
   /usr/lib/** mr,
 
-  # Shared storage mounts
+  # Allow read, write, and mount access to shared storage locations.
+  # These paths are used for persistent data and inter-container sharing.
   /mnt/shared/** rwm,
   /zfs/storage/** rwm,
 
-  # Deny access to sensitive host devices
+  # Security: Explicitly deny access to sensitive host-level proc and sys files
+  # exposed by LXC. This is a critical security measure to prevent container escapes.
   audit deny /dev/.lxc/proc/** rw,
   audit deny /dev/.lxc/sys/** rw,
 
-  # Standard system filesystem mounts
+  # Allow mounting of standard virtual filesystems required by modern Linux systems.
   mount fstype=proc -> /proc/,
   mount fstype=sysfs -> /sys/,
   mount fstype=cgroup -> /sys/fs/cgroup/**,
@@ -49,28 +67,31 @@ profile lxc_docker_nested flags=(attach_disconnected,mediate_deleted) {
   mount fstype=devpts -> /dev/pts/**,
   mount fstype=mqueue -> /dev/mqueue/**,
 
-  # Allow necessary mounts for nesting and storage
+  # Allow mounting of filesystems required for advanced container features and nesting.
+  # bpf/securityfs/tracefs are needed for introspection and eBPF.
   mount fstype=bpf -> /sys/fs/bpf/**,
   mount fstype=securityfs -> /sys/kernel/security/**,
   /sys/kernel/security/apparmor/profiles r,
   mount fstype=tracefs -> /sys/kernel/tracing/**,
   mount fstype=zfs -> /zfs/storage/**,
 
-  # Allow bind mounts for shared storage
+  # Allow bind mounts, which are essential for mounting shared storage directories
+  # into the container from the host.
   mount options=(rw,bind) -> /mnt/**,
   mount options=(rw,remount) -> /mnt/**,
   mount options=(rw,nosuid,nodev,noexec,relatime,bind) -> /mnt/**,
 
-  # Deny binfmt_misc by default for security
-  # To enable multi-architecture container support, comment out the following line
-  # and uncomment the line after it.
+  # Security: Deny mounting of binfmt_misc by default to prevent the execution
+  # of arbitrary binary formats. This can be enabled if multi-architecture
+  # container support (e.g., running ARM containers on an x86 host) is required.
   audit deny mount fstype=binfmt_misc,
   # mount fstype=binfmt_misc -> /proc/sys/fs/binfmt_misc/,
 
-  # Read-only access to home directories
+  # Allow read-only access to user home directories on the host.
   /home/*/ r,
 
-  # Docker-specific permissions
+  # Docker-specific permissions. These rules allow the container to interact with
+  # the Docker daemon socket and manage Docker's data directory.
   /var/run/docker.sock rw,
   /var/lib/docker/** rwm,
 }

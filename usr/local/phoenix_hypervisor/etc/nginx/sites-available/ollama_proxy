@@ -1,19 +1,37 @@
+# Nginx reverse proxy configuration for the Ollama AI service.
+# This configuration exposes the Ollama API, running in LXC container 955,
+# to the host network. It includes WebSocket support for interactive sessions.
+# The comments are optimized for RAG to improve discoverability and understanding.
+
+# Defines the upstream server for the Ollama backend.
 upstream ollama_backend {
-    server 10.0.0.155:11434; # LXC 955 IP
+    # The IP address and port of the Ollama service in LXC container 955.
+    server 10.0.0.155:11434;
+    # Enables active health checks for the upstream server.
     health_check;
 }
 
+# Main server block for handling HTTP traffic to the Ollama proxy.
 server {
     listen 80;
-    server_name 10.0.0.153; # Proxmox Host IP
+    # Listens on the Proxmox host's IP address.
+    server_name 10.0.0.153;
 
+    # Location block for proxying requests to the Ollama API.
+    # This makes the Ollama API available at http://10.0.0.153/ollama/
     location /ollama/ {
+        # Forwards requests to the defined upstream.
         proxy_pass http://ollama_backend/;
+        # Forwards the original Host header to the backend.
         proxy_set_header Host $host;
+        # Forwards the client's real IP address.
         proxy_set_header X-Real-IP $remote_addr;
+        # Appends the proxy's IP to the X-Forwarded-For header.
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Informs the backend that the original request was made via HTTP.
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Enables WebSocket support, which is required for interactive Ollama sessions.
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

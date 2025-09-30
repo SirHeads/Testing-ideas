@@ -1,3 +1,16 @@
+# File: default_user_data.yml
+# Description: This Cloud-Init user-data file provides a default configuration for creating a standard administrative user.
+#              It is intended as a fallback or for simple VM provisioning scenarios where dynamic user generation is not required.
+#              The phoenix_orchestrator.sh can use this file to ensure a consistent baseline user setup across multiple VMs.
+#              For production or dynamic environments, it is recommended to use the user-data.template.yml to inject
+#              user details from the phoenix_vm_configs.json file.
+#
+# Usage:
+#   This file is typically applied to a VM's Cloud-Init configuration using the 'qm set' command by the orchestrator.
+#   The placeholder '<INSERT_SSH_PUBLIC_KEY_HERE>' must be replaced with a valid SSH public key before use
+#   to enable secure, key-based authentication.
+#
+
 #cloud-config
 users:
   - name: phoenix_admin
