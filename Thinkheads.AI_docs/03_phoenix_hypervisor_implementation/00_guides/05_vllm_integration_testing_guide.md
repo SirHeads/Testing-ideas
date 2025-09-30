@@ -29,16 +29,16 @@ The testing framework consists of three main components:
 *   **Python Test Scripts:** Located in `/usr/local/phoenix_hypervisor/bin/tests/`, these scripts perform the actual tests against the vLLM API.
     *   `test_vllm_context_window.py`: Verifies that the model can handle its advertised context window size.
     *   `test_vllm_responsiveness.py`: Measures the API's response latency to ensure it meets performance standards.
-*   **Orchestration Script:** The `/usr/local/phoenix_hypervisor/bin/tests/run_vllm_integration_tests.sh` script manages the entire testing process. It reads the container's configuration, copies the test scripts into the container, installs dependencies, and executes the tests.
-*   **Integration Point:** The orchestration script is integrated into the vLLM deployment workflow via the `/usr/local/phoenix_hypervisor/bin/lxc_setup/phoenix_hypervisor_feature_install_vllm.sh` script.
+*   **Orchestration Script:** The `/usr/local/phoenix_hypervisor/bin/tests/test_runner.sh` script manages the entire testing process. It reads the container's configuration, copies the test scripts into the container, installs dependencies, and executes the tests.
+*   **Integration Point:** The testing framework is integrated into the main LXC orchestration workflow in `/usr/local/phoenix_hypervisor/bin/managers/lxc-manager.sh`.
 
 ## 3. Control Flow
 
-The testing process is triggered automatically at the end of a successful vLLM installation. The control flow is as follows:
+The testing process is triggered automatically at the end of a successful container creation workflow. The control flow is as follows:
 
-1.  The `phoenix_hypervisor_feature_install_vllm.sh` script completes the vLLM installation and configuration.
-2.  It then calls the `run_vllm_integration_tests.sh` script, passing the container ID.
-3.  The orchestration script reads the `vllm_served_model_name` and `vllm_max_model_len` from `phoenix_lxc_configs.json`.
+1.  The `lxc-manager.sh` script completes the container's setup, including feature installation and application script execution.
+2.  It then calls the `run_post_deployment_validation` function, which in turn executes the `test_runner.sh` script for the appropriate test suite.
+3.  The `test_runner.sh` script reads the `vllm_served_model_name` and `vllm_max_model_len` from `phoenix_lxc_configs.json`.
 4.  The Python test scripts are copied into the container's `/tmp/` directory.
 5.  The `python3-openai` package is installed in the container.
 6.  The Python scripts are executed with the parameters read from the configuration file.

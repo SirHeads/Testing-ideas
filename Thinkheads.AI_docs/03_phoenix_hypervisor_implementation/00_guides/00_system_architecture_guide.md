@@ -46,6 +46,7 @@ graph TD
         T900[900: Template-Base]
         T901[901: Template-GPU]
         T902[902: Template-Docker]
+        T920[920: Template-VLLM]
     end
 
     subgraph "Application VMs & Containers"
@@ -58,9 +59,10 @@ graph TD
     T8000 -- Cloned to --> VM8001
     T900 -- Cloned to --> T901
     T900 -- Cloned to --> T902
+    T901 -- Cloned to --> T920
     T901 -- Cloned to --> C955
     T902 -- Cloned to --> C952
-    T901 -- Cloned to --> C950
+    T920 -- Cloned to --> C950
 ```
 ## 2. Orchestration Workflow
 
@@ -82,23 +84,25 @@ graph TD
 
 ### 2.2. Key LXC Orchestration Steps (lxc-manager.sh)
 
-1.  **`ensure_container_defined`**: Checks if the container exists. If not, it either creates it from a base template or clones it from a parent template's snapshot.
-2.  **`apply_configurations`**: Sets the container's core resources, such as CPU cores, memory, and network settings.
-3.  **`apply_shared_volumes`**: Mounts shared storage volumes into the container.
-4.  **`start_container`**: Starts the container.
-5.  **`apply_features`**: Executes modular feature scripts inside the container.
-6.  **`run_application_script`**: Executes a final, application-specific script.
-7.  **`run_health_check`**: Performs a health check to verify the service is running correctly.
-8.  **`create_template_snapshot`**: If the container is a template, it creates a ZFS snapshot.
+1.  **`ensure_container_defined`**: Checks if the container exists. If not, it creates it from a base template or clones it from a parent template's snapshot.
+2.  **`apply_configurations`**: Sets the container's core resources (CPU, memory), network settings, AppArmor profile, and other pct/lxc options.
+3.  **`apply_zfs_volumes` / `apply_dedicated_volumes`**: Creates and attaches dedicated storage volumes.
+4.  **`ensure_container_disk_size`**: Resizes the container's root disk to the specified size.
+5.  **`start_container`**: Starts the container, with retry logic.
+6.  **`apply_features`**: Executes modular feature scripts inside the container (e.g., for Docker, NVIDIA).
+7.  **`run_application_script`**: Copies and executes a final, application-specific script inside the container.
+8.  **`run_health_check`**: Performs health checks to verify services are running correctly.
+9.  **`create_template_snapshot`**: If the container is a template, it creates a ZFS snapshot.
 
 ### 2.3. Key VM Orchestration Steps (vm-manager.sh)
 
-1.  **`ensure_vm_defined`**: Checks if the VM exists. If not, it clones it from a master template.
+1.  **`ensure_vm_defined`**: Checks if the VM exists. If not, it clones it from a master template or creates it from a cloud image.
 2.  **`apply_vm_configurations`**: Sets the VM's core resources and generates dynamic Cloud-Init configurations for networking and user setup.
 3.  **`start_vm`**: Starts the VM.
 4.  **`wait_for_guest_agent`**: Waits for the QEMU Guest Agent to become responsive.
-5.  **Feature Application**: Features are applied via Cloud-Init on the first boot.
+5.  **`apply_vm_features`**: Applies features via Cloud-Init on the first boot.
 6.  **`create_vm_snapshot`**: If the VM is a template, it creates a snapshot.
+7.  **Template Finalization**: If the VM is a template, it is cleaned, finalized, and converted to a Proxmox template.
 
 ## 3. Configuration Reference
 
@@ -117,6 +121,7 @@ This file contains the specific definitions for each QEMU/KVM Virtual Machine, k
 | `vmid` | Number | The unique ID of the VM. |
 | `name` | String | The hostname of the VM. |
 | `clone_from_vmid` | Number | The VMID of the master template to clone from. |
+| `template_image` | String | The cloud image to use for creating a new template. |
 | `cores` / `memory_mb` | Number | CPU and RAM allocation. |
 | `network_config` | Object | Defines the VM's network interface, including IP address and gateway. |
 | `user_config` | Object | Defines the default user, password hash, and SSH key. |
@@ -133,3 +138,9 @@ This file contains the specific definitions for each LXC container, keyed by its
 | `template_snapshot_name`| String | If this container is a template, this defines the snapshot name. |
 | `features` | Array | A list of modular features to install (e.g., "base_setup", "nvidia", "docker"). |
 | `application_script` | String | The final script to run to start the container's primary application. |
+| `dependencies` | Array | A list of other container IDs that must be created before this one. |
+| `gpu_assignment` | String | The GPU(s) to assign to the container. |
+| `volumes` / `zfs_volumes` | Array | A list of dedicated storage volumes to attach to the container. |
+| `vllm_*` | String/Number | Parameters for configuring vLLM, such as the model, quantization, and port. |
+| `apparmor_profile` | String | The AppArmor profile to apply to the container. |
+| `pct_options` / `lxc_options` | Array | A list of Proxmox-specific or low-level LXC options to apply. |

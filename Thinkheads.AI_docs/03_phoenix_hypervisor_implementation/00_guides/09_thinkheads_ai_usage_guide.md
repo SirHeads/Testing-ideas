@@ -34,7 +34,7 @@ The `vm_defaults` section allows you to specify default values for VM properties
     "cores": 4,
     "memory_mb": 8192,
     "disk_size_gb": 100,
-    "storage_pool": "local-lvm",
+    "storage_pool": "quickOS-vm-disks",
     "network_bridge": "vmbr0"
 }
 ```
@@ -46,14 +46,16 @@ The `vms` array contains a list of all the VMs to be managed by the orchestrator
 ```json
 "vms": [
     {
-        "name": "webserver-vm",
-        "vmid": 9002,
-        "cores": 4,
-        "memory_mb": 8192,
-        "disk_size_gb": 100,
-        "post_create_scripts": [
-            "install_webserver.sh"
-        ]
+        "vmid": 8001,
+        "name": "docker-vm-01",
+        "clone_from_vmid": 8000,
+        "features": [
+            "docker"
+        ],
+        "network_config": {
+            "ip": "10.0.0.101/24",
+            "gw": "10.0.0.1"
+        }
     }
 ]
 ```
@@ -69,14 +71,15 @@ To create a new VM, use the `create` command, followed by the ID of the VM as de
 **Example:**
 
 ```bash
-phoenix create 9002
+phoenix create 8001
 ```
 
 This command will:
-1.  Read the VM definition with `vmid` 9002 from the configuration file.
-2.  Apply the default settings from `vm_defaults`.
-3.  Create and configure the VM using a series of `qm` commands.
-4.  Execute the `install_webserver.sh` script inside the newly created VM.
+1.  Read the VM definition with `vmid` 8001 from the configuration file.
+2.  Clone the VM from the specified `clone_from_vmid`.
+3.  Apply the network and user configurations via Cloud-Init.
+4.  Start the VM and wait for the QEMU guest agent to become responsive.
+5.  Apply the specified features (e.g., "docker") via Cloud-Init.
 
 ### 3.2. Start a VM
 
@@ -85,7 +88,7 @@ To start an existing VM, use the `start` command, followed by the VM ID.
 **Example:**
 
 ```bash
-phoenix start 9002
+phoenix start 8001
 ```
 
 ### 3.3. Stop a VM
@@ -95,7 +98,7 @@ To stop a running VM, use the `stop` command, followed by the VM ID.
 **Example:**
 
 ```bash
-phoenix stop 9002
+phoenix stop 8001
 ```
 
 ### 3.4. Delete a VM
@@ -105,7 +108,7 @@ To delete a VM, use the `delete` command, followed by the VM ID. This action is 
 **Example:**
 
 ```bash
-phoenix delete 9002
+phoenix delete 8001
 ```
 
 ## 4. VM Creation Workflow
@@ -115,9 +118,9 @@ The VM creation process is automated and follows a predefined workflow to ensure
 ```mermaid
 graph TD
     A[Start: phoenix create <ID>] --> B{Parse Config};
-    B --> C{Apply Defaults};
-    C --> D[Create VM];
-    D --> E[Set CPU and Memory];
-    E --> F[Start VM];
-    F --> G{Execute Post-Create Scripts};
+    B --> C{Clone from Template};
+    C --> D[Apply Cloud-Init Configs];
+    D --> E[Start VM];
+    E --> F{Wait for Guest Agent};
+    F --> G{Apply Features};
     G --> H[End: VM Ready];
