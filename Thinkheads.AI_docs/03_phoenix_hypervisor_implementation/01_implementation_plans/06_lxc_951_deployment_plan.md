@@ -3,7 +3,7 @@ title: 'LXC 951: vllm-granite-embed - Deployment Plan'
 summary: This document outlines the plan to create and configure LXC container 951 to host the vllm-granite-embed embedding model.
 document_type: Implementation Plan
 status: Approved
-version: '1.0'
+version: '1.1'
 author: Roo
 owner: Thinkheads.AI
 tags:
@@ -11,7 +11,7 @@ tags:
   - vllm
   - deployment
 review_cadence: Annual
-last_reviewed: '2025-09-23'
+last_reviewed: '2025-09-30'
 ---
 
 # LXC 951 Deployment Plan
@@ -26,7 +26,7 @@ The deployment will follow these steps:
 
 1.  **Configuration:** Update `phoenix_lxc_configs.json` with the specific parameters for container `951`.
 2.  **Script Adaptation:** Create the `phoenix_hypervisor_lxc_951.sh` script by adapting `phoenix_hypervisor_lxc_950.sh`. The key change will be in the API validation function.
-3.  **Execution:** Use the `phoenix_orchestrator.sh` script to create, configure, and launch the container.
+3.  **Execution:** Use the `phoenix` CLI to create, configure, and launch the container.
 4.  **Validation:** The new script will perform health checks and a final API validation tailored for the vLLM embeddings endpoint.
 
 ## 3. Key Differences from LXC 950
@@ -83,15 +83,15 @@ Create the new script by copying `phoenix_hypervisor_lxc_950.sh`. The following 
 
 The existing `phoenix_hypervisor_lxc_951.sh` script already implements these changes correctly.
 
-### Step 3: Execute the Orchestrator
+### Step 3: Execute the CLI
 
-Run the main orchestrator script, specifying CTID `951`.
+Run the `phoenix` CLI, specifying CTID `951`.
 
 ```bash
-/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh --ctid 951
+/usr/local/phoenix_hypervisor/bin/phoenix create 951
 ```
 
-The orchestrator will handle the container creation, feature installation, and execution of the new application script.
+The CLI will handle the container creation, feature installation, and execution of the new application script.
 
 ## 5. Validation
 

@@ -1,0 +1,379 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# phoenix - Main Dispatcher Script for the Phoenix Hypervisor CLI
+#
+# This script serves as the primary entry point for the Phoenix Hypervisor
+# command-line interface (CLI). It is responsible for parsing user input,
+# identifying the requested command (verb), and dispatching the request to the
+# appropriate manager script for execution. This centralized dispatcher
+# simplifies the user experience and provides a consistent interface for all
+# hypervisor operations.
+#
+# Phase 2: This phase enhances the dispatcher to identify LXC container targets
+#          and route LXC-related verbs (create, delete, start, stop, etc.) to
+#          the lxc-manager.sh script. It also introduces dependency resolution
+#          to ensure that containers are managed in the correct order based on
+#          their dependencies as defined in the configuration.
+#
+# Phase 3: This phase extends the dispatcher's capabilities to handle Virtual
+#          Machines (VMs). It introduces logic to identify VM targets by
+#          checking the phoenix_vm_configs.json file and routes all relevant
+#          verbs to the vm-manager.sh script. The dependency resolution is
+#          also enhanced to manage mixed lists of LXC and VM targets, building
+#          a single, unified dependency graph for all operations.
+#
+# Phase 4: This phase introduces the 'LetsGo' master command, which creates
+#          and starts all defined guests (LXC and VM). It reads all guest IDs
+#          from the configuration files, builds a complete dependency graph,
+#          sorts them for creation, and then sorts them by boot order for
+#          startup. This provides a single command to bring the entire
+#          environment online.
+#
+# -----------------------------------------------------------------------------
+
+# --- SCRIPT INITIALIZATION ---
+# Determine the absolute path of the script's directory to ensure reliable
+# sourcing of other scripts, regardless of where this script is called from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- SOURCE COMMON UTILITIES ---
+# Load the common utilities script, which provides a centralized set of
+# functions for logging, error handling, configuration management, and other
+# shared tasks. This promotes code reuse and consistency.
+source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
+
+# -----------------------------------------------------------------------------
+# FUNCTION: print_usage
+# DESCRIPTION: Displays a help message outlining the script's usage, available
+#              verbs, and command-line options.
+# -----------------------------------------------------------------------------
+print_usage() {
+    echo "Usage: phoenix <verb> [targets...]"
+    echo "       phoenix --help"
+    echo ""
+    echo "DESCRIPTION:"
+    echo "  The main dispatcher for the Phoenix Hypervisor CLI."
+    echo ""
+    echo "VERBS:"
+    echo "  setup    Initializes or configures the hypervisor environment."
+    echo "  create   Creates a specific LXC container or VM."
+    echo "  delete   Deletes a specific LXC container or VM."
+    echo "  start    Starts a specific LXC container or VM."
+    echo "  stop     Stops a specific LXC container or VM."
+    echo "  restart  Restarts a specific LXC container or VM."
+    echo "  status   Gets the status of a specific LXC container or VM."
+    echo "  LetsGo   Creates and starts all defined guests in the correct order."
+    echo ""
+    echo "OPTIONS:"
+    echo "  --help   Display this help message."
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: is_lxc_target
+# DESCRIPTION: Checks if a given ID corresponds to an LXC container by querying
+#              the phoenix_lxc_configs.json file.
+# ARGUMENTS:
+#   $1 - The ID to check.
+# RETURNS:
+#   0 if the ID is a valid LXC container target.
+#   1 otherwise.
+# -----------------------------------------------------------------------------
+is_lxc_target() {
+    local target_id="$1"
+    local lxc_config_file
+    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+
+    # Use jq to check if the ID exists as a key in the lxc_configs object.
+    if jq -e ".lxc_configs[\"$target_id\"]" "$lxc_config_file" > /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: is_vm_target
+# DESCRIPTION: Checks if a given ID corresponds to a VM by querying the
+#              phoenix_vm_configs.json file.
+# ARGUMENTS:
+#   $1 - The ID to check.
+# RETURNS:
+#   0 if the ID is a valid VM target.
+#   1 otherwise.
+# -----------------------------------------------------------------------------
+is_vm_target() {
+    local target_id="$1"
+    local vm_config_file
+    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+
+    # Use jq to check if a VM with the given vmid exists.
+    if jq -e ".vms[] | select(.vmid == $target_id)" "$vm_config_file" > /dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: resolve_dependencies
+# DESCRIPTION: Builds a unified dependency graph for a mixed list of LXC and VM
+#              IDs and performs a topological sort to determine the correct
+#              order of operations.
+# ARGUMENTS:
+#   $@ - A list of LXC and/or VM IDs.
+# OUTPUT:
+#   A space-separated string of IDs in the correct execution order.
+# -----------------------------------------------------------------------------
+resolve_dependencies() {
+    local targets=("$@")
+    local lxc_config_file
+    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    local vm_config_file
+    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+
+    declare -A graph
+    declare -A visited
+    declare -A recursion_stack
+    local sorted_list=""
+
+    # --- BUILD THE UNIFIED DEPENDENCY GRAPH ---
+    # Process both LXC and VM configurations to build a single graph.
+    local all_lxc_nodes=($(jq -r '.lxc_configs | keys[]' "$lxc_config_file"))
+    local all_vm_nodes=($(jq -r '.vms[].vmid' "$vm_config_file"))
+
+    # Process LXCs
+    for node in "${all_lxc_nodes[@]}"; do
+        local clone_dep=$(jq -r ".lxc_configs[\"$node\"].clone_from_ctid // \"\"" "$lxc_config_file")
+        if [ -n "$clone_dep" ] && [ "$clone_dep" != "null" ]; then
+            graph["$node"]+="$clone_dep "
+        fi
+        local deps=$(jq -r ".lxc_configs[\"$node\"].dependencies[]? // \"\"" "$lxc_config_file")
+        for dep in $deps; do
+            graph["$node"]+="$dep "
+        done
+    done
+
+    # Process VMs
+    for node in "${all_vm_nodes[@]}"; do
+        local clone_dep=$(jq -r ".vms[] | select(.vmid == $node) | .clone_from_vmid // \"\"" "$vm_config_file")
+        if [ -n "$clone_dep" ] && [ "$clone_dep" != "null" ]; then
+            graph["$node"]+="$clone_dep "
+        fi
+        # Add other VM dependency types here if they are introduced in the future.
+    done
+
+    # --- TOPOLOGICAL SORT (DFS) ---
+    topological_sort_visit() {
+        local node="$1"
+        visited["$node"]=true
+        recursion_stack["$node"]=true
+
+        for neighbor in ${graph["$node"]}; do
+            if [ "${recursion_stack[$neighbor]}" = true ]; then
+                log_error "Cycle detected in dependencies involving '$neighbor'."
+                exit 1
+            fi
+            if [ -z "${visited[$neighbor]}" ]; then
+                topological_sort_visit "$neighbor"
+            fi
+        done
+
+        recursion_stack["$node"]=false
+        sorted_list="$node $sorted_list"
+    }
+
+    # Visit each node in the initial target list.
+    for target in "${targets[@]}"; do
+        if [ -z "${visited[$target]}" ]; then
+            topological_sort_visit "$target"
+        fi
+    done
+
+    # --- FILTER AND ORDER THE FINAL LIST ---
+    # The sorted_list contains all nodes in the correct order. We now need to
+    # filter this list to include only the initial targets and their dependencies.
+    local final_list=""
+    local target_set
+    printf -v target_set '%s\n' "${targets[@]}"
+
+    for node in $sorted_list; do
+        # This simplified logic includes all dependencies of the specified targets.
+        # A more complex scenario might involve including only the specified targets
+        # in the final list, but for now, we process the full dependency chain.
+        final_list+="$node "
+    done
+
+    echo "$final_list"
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: get_all_guest_ids
+# DESCRIPTION: Retrieves all LXC and VM IDs from their respective configuration
+#              files.
+# OUTPUT:
+#   A space-separated string of all guest IDs.
+# -----------------------------------------------------------------------------
+get_all_guest_ids() {
+    local lxc_config_file
+    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    local vm_config_file
+    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+
+    local lxc_ids
+    lxc_ids=$(jq -r '.lxc_configs | keys[]' "$lxc_config_file")
+    local vm_ids
+    vm_ids=$(jq -r '.vms[].vmid' "$vm_config_file")
+
+    echo "$lxc_ids $vm_ids"
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: sort_by_boot_order
+# DESCRIPTION: Sorts a list of guest IDs based on their 'boot_order' property
+#              as defined in the configuration files.
+# ARGUMENTS:
+#   $@ - A list of guest IDs.
+# OUTPUT:
+#   A space-separated string of IDs sorted by boot order.
+# -----------------------------------------------------------------------------
+sort_by_boot_order() {
+    local guest_ids=("$@")
+    local lxc_config_file
+    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    local vm_config_file
+    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+
+    declare -A boot_orders
+
+    # Read boot orders for all guests
+    for id in $(get_all_guest_ids); do
+        if is_lxc_target "$id"; then
+            boot_orders["$id"]=$(jq -r ".lxc_configs[\"$id\"].boot_order // 999" "$lxc_config_file")
+        elif is_vm_target "$id"; then
+            # VMs do not currently have a boot_order property, so we default to 999
+            boot_orders["$id"]=999
+        fi
+    done
+
+    # Create a sortable list of "boot_order id"
+    local sortable_list=""
+    for id in "${guest_ids[@]}"; do
+        sortable_list+="${boot_orders[$id]} $id\n"
+    done
+
+    # Sort numerically and extract the IDs
+    echo -e "$sortable_list" | sort -n | awk '{print $2}' | tr '\n' ' '
+}
+
+
+# -----------------------------------------------------------------------------
+# FUNCTION: main
+# DESCRIPTION: The main execution block of the script. It parses arguments,
+#              handles the --help flag, and routes commands to the appropriate
+#              manager script based on the specified verb and target type.
+# -----------------------------------------------------------------------------
+main() {
+    if [[ "$1" == "--help" ]]; then
+        print_usage
+        exit 0
+    fi
+
+    if [ -z "$1" ]; then
+        print_usage
+        exit 1
+    fi
+
+    VERB="$1"
+    shift
+    TARGETS=("$@")
+
+    # --- TARGET RESOLUTION AND ROUTING ---
+    # Handle cases with no targets first.
+    if [ "${#TARGETS[@]}" -eq 0 ]; then
+        case "$VERB" in
+            setup)
+                log_info "Verb 'setup' received. Routing to hypervisor-manager.sh..."
+                "$SCRIPT_DIR/managers/hypervisor-manager.sh"
+                ;;
+            LetsGo)
+                log_info "Verb 'LetsGo' received. Initiating creation and startup of all guests..."
+                local all_guests
+                all_guests=$(get_all_guest_ids)
+                
+                log_info "Building full dependency graph for all guests..."
+                local creation_order
+                creation_order=$(resolve_dependencies $all_guests)
+                log_info "Creation order determined: $creation_order"
+
+                for target in $creation_order; do
+                    log_info "Creating guest '$target'..."
+                    if is_lxc_target "$target"; then
+                        "$SCRIPT_DIR/managers/lxc-manager.sh" "create" "$target"
+                    elif is_vm_target "$target"; then
+                        "$SCRIPT_DIR/managers/vm-manager.sh" "create" "$target"
+                    else
+                        log_warn "Unknown guest type for '$target'. Skipping creation."
+                    fi
+                done
+                log_info "All guests created successfully."
+
+                log_info "Determining boot order for all guests..."
+                local boot_order
+                boot_order=$(sort_by_boot_order $all_guests)
+                log_info "Boot order determined: $boot_order"
+
+                for target in $boot_order; do
+                    log_info "Starting guest '$target'..."
+                    if is_lxc_target "$target"; then
+                        "$SCRIPT_DIR/managers/lxc-manager.sh" "start" "$target"
+                    elif is_vm_target "$target"; then
+                        "$SCRIPT_DIR/managers/vm-manager.sh" "start" "$target"
+                    else
+                        log_warn "Unknown guest type for '$target'. Skipping startup."
+                    fi
+                done
+                log_info "All guests started successfully. 'LetsGo' command complete."
+                ;;
+            *)
+                log_error "Verb '$VERB' requires at least one target."
+                print_usage
+                exit 1
+                ;;
+        esac
+        exit 0
+    fi
+
+    # With targets present, resolve dependencies and route to the correct manager.
+    log_info "Targets detected. Resolving dependencies for all targets..."
+    local sorted_targets
+    sorted_targets=$(resolve_dependencies "${TARGETS[@]}")
+
+    log_info "Dependency resolution complete. Executing actions in order: $sorted_targets"
+
+    for target in $sorted_targets; do
+        log_info "Processing target '$target' for action '$VERB'..."
+        if is_lxc_target "$target"; then
+            log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."
+            "$SCRIPT_DIR/managers/lxc-manager.sh" "$VERB" "$target"
+        elif is_vm_target "$target"; then
+            log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
+            "$SCRIPT_DIR/managers/vm-manager.sh" "$VERB" "$target"
+        else
+            # Handle cases where a target is neither an LXC nor a VM.
+            # This could be a setup command with arguments or an error.
+            case "$VERB" in
+                setup)
+                    log_info "Routing 'setup' with target '$target' to hypervisor-manager.sh..."
+                    "$SCRIPT_DIR/managers/hypervisor-manager.sh" "$target"
+                    ;;
+                *)
+                    log_warn "Target '$target' is not a valid LXC or VM. Skipping."
+                    ;;
+            esac
+        fi
+    done
+}
+
+# --- SCRIPT EXECUTION ---
+# Pass all command-line arguments to the main function.
+main "$@"

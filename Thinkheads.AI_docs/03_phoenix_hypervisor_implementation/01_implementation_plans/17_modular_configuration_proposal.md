@@ -2,7 +2,7 @@
 title: Modular Configuration Proposal for Phoenix Hypervisor
 summary: A proposal to refactor the monolithic JSON configuration into a modular, directory-based structure to improve maintainability, scalability, and collaboration.
 document_type: Implementation Plan
-status: Proposed
+status: Archived
 version: 1.0.0
 author: Roo
 owner: Technical VP
@@ -22,6 +22,8 @@ last_reviewed: 2025-09-30
 The current configuration management for the Phoenix Hypervisor, centered around `phoenix_lxc_configs.json`, has served us well. However, as the number of services grows, this monolithic file presents challenges in maintainability, readability, and collaboration.
 
 This document proposes a transition to a modular, directory-based configuration structure. This evolution will enhance our ability to manage the system declaratively while making it more scalable and less prone to error.
+
+**Note:** This proposal was archived and superseded by the dispatcher-manager architecture, which addressed the core issues of maintainability and scalability by refactoring the orchestration logic rather than the configuration structure.
 
 ## 2. Current State Analysis
 
@@ -64,7 +66,7 @@ I propose breaking the monolithic `phoenix_lxc_configs.json` into a hierarchical
 
 ### 3.1. The Merging Logic
 
-The `phoenix_orchestrator.sh` script will be updated to dynamically build the final configuration for a given container by merging these files in a specific order:
+The `phoenix_orchestrator.sh` script would be updated to dynamically build the final configuration for a given container by merging these files in a specific order:
 
 1.  **Load Base Defaults:** Start with `defaults/lxc_base.json`.
 2.  **Load Profiles:** If the container's config specifies profiles (e.g., `["gpu", "docker"]`), merge `profile_gpu.json` and `profile_docker.json` on top.
@@ -119,4 +121,4 @@ graph TD
 
 ## 5. Next Steps
 
-If this proposal is approved, the next step would be to create a detailed implementation plan for refactoring the `phoenix_orchestrator.sh` script to support this new configuration model and to migrate the existing configurations.
+This proposal was not implemented. The `phoenix_orchestrator.sh` script was refactored into the `phoenix` CLI with a dispatcher-manager architecture, which addressed the project's scalability and maintainability goals.

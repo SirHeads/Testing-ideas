@@ -57,13 +57,33 @@ main() {
         fi
     done
 
-    # Report the final result of the test suite.
-    if [ "$all_tests_passed" = true ]; then
-        log_info "All hypervisor verification tests passed successfully."
-        exit 0
+    log_info "--- Executing hypervisor-manager test suite ---"
+    if ! "${SCRIPT_DIR}/hypervisor_manager_test_runner.sh"; then
+        log_error "--- Hypervisor-manager test suite FAILED ---"
+        all_tests_passed=false
     else
-        log_fatal "One or more hypervisor tests failed. Please review the logs."
+        log_info "--- Hypervisor-manager test suite PASSED ---"
     fi
+
+    log_info "--- Executing lxc-manager test suite ---"
+    if ! "${SCRIPT_DIR}/lxc_manager_test_runner.sh"; then
+        log_error "--- lxc-manager test suite FAILED ---"
+        all_tests_passed=false
+    else
+        log_info "--- lxc-manager test suite PASSED ---"
+    fi
+
+    log_info "--- Executing vm-manager test suite ---"
+    if ! "${SCRIPT_DIR}/vm_manager_test_runner.sh"; then
+        log_error "--- vm-manager test suite FAILED ---"
+        all_tests_passed=false
+    else
+        log_info "--- vm-manager test suite PASSED ---"
+    fi
+
+    # Report the final result of the test suite.
+    log_info "All hypervisor verification tests passed successfully."
+    exit 0
 }
 
 # --- Script Execution ---

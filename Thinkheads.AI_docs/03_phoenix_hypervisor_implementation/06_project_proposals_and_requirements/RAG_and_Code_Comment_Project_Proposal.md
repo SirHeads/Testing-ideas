@@ -3,7 +3,7 @@ title: "Project Proposal: RAG Optimization and Code Commenting for Phoenix Hyper
 summary: "A proposal to conduct a comprehensive code commenting and RAG optimization initiative for the phoenix_hypervisor codebase to improve maintainability and prepare for future refactoring."
 document_type: "Project Proposal"
 status: "Draft"
-version: "1.0.0"
+version: "1.1.0"
 author: "Roo"
 owner: "Technical VP"
 tags:
@@ -19,23 +19,26 @@ last_reviewed: "2025-09-30"
 
 ## 1. Introduction
 
-The `phoenix_hypervisor` project has grown into a complex and powerful system for orchestrating our AI/ML workloads. As we prepare for a significant refactoring effort, it is crucial that we first establish a deep and shared understanding of the existing codebase. This project proposes a comprehensive initiative to add detailed, RAG-optimized comments to the entire `phoenix_hypervisor` ecosystem.
+The `phoenix_hypervisor` project has grown into a complex and powerful system for orchestrating our AI/ML workloads. To improve our understanding of the codebase, it is crucial that we establish a deep and shared understanding of the existing scripts. This project proposes a comprehensive initiative to add detailed, RAG-optimized comments to the entire `phoenix_hypervisor` ecosystem.
 
-The primary goal is to enhance the clarity, maintainability, and searchability of our scripts and configurations. This will not only de-risk the upcoming refactoring but also accelerate onboarding for new developers and improve our ability to troubleshoot and extend the system.
+The primary goal is to enhance the clarity, maintainability, and searchability of our scripts and configurations. This will not only de-risk future refactoring but also accelerate onboarding for new developers and improve our ability to troubleshoot and extend the system.
 
 ## 2. Project Goals
 
 *   **Improve Codebase Clarity:** Add comprehensive comments to all scripts and configuration files to explain their purpose, logic, and interactions.
 *   **Optimize for RAG (Retrieval-Augmented Generation):** Structure comments to be easily discoverable and understandable by semantic search tools, creating a self-documenting codebase.
 *   **Establish a Knowledge Baseline:** Create a detailed, in-code knowledge base that captures the architectural decisions and operational logic of the system.
-*   **Prepare for Refactoring:** Provide the necessary context and understanding to enable a successful and efficient refactoring of the `phoenix_hypervisor` codebase.
+*   **Prepare for Future Refactoring:** Provide the necessary context and understanding to enable successful and efficient refactoring of the `phoenix_hypervisor` codebase.
 
 ## 3. Scope and File Groupings
 
 This project will cover all scripts and configuration files within the `usr/local/phoenix_hypervisor/` directory. To ensure a systematic and focused effort, the work will be divided into the following functional groups. Each group will be treated as a sub-task.
 
 ### Group 1: Core Orchestration & Configuration
-*   `bin/phoenix_orchestrator.sh`
+*   `bin/phoenix`
+*   `bin/managers/hypervisor-manager.sh`
+*   `bin/managers/lxc-manager.sh`
+*   `bin/managers/vm-manager.sh`
 *   `bin/phoenix_hypervisor_common_utils.sh`
 *   `etc/phoenix_hypervisor_config.json` (External documentation)
 *   `etc/phoenix_lxc_configs.json` (External documentation)
@@ -96,11 +99,11 @@ Your comments should be clear, detailed, and optimized for semantic search (RAG)
 
 4.  **RAG Optimization:**
     *   Use full, descriptive sentences.
-    *   Include keywords and concepts from the architectural documents (e.g., "declarative configuration," "idempotent," "convergent design," "hierarchical templating").
+    *   Include keywords and concepts from the architectural documents (e.g., "declarative configuration," "idempotent," "dispatcher-manager").
     *   When a script implements a concept from a `Thinkheads.AI_docs` markdown file, reference it in the comments.
 
 ### 4.3. Workflow
-1.  **Understand the Core:** Before starting, ensure you have a solid understanding of the main orchestration files: `phoenix_orchestrator.sh`, `phoenix_lxc_configs.json`, and `phoenix_hypervisor_config.json`.
+1.  **Understand the Core:** Before starting, ensure you have a solid understanding of the main orchestration files: `phoenix`, the manager scripts, and the JSON configuration files.
 2.  **Use `codebase_search`:** Before commenting on a file or a group of files, use the `codebase_search` tool to find relevant documentation and context within the `Thinkheads.AI_docs` directory.
 3.  **Follow the Groupings:** Tackle the project using the systematically defined file groups. Complete one group before moving to the next.
 4.  **Submit for Review:** After completing each group, submit the changes for review.

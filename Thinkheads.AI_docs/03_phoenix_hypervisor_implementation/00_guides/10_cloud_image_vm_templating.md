@@ -13,13 +13,13 @@ The new workflow is divided into two distinct stages: Template Provisioning and 
 ```mermaid
 graph TD
     subgraph "Stage 1: Template Provisioning (One-Time)"
-        A[Run orchestrator with --provision-template] --> B{Download Ubuntu Cloud Image};
+        A[Run `phoenix provision-template`] --> B{Download Ubuntu Cloud Image};
         B --> C[Create & Configure Template VM];
         C --> D[Convert to Proxmox Template];
     end
 
     subgraph "Stage 2: VM Cloning (Day-to-Day)"
-        E[Define VM in phoenix_vm_configs.json] --> F[Run orchestrator with VMID];
+        E[Define VM in phoenix_vm_configs.json] --> F[Run `phoenix create <VMID>`];
         D --> G{Clone from Template};
         F --> G;
         G --> H[Apply Cloud-Init Config];
@@ -58,7 +58,7 @@ The master template is the foundation for all future VM deployments. It is creat
 To create or update the master template, run the following command from the `bin` directory:
 
 ```bash
-./phoenix_orchestrator.sh --provision-template
+./phoenix provision-template
 ```
 
 **Process:**
@@ -108,12 +108,12 @@ Add a new object to the `vms` array. The key parameters are:
 }
 ```
 
-**Step 2: Run the Orchestrator**
+**Step 2: Run the CLI**
 
-Execute the orchestrator with the new VM's ID:
+Execute the `phoenix` CLI with the new VM's ID:
 
 ```bash
-./phoenix_orchestrator.sh 8001
+./phoenix create 8001
 ```
 
 The script will automatically handle the cloning, disk resizing, and Cloud-Init configuration, resulting in a fully provisioned VM.

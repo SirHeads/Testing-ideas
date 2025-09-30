@@ -3,7 +3,7 @@ title: 'LXC 953: api-gateway-lxc - Implementation Plan'
 summary: A detailed, step-by-step implementation plan for converting LXC container 953 into a high-performance, secure Nginx reverse proxy and API gateway.
 document_type: Implementation Plan
 status: Approved
-version: '1.0'
+version: '1.1'
 author: Roo
 owner: Thinkheads.AI
 tags:
@@ -12,7 +12,7 @@ tags:
   - api_gateway
   - implementation
 review_cadence: Annual
-last_reviewed: '2025-09-23'
+last_reviewed: '2025-09-30'
 ---
 
 ## 1. Introduction
@@ -86,12 +86,12 @@ exit 0
 ```
 Make the script executable: `chmod +x /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_953.sh`
 
-### Step 1.3: Run `phoenix_orchestrator.sh`
+### Step 1.3: Run `phoenix` CLI
 
-Execute the orchestrator script to create, configure, and start the LXC container based on the updated configuration.
+Execute the `phoenix` CLI to create, configure, and start the LXC container based on the updated configuration.
 
 ```bash
-/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh --setup-hypervisor
+/usr/local/phoenix_hypervisor/bin/phoenix create 953
 ```
 
 ## 3. Phase 2: Nginx Configuration

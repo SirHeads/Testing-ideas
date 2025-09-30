@@ -3,7 +3,7 @@ title: "phoenix_hypervisor_qa.sh - Architectural and Implementation Plan"
 summary: "This document outlines the design and implementation strategy for the phoenix_hypervisor_qa.sh script, a comprehensive test suite for the Phoenix Hypervisor setup scripts."
 document_type: "Quality and Testing"
 status: "Approved"
-version: "1.0.0"
+version: "1.1.0"
 author: "Phoenix Hypervisor Team"
 owner: "Developer"
 tags:
@@ -12,7 +12,7 @@ tags:
   - "Shell Scripts"
   - "Automation"
 review_cadence: "Annual"
-last_reviewed: "2025-09-23"
+last_reviewed: "2025-09-30"
 ---
 
 # Architectural and Implementation Plan: phoenix_hypervisor_qa.sh
@@ -51,12 +51,12 @@ graph TD
 
 ## 2. Integration Plan
 
-The new QA script will be integrated into the existing `phoenix_orchestrator.sh` script via a new `--qa-check` command-line flag.
+The new QA script will be integrated into the existing `phoenix` CLI via a new `test` command.
 
-### `phoenix_orchestrator.sh` Modifications
+### `phoenix` CLI Modifications
 
-1.  **Argument Parsing:** The `parse_arguments` function in `phoenix_orchestrator.sh` will be updated to recognize `--qa-check`.
-2.  **Dispatch Logic:** The main logic will be updated to call `usr/local/phoenix_hypervisor/bin/tests/phoenix_hypervisor_qa.sh` when the `--qa-check` flag is present.
+1.  **Argument Parsing:** The `phoenix` dispatcher will be updated to recognize the `test` command.
+2.  **Dispatch Logic:** The main logic will be updated to call `usr/local/phoenix_hypervisor/bin/tests/phoenix_hypervisor_qa.sh` when the `test` command is used.
 
 This approach ensures a clean separation of concerns, keeping the QA logic separate from the main orchestration workflow.
 

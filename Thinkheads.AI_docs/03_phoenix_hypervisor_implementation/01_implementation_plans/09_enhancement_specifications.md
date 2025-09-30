@@ -3,7 +3,7 @@ title: Phoenix Hypervisor Enhancement Specifications
 summary: This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project.
 document_type: Specification
 status: Approved
-version: '1.0'
+version: '1.1'
 author: Roo
 owner: Thinkheads.AI
 tags:
@@ -11,7 +11,7 @@ tags:
   - enhancement
   - specification
 review_cadence: Annual
-last_reviewed: '2025-09-23'
+last_reviewed: '2025-09-30'
 ---
 This document outlines the specifications for proposed enhancements to the Phoenix Hypervisor project, based on recent investigation reports.
 
@@ -32,7 +32,7 @@ Utilize Proxmox VE's integrated SDN with IPAM (IP Address Management) and DHCP s
 - Ensure that container hostnames are correctly registered and resolvable.
 
 ### Implementation Specifications
-- **File to Modify:** `phoenix_orchestrator.sh`
+- **File to Modify:** `lxc-manager.sh`
 - **Change:** The `pct create` command within the script must be updated to remove the static IP address assignment (`--net0`). The network interface should be configured to use the VNet created in Proxmox, which will have an active DHCP server.
 - **Proxmox Configuration:**
     1.  Create an SDN Zone (e.g., `phoenix-zone`).
@@ -57,7 +57,7 @@ Use **AWS Secrets Manager**. As a fully managed service, it reduces the operatio
 - Ensure that access to secrets is governed by the principle of least privilege.
 
 ### Implementation Specifications
-- **File to Modify:** `phoenix_orchestrator.sh` (and potentially a new utility script).
+- **File to Modify:** `phoenix_hypervisor_common_utils.sh` (and potentially a new utility script).
 - **Change:**
     1.  Incorporate the AWS CLI or SDK to provide a function for retrieving secrets.
     2.  Replace hardcoded secrets or insecure variables with calls to this new function.
@@ -75,7 +75,7 @@ Use **AWS Secrets Manager**. As a fully managed service, it reduces the operatio
 This enhancement proposes adding a robust validation layer to check for logical errors in the LXC and VM configuration files before provisioning begins. This will prevent common misconfigurations and provide immediate, actionable feedback.
 
 ### Recommended Solution
-Implement a new Bash function, `validate_lxc_config_logic`, within the existing `phoenix_orchestrator.sh` script. This leverages the current infrastructure (Bash, `jq`, logging) and avoids introducing new dependencies.
+Implement a new Bash function, `validate_lxc_config_logic`, within the `lxc-manager.sh` script. This leverages the current infrastructure (Bash, `jq`, logging) and avoids introducing new dependencies.
 
 ### High-Level Requirements
 - The validation function must be executed before any container creation (`pct create`) commands.
@@ -84,7 +84,7 @@ Implement a new Bash function, `validate_lxc_config_logic`, within the existing 
 - The function should be easily extensible to accommodate future validation checks.
 
 ### Implementation Specifications
-- **File to Modify:** `phoenix_orchestrator.sh`
+- **File to Modify:** `lxc-manager.sh`
 - **Change:**
     1.  Create a new Bash function named `validate_lxc_config_logic`.
     2.  This function will use `jq` to parse `phoenix_lxc_configs.json` and perform checks.
@@ -123,7 +123,7 @@ Adopt a phased approach, starting with the creation of a dedicated directory str
         - `redis/`
             - `install.sh`
             - `README.md`
-- **File to Modify:** `phoenix_orchestrator.sh`
+- **File to Modify:** `lxc-manager.sh`
 - **Change:**
     1.  Refactor the script to dynamically source and execute the `install.sh` script for each feature requested in the LXC configuration.
     2.  The script should iterate through the `features` array in the JSON config and call the corresponding script from the `phoenix_hypervisor/features/` directory.

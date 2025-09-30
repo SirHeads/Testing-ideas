@@ -44,7 +44,7 @@ This document provides a step-by-step guide for implementing the Docker in Unpri
     allow /dev/fuse r,
     allow /sys/fs/fuse/connections r,
     ```
-3.  **Deploy the updated profile** by running the `phoenix_orchestrator.sh` script or by manually copying the file and reloading AppArmor:
+3.  **Deploy the updated profile** by running the `phoenix` CLI or by manually copying the file and reloading AppArmor:
     ```bash
     cp lxc-phoenix-v2 /etc/apparmor.d/
     systemctl reload apparmor
@@ -88,7 +88,7 @@ This document provides a step-by-step guide for implementing the Docker in Unpri
     systemctl restart docker
     ```
 3.  **Verification:**
-    - Provision a new container with the `docker` feature using `phoenix_orchestrator.sh`.
+    - Provision a new container with the `docker` feature using the `phoenix` CLI.
     - Re-run the provisioning on the same container to ensure the script is idempotent and completes without errors.
 
 ## 3. Rollback Procedure
@@ -112,7 +112,7 @@ This document provides a step-by-step guide for implementing the Docker in Unpri
 ## 4. Validation Strategy
 
 1.  **Provision a Test Container:**
-    - Use `phoenix_orchestrator.sh` to create a new LXC container with the `docker` feature enabled.
+    - Use `phoenix create <CTID>` to create a new LXC container with the `docker` feature enabled.
 2.  **Verify Storage Driver:**
     - Execute the following command and confirm the output is `fuse-overlayfs`:
       ```bash
@@ -126,4 +126,4 @@ This document provides a step-by-step guide for implementing the Docker in Unpri
 4.  **Monitor for AppArmor Denials:**
     - While running the tests, keep an eye on the host's audit log. The absence of `apparmor="DENIED"` messages related to `fuse-overlayfs` or Docker operations indicates a successful configuration.
 5.  **Test Idempotency:**
-    - Re-run the `phoenix_orchestrator.sh` provisioning for the same container. The process should complete successfully without any errors, confirming the scripts are idempotent.
+    - Re-run the `phoenix create <CTID>` command for the same container. The process should complete successfully without any errors, confirming the scripts are idempotent.

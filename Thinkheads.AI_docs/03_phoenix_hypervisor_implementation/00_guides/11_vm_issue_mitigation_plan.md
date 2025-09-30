@@ -3,7 +3,7 @@ title: "Phoenix Hypervisor: VM Creation Optimization and Mitigation Plan"
 summary: "A comprehensive, context-aware plan to resolve current VM boot failures, optimize the creation workflow, and establish a robust, production-ready VM provisioning system."
 document_type: "Strategic Plan"
 status: "Final"
-version: "2.0.0"
+version: "2.1.0"
 author: "Roo"
 owner: "Technology Team"
 tags:
@@ -13,14 +13,14 @@ tags:
   - "Optimization"
   - "cloud-init"
 review_cadence: "Ad-hoc"
-date: "September 29, 2025"
+date: "September 30, 2025"
 ---
 
 # VM Creation Optimization and Mitigation Plan
 
 ## 1. Executive Summary
 
-This document outlines a definitive, multi-stage plan to resolve the critical boot failures currently blocking our VM provisioning QA and to elevate our VM creation workflow to a professional, production-ready standard. By synthesizing the initial proposal with deep context from our existing codebase ([`phoenix_orchestrator.sh`](usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh), [`phoenix_vm_configs.json`](usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json)) and documentation, this plan provides a clear, actionable path forward.
+This document outlines a definitive, multi-stage plan to resolve the critical boot failures currently blocking our VM provisioning QA and to elevate our VM creation workflow to a professional, production-ready standard. By synthesizing the initial proposal with deep context from our existing codebase ([`phoenix`](usr/local/phoenix_hypervisor/bin/phoenix), [`phoenix_vm_configs.json`](usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json)) and documentation, this plan provides a clear, actionable path forward.
 
 The core of the strategy is to first **remediate** the immediate boot issue by implementing a robust `cloud-init` configuration, then **optimize** the entire workflow with enhanced features and security, and finally **validate** the solution against our formal test plan ([`06_phase_2_qa_and_test_plan.md`](Thinkheads.AI_docs/03_phoenix_hypervisor_implementation/06_project_proposals_and_requirements/VM_creation/06_phase_2_qa_and_test_plan.md)).
 
@@ -29,7 +29,7 @@ The core of the strategy is to first **remediate** the immediate boot issue by i
 This plan is built on the foundational principles of our Phoenix Hypervisor project:
 
 *   **Declarative Configuration:** The `phoenix_vm_configs.json` file remains the single source of truth for all VM definitions.
-*   **Idempotent Execution:** The `phoenix_orchestrator.sh` script will be enhanced to ensure all operations can be run multiple times without causing errors or unintended side effects.
+*   **Idempotent Execution:** The `phoenix` CLI and its manager scripts will be enhanced to ensure all operations can be run multiple times without causing errors or unintended side effects.
 *   **Cloud-Init First:** We will fully embrace `cloud-init` as the primary mechanism for first-boot configuration, ensuring a clean separation between the base template and the final VM state.
 *   **Filesystem Standardization:** We will standardize on the `ext4` filesystem provided by the official Ubuntu cloud image. This avoids the complexity of custom image creation and leverages a well-understood, reliable filesystem.
 
@@ -61,7 +61,7 @@ This plan is built on the foundational principles of our Phoenix Hypervisor proj
     *   **Reasoning:** This configuration explicitly handles the three core failure points: it installs the agent, resizes the filesystem, and ensures the agent service is running.
 
 *   **Task 1.3: Re-provision and Validate**
-    *   **Action:** Run `./phoenix_orchestrator.sh 8001`.
+    *   **Action:** Run `phoenix create 8001`.
     *   **Success Criteria:** The script completes without a guest agent timeout. A subsequent `qm agent 8001 ping` command succeeds.
 
 ### Stage 2: Workflow Optimization and Hardening
@@ -80,7 +80,7 @@ This plan is built on the foundational principles of our Phoenix Hypervisor proj
     *   **Reasoning:** This transitions us from a temporary diagnostic fix to a long-term, secure solution for user access.
 
 *   **Task 2.3: Enhance Orchestrator Resilience**
-    *   **Action:** The `wait_for_guest_agent` function in `phoenix_orchestrator.sh` has been made more resilient.
+    *   **Action:** The `wait_for_guest_agent` function in `vm-manager.sh` has been made more resilient.
     *   **Specification:** The timeout has been increased, and the check frequency has been improved.
     *   **Reasoning:** This provides a larger window for the guest agent to become available, accommodating slower VMs and reducing transient failures.
 

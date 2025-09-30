@@ -3,7 +3,7 @@ title: Snapshot and Boot Order Enhancements
 summary: This document outlines the new snapshot and boot order features that have been added to the Phoenix Hypervisor orchestration system.
 document_type: Implementation Plan
 status: Approved
-version: 1.0.0
+version: 1.1.0
 author: Phoenix Hypervisor Team
 owner: Developer
 tags:
@@ -12,7 +12,7 @@ tags:
   - Orchestration
   - LXC
 review_cadence: Annual
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-30
 ---
 
 # Snapshot and Boot Order Enhancements
@@ -28,16 +28,16 @@ Two new snapshot features have been implemented to improve the robustness and ma
 
 ### Reconfiguration
 
-A new `--reconfigure` flag has been added to the `phoenix_orchestrator.sh` script. This flag allows you to restore a container to its "pre-configured" state and re-run the orchestration from that point.
+A new `reconfigure` command has been added to the `phoenix` CLI. This command allows you to restore a container to its "pre-configured" state and re-run the orchestration from that point.
 
 **Usage:**
 ```bash
-/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh <CTID> --reconfigure
+/usr/local/phoenix_hypervisor/bin/phoenix reconfigure <CTID>
 ```
 
 ### LetsGo
 
-A new `--LetsGo` flag has been added to the `phoenix_orchestrator.sh` script. This flag provides a streamlined orchestration process that performs the following steps:
+A new `LetsGo` command has been added to the `phoenix` CLI. This command provides a streamlined orchestration process that performs the following steps:
 
 1.  **Restores to "pre-configured" state:** The container is reverted to the `pre-configured` snapshot.
 2.  **Executes the application script:** The container's application script is run to apply the latest configurations.
@@ -48,7 +48,7 @@ This feature is ideal for scenarios where you need to quickly update and restart
 
 **Usage:**
 ```bash
-/usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh <CTID> --LetsGo
+/usr/local/phoenix_hypervisor/bin/phoenix LetsGo <CTID>
 ```
 
 ## Boot Order
