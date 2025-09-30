@@ -17,8 +17,8 @@
 #              - AppArmor profile setup and system tuning.
 #
 # Inputs:
-#   --config <path>: (Required) The path to the hypervisor configuration JSON file.
-#   --wipe-disks:    (Optional) A dangerous flag that enables destructive ZFS setup mode. Use with caution.
+#   --config <path>: (Required) The path to the hypervisor configuration JSON file. This is passed by the 'phoenix' dispatcher.
+#   --wipe-disks:    (Optional) A dangerous flag that enables destructive ZFS setup mode. Use with caution. This is passed by the 'phoenix' dispatcher.
 #
 # Dependencies:
 #   - phoenix_hypervisor_common_utils.sh: A library of shared shell functions.

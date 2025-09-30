@@ -36,6 +36,10 @@
 # sourcing of other scripts, regardless of where this script is called from.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --- DEFINE MANAGER DIRECTORY ---
+# Centralize the path to the manager scripts for easier maintenance.
+MANAGER_DIR="$SCRIPT_DIR/managers"
+
 # --- SOURCE COMMON UTILITIES ---
 # Load the common utilities script, which provides a centralized set of
 # functions for logging, error handling, configuration management, and other
@@ -81,7 +85,7 @@ print_usage() {
 is_lxc_target() {
     local target_id="$1"
     local lxc_config_file
-    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    lxc_config_file=$(get_global_config_value ".core_paths.lxc_config_file")
 
     # Use jq to check if the ID exists as a key in the lxc_configs object.
     if jq -e ".lxc_configs[\"$target_id\"]" "$lxc_config_file" > /dev/null; then
@@ -104,7 +108,7 @@ is_lxc_target() {
 is_vm_target() {
     local target_id="$1"
     local vm_config_file
-    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+    vm_config_file=$(get_global_config_value ".core_paths.vm_config_file")
 
     # Use jq to check if a VM with the given vmid exists.
     if jq -e ".vms[] | select(.vmid == $target_id)" "$vm_config_file" > /dev/null; then
@@ -127,9 +131,9 @@ is_vm_target() {
 resolve_dependencies() {
     local targets=("$@")
     local lxc_config_file
-    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    lxc_config_file=$(get_global_config_value ".core_paths.lxc_config_file")
     local vm_config_file
-    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+    vm_config_file=$(get_global_config_value ".core_paths.vm_config_file")
 
     declare -A graph
     declare -A visited
@@ -179,7 +183,7 @@ resolve_dependencies() {
         done
 
         recursion_stack["$node"]=false
-        sorted_list="$node $sorted_list"
+        sorted_list="$sorted_list $node"
     }
 
     # Visit each node in the initial target list.
@@ -215,9 +219,9 @@ resolve_dependencies() {
 # -----------------------------------------------------------------------------
 get_all_guest_ids() {
     local lxc_config_file
-    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    lxc_config_file=$(get_global_config_value ".core_paths.lxc_config_file")
     local vm_config_file
-    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+    vm_config_file=$(get_global_config_value ".core_paths.vm_config_file")
 
     local lxc_ids
     lxc_ids=$(jq -r '.lxc_configs | keys[]' "$lxc_config_file")
@@ -239,9 +243,9 @@ get_all_guest_ids() {
 sort_by_boot_order() {
     local guest_ids=("$@")
     local lxc_config_file
-    lxc_config_file=$(get_config_value ".core_paths.lxc_config_file")
+    lxc_config_file=$(get_global_config_value ".core_paths.lxc_config_file")
     local vm_config_file
-    vm_config_file=$(get_config_value ".core_paths.vm_config_file")
+    vm_config_file=$(get_global_config_value ".core_paths.vm_config_file")
 
     declare -A boot_orders
 
@@ -287,13 +291,22 @@ main() {
     shift
     TARGETS=("$@")
 
+    # --- VERB VALIDATION ---
+    # Before proceeding, ensure the provided verb is valid.
+    local valid_verbs="setup create delete start stop restart status LetsGo"
+    if ! [[ $valid_verbs =~ (^|[[:space:]])"$VERB"($|[[:space:]]) ]]; then
+        log_error "Invalid verb '$VERB'."
+        print_usage
+        exit 1
+    fi
+
     # --- TARGET RESOLUTION AND ROUTING ---
     # Handle cases with no targets first.
     if [ "${#TARGETS[@]}" -eq 0 ]; then
         case "$VERB" in
             setup)
                 log_info "Verb 'setup' received. Routing to hypervisor-manager.sh..."
-                "$SCRIPT_DIR/managers/hypervisor-manager.sh"
+                "$SCRIPT_DIR/managers/hypervisor-manager.sh" --config "$HYPERVISOR_CONFIG_FILE"
                 ;;
             LetsGo)
                 log_info "Verb 'LetsGo' received. Initiating creation and startup of all guests..."
@@ -354,10 +367,10 @@ main() {
         log_info "Processing target '$target' for action '$VERB'..."
         if is_lxc_target "$target"; then
             log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."
-            "$SCRIPT_DIR/managers/lxc-manager.sh" "$VERB" "$target"
+            source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "$VERB" "$target"
         elif is_vm_target "$target"; then
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
-            "$SCRIPT_DIR/managers/vm-manager.sh" "$VERB" "$target"
+            source "$MANAGER_DIR/vm-manager.sh" && main_vm_orchestrator "$VERB" "$target"
         else
             # Handle cases where a target is neither an LXC nor a VM.
             # This could be a setup command with arguments or an error.

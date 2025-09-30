@@ -64,11 +64,14 @@ parse_arguments() {
 #   - None. Exits on failure.
 # =====================================================================================
 setup_python_environment() {
-    # Idempotency Check: Verify if python3 is already installed.
-    if is_command_available "$CTID" "python3"; then
-        log_info "Python 3 is already installed. Ensuring pip and venv are also present."
+    # Idempotency Check: Verify if both python3 and pip3 are installed.
+    # The base Ubuntu image includes python3, but not pip3 or venv. This check ensures
+    # that we proceed with the installation if any of the core components are missing.
+    if is_command_available "$CTID" "python3" && is_command_available "$CTID" "pip3"; then
+        log_info "Python 3 and pip3 are already installed. Skipping installation."
+        return 0
     else
-        log_info "Python 3 not found. Proceeding with installation."
+        log_info "Python 3 or pip3 not found. Proceeding with installation."
     fi
 
     log_info "Updating package lists in CTID $CTID..."
@@ -76,8 +79,8 @@ setup_python_environment() {
 
     log_info "Installing Python 3, pip, and venv packages in CTID $CTID..."
     # This command ensures that the complete toolchain for a virtual environment-based
-    # Python workflow is available in the container.
-    if ! pct_exec "$CTID" -- apt-get install -y python3 python3-pip python3-venv python3.10-venv; then
+    # Python workflow is available in the container. It uses the system's default Python version.
+    if ! pct_exec "$CTID" -- apt-get install -y python3 python3-pip python3-venv; then
         log_fatal "Failed to install Python packages in CTID $CTID."
     fi
 

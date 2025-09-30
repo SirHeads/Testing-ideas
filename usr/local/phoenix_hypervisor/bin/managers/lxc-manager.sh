@@ -4,7 +4,7 @@
 # Description: This script provides a centralized set of functions for managing LXC containers within the
 #              Phoenix Hypervisor system. It encapsulates all the logic for creating, configuring, starting,
 #              and snapshotting containers, ensuring a consistent and reusable implementation across the platform.
-#              This manager is designed to be sourced by the main orchestrator or other management scripts.
+#              This manager is designed to be executed by the main orchestrator or other management scripts.
 #
 # Dependencies:
 #   - phoenix_hypervisor_common_utils.sh: A library of shared shell functions for logging, error handling, etc.
@@ -127,8 +127,8 @@ create_container_from_template() {
 
     # --- Check for template existence and download if necessary ---
     # This logic ensures that the required template is available before attempting to create the container.
-    local mount_point_base=$(jq -r '.mount_point_base' "$VM_CONFIG_FILE")
-    local iso_dataset_path=$(jq -r '.zfs.datasets[] | select(.name == "shared-iso") | .pool + "/" + .name' "$VM_CONFIG_FILE")
+    local mount_point_base=$(get_global_config_value ".mount_point_base")
+    local iso_dataset_path=$(get_global_config_value ".zfs.datasets[] | select(.name == \"shared-iso\") | .pool + \"/\" + .name")
     local template_path="${mount_point_base}/${iso_dataset_path}/template/cache/$(basename "$template")"
 
     if [ ! -f "$template_path" ]; then
@@ -138,9 +138,9 @@ create_container_from_template() {
         
          # Determine the storage ID for ISOs from the configuration file
          local storage_id
-         storage_id=$(jq -r '.proxmox_storage_ids.fastdata_iso' "$VM_CONFIG_FILE")
+         storage_id=$(get_global_config_value ".proxmox_storage_ids.fastdata_iso")
          if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
-            log_fatal "Could not determine ISO storage ID from configuration file: $VM_CONFIG_FILE"
+            log_fatal "Could not determine ISO storage ID from configuration file."
          fi
 
         log_info "Downloading template '$template_name' to storage '$storage_id'..."
@@ -515,12 +515,12 @@ start_container() {
 
     # Loop to attempt container startup with retries
     while [ "$attempts" -lt "$max_attempts" ]; do
-        if run_pct_command start "$CTID" 2>&1 | tee -a "$LOG_FILE"; then
+        if run_pct_command start "$CTID"; then
             log_info "Container $CTID started successfully."
             return 0
         else
             attempts=$((attempts + 1))
-            log_error "WARNING: 'pct start' command failed for CTID $CTID (Attempt $attempts/$max_attempts). Check $LOG_FILE for details."
+            log_error "WARNING: 'pct start' command failed for CTID $CTID (Attempt $attempts/$max_attempts)."
             if [ "$attempts" -lt "$max_attempts" ]; then
                 log_info "Retrying in $interval seconds..."
                 sleep "$interval" # Wait before retrying
@@ -1016,3 +1016,67 @@ apply_apparmor_profile() {
     log_info "Reloading AppArmor profiles..."
     systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
+# =====================================================================================
+# Function: main_lxc_orchestrator
+# Description: The main entry point for the LXC manager script. It parses the
+#              action and CTID, and then executes the appropriate lifecycle
+#              operations for the container.
+#
+# Arguments:
+#   $1 - The action to perform (e.g., "create", "start", "stop").
+#   $2 - The CTID of the target container.
+# =====================================================================================
+main_lxc_orchestrator() {
+    local action="$1"
+    local ctid="$2"
+
+    validate_inputs "$ctid"
+
+    case "$action" in
+        create)
+            log_info "Starting 'create' workflow for CTID $ctid..."
+            ensure_container_defined "$ctid"
+            apply_configurations "$ctid"
+            apply_zfs_volumes "$ctid"
+            apply_dedicated_volumes "$ctid"
+            ensure_container_disk_size "$ctid"
+            start_container "$ctid"
+            apply_features "$ctid"
+            run_application_script "$ctid"
+            run_health_check "$ctid"
+            create_template_snapshot "$ctid"
+            log_info "'create' workflow completed for CTID $ctid."
+            ;;
+        start)
+            log_info "Starting 'start' workflow for CTID $ctid..."
+            start_container "$ctid"
+            log_info "'start' workflow completed for CTID $ctid."
+            ;;
+        stop)
+            log_info "Starting 'stop' workflow for CTID $ctid..."
+            run_pct_command stop "$ctid" || log_fatal "Failed to stop container $ctid."
+            log_info "'stop' workflow completed for CTID $ctid."
+            ;;
+        restart)
+            log_info "Starting 'restart' workflow for CTID $ctid..."
+            run_pct_command stop "$ctid" || log_warn "Failed to stop container $ctid before restart."
+            start_container "$ctid"
+            log_info "'restart' workflow completed for CTID $ctid."
+            ;;
+        delete)
+            log_info "Starting 'delete' workflow for CTID $ctid..."
+            run_pct_command stop "$ctid" || log_warn "Container $ctid was not running before deletion."
+            run_pct_command destroy "$ctid" || log_fatal "Failed to delete container $ctid."
+            log_info "'delete' workflow completed for CTID $ctid."
+            ;;
+        *)
+            log_error "Invalid action '$action' for lxc-manager."
+            exit 1
+            ;;
+    esac
+}
+
+# If the script is executed directly, call the main orchestrator
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main_lxc_orchestrator "$@"
+fi
