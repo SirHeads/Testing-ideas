@@ -33,6 +33,8 @@ set -o pipefail # Return the exit status of the last command in the pipe that fa
 # --- Global Constants ---
 export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
 export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
+export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
+export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.schema.json"
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
 # --- Dynamic LXC_CONFIG_FILE Path ---
@@ -265,6 +267,18 @@ pct_exec() {
         echo "$output"
     fi
     return 0
+}
+# =====================================================================================
+# FUNCTION: get_global_config_value
+# DESCRIPTION: Retrieves a global configuration value from the hypervisor config file.
+# ARGUMENTS:
+#   $1 - The jq query string.
+# RETURNS:
+#   The configuration value.
+# =====================================================================================
+get_global_config_value() {
+    local jq_query="$1"
+    jq -r "$jq_query" "$HYPERVISOR_CONFIG_FILE"
 }
 
 # =====================================================================================

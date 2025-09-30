@@ -3,7 +3,7 @@ title: "Phoenix Hypervisor: Declarative Architecture Guide"
 summary: "The authoritative guide to the core architectural principles of Declarative State, Idempotency, and Convergent Design in the Phoenix Hypervisor orchestration engine."
 document_type: "Implementation Guide"
 status: "Approved"
-version: "1.0.0"
+version: "1.1.0"
 author: "Phoenix Hypervisor Team"
 owner: "Developer"
 tags:
@@ -13,7 +13,7 @@ tags:
   - "Convergent Design"
   - "Orchestration"
 review_cadence: "Annual"
-last_reviewed: "2025-09-23"
+last_reviewed: "2025-09-30"
 ---
 
 # Phoenix Hypervisor: Declarative Architecture Guide
@@ -29,16 +29,16 @@ The orchestrator's primary function is to transform the desired state, defined i
 In the context of the Phoenix Hypervisor, our architectural principles are defined as follows:
 
 *   **Declarative State**: We define *what* the system should look like, not *how* to get it there. The JSON configuration files (`phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json`) are the single source of truth for the entire system's desired state. The orchestrator's job is to make the live system match this declaration.
-*   **Idempotency**: Actions can be repeated multiple times with the same outcome. The orchestrator can be run safely at any time, and it will only make changes if there is a difference between the desired state and the current state. This is crucial for automation and recovery. If a container already exists, the orchestrator will not try to create it again.
+*   **Idempotency**: Actions can be repeated multiple times with the same outcome. The `phoenix` CLI can be run safely at any time, and it will only make changes if there is a difference between the desired state and the current state. This is crucial for automation and recovery.
 *   **Convergent Design**: The system is designed to be self-healing. The orchestrator actively works to converge the *current state* of the system with the *desired state* defined in the configuration. If configuration drift occurs, the next run of the orchestrator will detect and correct it.
 
 ## 3. The Orchestration Workflow: A Convergent Loop
 
-The orchestrator follows a model that can be conceptualized as an "Inspect, Compare, Converge" loop. While not implemented as a single, monolithic engine, this principle is applied at various stages of the orchestration process.
+The orchestrator follows a model that can be conceptualized as an "Inspect, Compare, Converge" loop.
 
 ```mermaid
 graph TD
-    A[Run Orchestrator] --> B{Read Desired State from JSON Config};
+    A[Run `phoenix create <ID>`] --> B{Read Desired State from JSON Config};
     B --> C{For each resource e.g., Container, Snapshot, Mount Point};
     C --> D{Inspect Current State on System};
     D --> E{Compare Desired vs. Current};
@@ -59,14 +59,14 @@ The principles of idempotency and convergence are demonstrated in the codebase t
 
 #### Example 1: Idempotent Container Creation
 
-The `ensure_container_defined` function in [`usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh`](usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh:560) is a prime example of an idempotent operation.
+The `ensure_container_defined` function in `lxc-manager.sh` is a prime example of an idempotent operation.
 
 *   **Inspect**: It first checks if the container already exists using `pct status "$CTID"`.
-*   **Compare**: It compares the existence of the container with the desired state (the fact that the script was called for this CTID).
-*   **Converge**: If the container does not exist, it proceeds with creation by calling `clone_container` or `create_container_from_template`. If it does exist, it does nothing.
+*   **Compare**: It compares the existence of the container with the desired state.
+*   **Converge**: If the container does not exist, it proceeds with creation. If it does exist, it does nothing.
 
 ```bash
-# From usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh
+# From lxc-manager.sh
 ensure_container_defined() {
     local CTID="$1"
     log_info "Ensuring container $CTID is defined..."
@@ -87,7 +87,7 @@ Similarly, the `create_template_snapshot` function ensures that a snapshot is on
 *   **Converge**: If the snapshot is not found, it creates it using `pct snapshot`.
 
 ```bash
-# From usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh
+# From lxc-manager.sh
 create_template_snapshot() {
     # ...
     # Check if the snapshot already exists
@@ -108,7 +108,7 @@ The `apply_shared_volumes` function demonstrates a convergent approach to managi
 *   **Converge**: If a desired mount point is missing, it adds it using `pct set`.
 
 ```bash
-# From usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh
+# From lxc-manager.sh
 apply_shared_volumes() {
     # ...
     if ! pct config "$CTID" | grep -q "mp[0-9]*:.*,mp=${mount_point}"; then
@@ -124,7 +124,7 @@ apply_shared_volumes() {
 
 ## 4. The Main Orchestration Flow
 
-The entire process is orchestrated by the `main_state_machine` function in [`usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh`](usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh:1549). This function defines the sequence of operations that ensures a container is brought from a non-existent state to a fully configured and running state, respecting the principles of idempotency and convergence at each step.
+The entire process is orchestrated by the state machine in `lxc-manager.sh`. This function defines the sequence of operations that ensures a container is brought from a non-existent state to a fully configured and running state, respecting the principles of idempotency and convergence at each step.
 
 The sequence of states is as follows:
 1.  `validate_inputs`

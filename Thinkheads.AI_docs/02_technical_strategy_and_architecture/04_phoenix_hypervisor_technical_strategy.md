@@ -3,7 +3,7 @@ title: Phoenix Hypervisor Technical Strategy
 summary: This document outlines the detailed technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostics, NGINX configuration, firewall management, orchestration, and vLLM deployment.
 document_type: Technical Strategy
 status: Approved
-version: 2.0.0
+version: 2.1.0
 author: Thinkheads.AI
 owner: Technical VP
 tags:
@@ -17,20 +17,20 @@ tags:
   - Remediation
   - Deployment
 review_cadence: Quarterly
-last_reviewed: 2025-09-29
+last_reviewed: 2025-09-30
 ---
 
 # Phoenix Hypervisor Technical Strategy
 
 ## 1. Introduction
 
-This document outlines the technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostic procedures, NGINX gateway configuration, firewall management, orchestration scripts, and vLLM deployment strategies. The strategy is grounded in the principles of declarative configuration, idempotency, and modularity, as implemented in the `phoenix_orchestrator.sh` script and its associated configuration files.
+This document outlines the technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostic procedures, NGINX gateway configuration, firewall management, orchestration scripts, and vLLM deployment strategies. The strategy is grounded in the principles of declarative configuration, idempotency, and modularity, as implemented in the `phoenix` CLI and its associated configuration files.
 
 ## 2. Service Diagnostic and Remediation Plan
 
 ### 2.1. Diagnostic Principles
 
-The core principle is to test the system from the inside out. When a service is unavailable from the client's perspective, we will follow a step-by-step process to pinpoint the exact location of the failure. This process is supported by a suite of health check scripts and the centralized logging facilitated by the orchestrator.
+The core principle is to test the system from the inside out. When a service is unavailable from the client's perspective, we will follow a step-by-step process to pinpoint the exact location of the failure. This process is supported by a suite of health check scripts and the centralized logging facilitated by the CLI.
 
 ```mermaid
 graph TD
@@ -50,7 +50,7 @@ graph TD
 
 #### 2.2.1. Service Health Scripts (run inside the LXC)
 
-The `health_checks` directory contains a suite of scripts for verifying the health of individual services. These scripts are executed by the `phoenix_orchestrator.sh` script and check for running processes, API responsiveness, and other service-specific indicators.
+The `health_checks` directory contains a suite of scripts for verifying the health of individual services. These scripts are executed by the `phoenix` CLI and check for running processes, API responsiveness, and other service-specific indicators.
 
 **Example (`check_ollama.sh`):**
 ```bash
@@ -164,19 +164,19 @@ The NGINX gateway at `10.0.0.153` serves as the central entry point for all serv
 
 ## 4. Firewall Management Strategy
 
-Firewall management is handled declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files. The `phoenix_orchestrator.sh` script applies the firewall rules during container provisioning, ensuring a consistent and reproducible security posture.
+Firewall management is handled declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files. The `phoenix` CLI applies the firewall rules during container provisioning, ensuring a consistent and reproducible security posture.
 
 ### 4.1. Declarative Firewall Configuration
 
 The firewall for an LXC container is enabled on a per-network-interface basis (e.g., `net0`) using the command `pct set <vmid> --net0 firewall=1`. The specific firewall rules are defined in the `firewall.rules` section of the container's configuration in `phoenix_lxc_configs.json`.
 
-## 5. Orchestrator Script Strategy
+## 5. Orchestration Strategy
 
-The `phoenix_orchestrator.sh` script is the cornerstone of the Phoenix Hypervisor's automation strategy. It implements a state machine to manage the entire lifecycle of LXC containers and VMs, from creation and configuration to feature installation and application deployment.
+The `phoenix` CLI is the cornerstone of the Phoenix Hypervisor's automation strategy. It implements a dispatcher-manager architecture to manage the entire lifecycle of the hypervisor, LXC containers, and VMs.
 
-### 5.1. State Machine and Idempotency
+### 5.1. Dispatcher-Manager Architecture
 
-The orchestrator is designed to be idempotent, meaning it can be run multiple times without causing unintended side effects. It tracks the state of each container and only performs the necessary actions to bring it to the desired state as defined in the configuration files.
+The `phoenix` script acts as a dispatcher, parsing verb-first commands and routing them to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, `vm-manager.sh`). Each manager implements a state machine for its domain, ensuring idempotent and robust execution.
 
 ### 5.2. Modular Feature Installation
 
@@ -184,7 +184,7 @@ Features such as Docker, NVIDIA drivers, and vLLM are installed through a modula
 
 ## 6. Shared Volume Permissions Strategy
 
-The `phoenix_orchestrator.sh` script dynamically manages permissions on shared volumes mounted into unprivileged LXC containers. This is achieved through the `owner` property in the `shared_volumes` definition in `phoenix_hypervisor_config.json`, which ensures that the container's mapped root UID is correctly applied to the shared volume.
+The `phoenix` CLI dynamically manages permissions on shared volumes mounted into unprivileged LXC containers. This is achieved through the `owner` property in the `shared_volumes` definition in `phoenix_hypervisor_config.json`, which ensures that the container's mapped root UID is correctly applied to the shared volume.
 
 ## 7. vLLM Orchestration and Deployment Strategy
 

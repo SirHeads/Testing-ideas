@@ -10,6 +10,7 @@
     "core_paths": {
         "lxc_config_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json",
         "lxc_config_schema_file": "/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json",
+        "vm_config_file": "/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json",
         "hf_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_hf_token.conf",
         "docker_token_file": "/usr/local/phoenix_hypervisor/etc/phoenix_docker_token.conf",
         "docker_images_path": "/usr/local/phoenix_hypervisor/etc/proxmox_docker_images",

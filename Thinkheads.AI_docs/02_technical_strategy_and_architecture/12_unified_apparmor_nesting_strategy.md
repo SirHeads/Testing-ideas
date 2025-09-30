@@ -3,7 +3,7 @@ title: Unified AppArmor and Nesting Strategy
 summary: A unified strategy for managing AppArmor profiles and LXC nesting in the Phoenix Hypervisor environment.
 document_type: Technical Strategy
 status: Approved
-version: 2.0.0
+version: 2.1.0
 author: Roo
 owner: Technical VP
 tags:
@@ -144,26 +144,27 @@ All containers will have their AppArmor profile and nesting options defined in t
 "apparmor_profile": "lxc-docker-nested"
 ```
 
-**Note on ZFS:** The `mount fstype=zfs` rule in the AppArmor profiles is dependent on the orchestrator correctly generating the `lxc.mount.entry` from the `zfs_volumes` definition in the JSON configuration.
+**Note on ZFS:** The `mount fstype=zfs` rule in the AppArmor profiles is dependent on the `lxc-manager.sh` script correctly generating the `lxc.mount.entry` from the `zfs_volumes` definition in the JSON configuration.
 
 ## 5. Orchestration Logic
 
-The `phoenix_orchestrator.sh` script reads the `apparmor_profile` and `pct_options` from the JSON configuration and applies them to each container. This ensures that the correct security policies and nesting features are enforced consistently.
+The `lxc-manager.sh` script reads the `apparmor_profile` and `pct_options` from the JSON configuration and applies them to each container. This ensures that the correct security policies and nesting features are enforced consistently.
 
 ## 6. Workflow Diagram
 
 ```mermaid
 graph TD
-    A[Start] --> B{Read phoenix_lxc_configs.json};
-    B --> C{For each container};
-    C --> D{Has apparmor_profile?};
-    D -->|Yes| E[Apply AppArmor profile];
-    D -->|No| F[Apply default profile];
-    E --> G{Has pct_options?};
-    F --> G;
-    G -->|Yes| H[Apply pct_options];
-    G -->|No| I[Continue];
-    H --> J[Create/Start container];
-    I --> J;
-    J --> C;
-    C --> K[End];
+    A[Start: phoenix create <ID>] --> B[lxc-manager.sh];
+    B --> C{Read phoenix_lxc_configs.json};
+    C --> D{For each container};
+    D --> E{Has apparmor_profile?};
+    E -->|Yes| F[Apply AppArmor profile];
+    E -->|No| G[Apply default profile];
+    F --> H{Has pct_options?};
+    G --> H;
+    H -->|Yes| I[Apply pct_options];
+    H -->|No| J[Continue];
+    I --> K[Create/Start container];
+    J --> K;
+    K --> D;
+    D --> L[End];

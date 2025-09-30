@@ -3,7 +3,7 @@ title: System Diagrams
 summary: A centralized document containing Mermaid diagrams of the high-level system architecture, network topology, and data flow for the Phoenix Hypervisor project.
 document_type: Technical Strategy
 status: Approved
-version: 2.1.0
+version: 2.2.0
 author: Thinkheads.AI
 owner: Technical VP
 tags:
@@ -14,12 +14,12 @@ tags:
   - Orchestration
   - Phoenix Hypervisor
 review_cadence: Quarterly
-last_reviewed: 2025-09-29
+last_reviewed: 2025-09-30
 ---
 
 # System Diagrams
 
-This document contains Mermaid diagrams that illustrate the high-level system architecture, the detailed workflow of the `phoenix_orchestrator.sh` script, and the container templating strategy.
+This document contains Mermaid diagrams that illustrate the high-level system architecture, the detailed workflow of the `phoenix` CLI, and the container templating strategy.
 
 ## High-Level System Architecture
 
@@ -32,7 +32,7 @@ graph TD
     end
 
     subgraph "Phoenix Hypervisor (Proxmox Host)"
-        B[phoenix_orchestrator.sh]
+        B[phoenix CLI]
         C[Configuration Files]
         D[LXC Containers]
         E[Virtual Machines]
@@ -56,33 +56,23 @@ graph TD
     B -- Configures --> G
 ```
 
-## Phoenix Orchestrator Workflow
+## Phoenix CLI Workflow
 
-This diagram details the state machine logic of the `phoenix_orchestrator.sh` script, showing the distinct execution paths for hypervisor setup, LXC container orchestration, and VM provisioning.
+This diagram details the dispatcher-manager logic of the `phoenix` CLI, showing the distinct execution paths for hypervisor setup, LXC container orchestration, and VM provisioning.
 
 ```mermaid
 graph TD
-    A[Start] --> B{Parse Arguments};
-    B --> C{Mode?};
-    C -- --setup-hypervisor --> D[Execute Hypervisor Setup Scripts];
-    C -- LXC ID --> E[Validate LXC Inputs];
-    E --> F[Ensure Container Defined];
-    F --> G[Apply Configurations];
-    G --> H[Start Container];
-    H --> I[Apply Features];
-    I --> J[Run Application Script];
-    J --> K[Run Health Checks];
-    K --> L[Create Snapshots];
-    L --> M[End];
-    D --> M;
-    C -- VM ID --> N[Validate VM Inputs];
-    N --> O[Ensure VM Defined];
-    O --> P[Apply VM Configurations];
-    P --> Q[Start VM];
-    Q --> R[Wait for Guest Agent];
-    R --> S[Apply VM Features via Cloud-Init];
-    S --> T[Create VM Snapshot];
-    T --> M;
+    A[Start: phoenix <command> <ID>] --> B{Parse Command};
+    B -->|setup| C[hypervisor-manager.sh];
+    B -->|create, delete, etc.| D{Resource Type?};
+    D -->|LXC| E[lxc-manager.sh];
+    D -->|VM| F[vm-manager.sh];
+    C --> G[Execute Hypervisor Setup Logic];
+    E --> H[Execute LXC State Machine];
+    F --> I[Execute VM State Machine];
+    G --> End;
+    H --> End;
+    I --> End;
 ```
 
 ## LXC Container Templating Strategy

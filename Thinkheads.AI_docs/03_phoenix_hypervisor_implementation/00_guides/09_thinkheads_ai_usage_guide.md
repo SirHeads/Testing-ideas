@@ -1,27 +1,28 @@
 ---
 title: 'Usage Guide: VM Management'
-summary: This guide provides instructions on how to use the new Virtual Machine (VM) management features in the phoenix_orchestrator.sh script.
+summary: This guide provides instructions on how to use the new Virtual Machine (VM) management features in the phoenix CLI.
 document_type: Guide
 status: Approved
-version: '1.0'
+version: '2.0'
 author: Roo
 owner: Thinkheads.AI
 tags:
   - phoenix_hypervisor
   - vm_management
   - usage_guide
+  - phoenix_cli
 review_cadence: Annual
-last_reviewed: '2025-09-23'
+last_reviewed: '2025-09-30'
 ---
 # Usage Guide: VM Management
 
 ## 1. Introduction
 
-This guide provides instructions on how to use the new Virtual Machine (VM) management features in the `phoenix_orchestrator.sh` script. These features are designed to simplify the creation and administration of the mirrored development environments for the "ThinkHeadsAI" project.
+This guide provides instructions on how to use the new Virtual Machine (VM) management features in the `phoenix` CLI. These features are designed to simplify the creation and administration of the mirrored development environments for the "ThinkHeadsAI" project.
 
 ## 2. Configuration
 
-All VM definitions and default settings are managed in the `phoenix_hypervisor_config.json` file.
+All VM definitions and default settings are managed in the `phoenix_vm_configs.json` file.
 
 ### 2.1. VM Defaults
 
@@ -46,6 +47,7 @@ The `vms` array contains a list of all the VMs to be managed by the orchestrator
 "vms": [
     {
         "name": "webserver-vm",
+        "vmid": 9002,
         "cores": 4,
         "memory_mb": 8192,
         "disk_size_gb": 100,
@@ -58,52 +60,52 @@ The `vms` array contains a list of all the VMs to be managed by the orchestrator
 
 ## 3. Command-Line Usage
 
-The `phoenix_orchestrator.sh` script now accepts the following new arguments for VM management.
+The `phoenix` CLI now accepts the following commands for VM management.
 
 ### 3.1. Create a VM
 
-To create a new VM, use the `--create-vm` argument, followed by the name of the VM as defined in the configuration file.
+To create a new VM, use the `create` command, followed by the ID of the VM as defined in the configuration file.
 
 **Example:**
 
 ```bash
-./phoenix_orchestrator.sh --create-vm webserver-vm
+phoenix create 9002
 ```
 
 This command will:
-1.  Read the `webserver-vm` definition from the configuration file.
+1.  Read the VM definition with `vmid` 9002 from the configuration file.
 2.  Apply the default settings from `vm_defaults`.
 3.  Create and configure the VM using a series of `qm` commands.
 4.  Execute the `install_webserver.sh` script inside the newly created VM.
 
 ### 3.2. Start a VM
 
-To start an existing VM, use the `--start-vm` argument, followed by the VM ID.
+To start an existing VM, use the `start` command, followed by the VM ID.
 
 **Example:**
 
 ```bash
-./phoenix_orchestrator.sh --start-vm 9002
+phoenix start 9002
 ```
 
 ### 3.3. Stop a VM
 
-To stop a running VM, use the `--stop-vm` argument, followed by the VM ID.
+To stop a running VM, use the `stop` command, followed by the VM ID.
 
 **Example:**
 
 ```bash
-./phoenix_orchestrator.sh --stop-vm 9002
+phoenix stop 9002
 ```
 
 ### 3.4. Delete a VM
 
-To delete a VM, use the `--delete-vm` argument, followed by the VM ID. This action is irreversible and will remove the VM and all its data.
+To delete a VM, use the `delete` command, followed by the VM ID. This action is irreversible and will remove the VM and all its data.
 
 **Example:**
 
 ```bash
-./phoenix_orchestrator.sh --delete-vm 9002
+phoenix delete 9002
 ```
 
 ## 4. VM Creation Workflow
@@ -112,7 +114,7 @@ The VM creation process is automated and follows a predefined workflow to ensure
 
 ```mermaid
 graph TD
-    A[Start: --create-vm] --> B{Parse Config};
+    A[Start: phoenix create <ID>] --> B{Parse Config};
     B --> C{Apply Defaults};
     C --> D[Create VM];
     D --> E[Set CPU and Memory];

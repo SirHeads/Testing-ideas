@@ -19,10 +19,10 @@ The `base_setup` feature is the foundational customization script for all new LX
 
 ## Key Actions
 
-1.  **Package Installation:** Installs a suite of essential command-line tools, including `curl`, `wget`, `vim`, `htop`, `jq`, `git`, and `rsync`.
-2.  **System Updates:** Performs an `apt-get update` and `apt-get upgrade` to ensure the container's software is up-to-date.
+1.  **Package Installation:** Installs a suite of essential command-line tools, including `curl`, `wget`, `vim`, `htop`, `jq`, `git`, `rsync`, `s-tui`, `gnupg`, and `locales`.
+2.  **System Updates:** Performs an `apt-get update` to ensure the package lists are current before installation.
 3.  **Locale Configuration:** Sets the system locale to `en_US.UTF-8` to ensure consistent text encoding and processing.
-4.  **Idempotency:** The script is fully idempotent. It creates a marker file (`/.phoenix_base_setup_complete`) upon successful completion and will not re-run on subsequent executions.
+4.  **Idempotency:** The script is idempotent. It checks if each essential package is already installed before attempting to install it, preventing redundant operations.
 
 ## Usage
 

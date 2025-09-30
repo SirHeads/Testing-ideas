@@ -3,7 +3,7 @@ title: Troubleshooting Guide
 summary: A comprehensive guide to troubleshooting common issues with the Phoenix Hypervisor.
 document_type: Technical Guide
 status: Revised
-version: 1.1.0
+version: 2.0.0
 author: Roo
 owner: Technical VP
 tags:
@@ -26,19 +26,19 @@ This guide provides solutions to common issues that may arise when working with 
 
 When encountering an issue, follow these general troubleshooting steps first:
 
-1.  **Check the Orchestrator Logs:** The `phoenix_orchestrator.sh` script is the primary entry point for all operations. Its logs are the first place to look for errors. Check the log file at `/var/log/phoenix_hypervisor/orchestrator_*.log`.
-2.  **Run in Dry-Run Mode:** Use the `--dry-run` flag with `phoenix_orchestrator.sh` to see what commands the orchestrator will execute without making any changes. This is useful for verifying configurations before applying them.
+1.  **Check the CLI Logs:** The `phoenix` CLI is the primary entry point for all operations. Its logs are the first place to look for errors. Check the log file at `/var/log/phoenix_hypervisor/phoenix_cli.log`.
+2.  **Check Manager Logs:** For issues related to a specific domain (hypervisor, LXC, VM), check the logs for the corresponding manager script (e.g., `/var/log/phoenix_hypervisor/lxc-manager.log`).
 3.  **Validate Configuration:** Ensure that your JSON configuration files (`phoenix_hypervisor_config.json`, `phoenix_lxc_configs.json`, `phoenix_vm_configs.json`) are valid and match their respective schemas.
 4.  **Check Service Status:** If a service inside a container or VM is not working, check its status using `systemctl status <service>` or `journalctl -u <service>`.
 
-## 2. Orchestrator Issues
+## 2. CLI and Manager Issues
 
-The `phoenix_orchestrator.sh` script is central to all operations. If you encounter issues with the orchestrator itself:
+The `phoenix` CLI and its manager scripts are central to all operations. If you encounter issues with them:
 
 *   **Symptom:** The script fails with a syntax error or unexpected behavior.
 *   **Cause:** This can be due to incorrect permissions, missing dependencies, or an issue with the script itself.
 *   **Resolution:**
-    1.  Ensure the script is executable (`chmod +x phoenix_orchestrator.sh`).
+    1.  Ensure the scripts are executable (`chmod +x /usr/local/phoenix_hypervisor/bin/phoenix` and the manager scripts).
     2.  Verify that all dependencies are installed (e.g., `jq`, `pct`, `qm`).
     3.  Run the script with `bash -x` to get a detailed execution trace.
 

@@ -3,7 +3,7 @@ title: Phoenix Hypervisor System Architecture Guide
 summary: This document provides a single, authoritative overview of the Phoenix Hypervisor system architecture, orchestration workflow, and configuration for both VMs and LXC containers.
 document_type: Implementation Guide
 status: Final
-version: "2.0.0"
+version: "2.1.0"
 author: Roo
 owner: Developer
 tags:
@@ -15,7 +15,7 @@ tags:
   - Proxmox
   - Configuration
 review_cadence: Annual
-last_reviewed: "2025-09-29"
+last_reviewed: "2025-09-30"
 ---
 
 # Phoenix Hypervisor System Architecture Guide
@@ -24,13 +24,13 @@ last_reviewed: "2025-09-29"
 
 The Phoenix Hypervisor project is a robust, declarative, and feature-based system for orchestrating the creation and configuration of LXC containers and Virtual Machines (VMs) on Proxmox. It is specifically tailored for AI and machine learning workloads.
 
-The core of the project is the `phoenix_orchestrator.sh` script, a single, idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
+The core of the project is the `phoenix` CLI, an idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
 
 ### 1.1. Key Architectural Concepts
 
--   **Unified Orchestration**: The `phoenix_orchestrator.sh` script provides a single point of entry for managing both LXC containers and QEMU/KVM VMs.
+-   **Unified Orchestration**: The `phoenix` CLI provides a single point of entry for managing the hypervisor, LXC containers, and QEMU/KVM VMs.
 -   **Declarative Configuration:** All hypervisor, VM, and container specifications are defined in `phoenix_hypervisor_config.json`, `phoenix_vm_configs.json`, and `phoenix_lxc_configs.json`. This provides a clear, version-controllable definition of the desired system state.
--   **Idempotent Orchestration:** The orchestrator is designed to be stateless and idempotent, ensuring that running it multiple times produces the same result, making deployments resilient and repeatable.
+-   **Idempotent Orchestration:** The CLI is designed to be stateless and idempotent, ensuring that running it multiple times produces the same result, making deployments resilient and repeatable.
 -   **Hierarchical Templating:** The system uses a hierarchical, snapshot-based template structure to optimize the creation of both VMs and LXCs.
 -   **Modular Feature Installation:** Customization is handled through a series of modular, reusable "feature" scripts (e.g., for installing NVIDIA drivers, Docker, or vLLM).
 
@@ -64,23 +64,23 @@ graph TD
 ```
 ## 2. Orchestration Workflow
 
-The `phoenix_orchestrator.sh` script is the single entry point for all provisioning tasks. It first determines if the target ID is a VM or an LXC container and then executes the appropriate state machine.
+The `phoenix` CLI is the single entry point for all provisioning tasks. It acts as a dispatcher, parsing the user's command and routing it to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, or `vm-manager.sh`).
 
 ### 2.1. Main Orchestration Flow
 
 ```mermaid
 graph TD
-    A[Start: phoenix_orchestrator.sh ID] --> B{Is ID a VM?};
-    B -- Yes --> VM_Flow[Execute VM State Machine];
-    B -- No --> C{Is ID an LXC?};
-    C -- Yes --> LXC_Flow[Execute LXC State Machine];
-    C -- No --> Error[Error: ID not found];
-    VM_Flow --> End;
-    LXC_Flow --> End;
-    Error --> End;
+    A[Start: phoenix <command> <ID>] --> B{Parse Command};
+    B -->|setup| C[hypervisor-manager.sh];
+    B -->|create, delete, etc.| D{Resource Type?};
+    D -->|LXC| E[lxc-manager.sh];
+    D -->|VM| F[vm-manager.sh];
+    C --> End;
+    E --> End;
+    F --> End;
 ```
 
-### 2.2. Key LXC Orchestration Steps
+### 2.2. Key LXC Orchestration Steps (lxc-manager.sh)
 
 1.  **`ensure_container_defined`**: Checks if the container exists. If not, it either creates it from a base template or clones it from a parent template's snapshot.
 2.  **`apply_configurations`**: Sets the container's core resources, such as CPU cores, memory, and network settings.
@@ -91,7 +91,7 @@ graph TD
 7.  **`run_health_check`**: Performs a health check to verify the service is running correctly.
 8.  **`create_template_snapshot`**: If the container is a template, it creates a ZFS snapshot.
 
-### 2.3. Key VM Orchestration Steps
+### 2.3. Key VM Orchestration Steps (vm-manager.sh)
 
 1.  **`ensure_vm_defined`**: Checks if the VM exists. If not, it clones it from a master template.
 2.  **`apply_vm_configurations`**: Sets the VM's core resources and generates dynamic Cloud-Init configurations for networking and user setup.
