@@ -1,65 +1,155 @@
 # Phoenix Hypervisor
 
-This repository contains the scripts and configuration files for the Phoenix Hypervisor project.
+The Phoenix Hypervisor is a sophisticated Infrastructure-as-Code (IaC) solution that orchestrates both LXC containers and QEMU VMs on a local Proxmox server. It provides a declarative, idempotent, and automated infrastructure that enables the rapid and repeatable deployment of complex AI/ML/DL environments.
+
+## Table of Contents
+
+- [Phoenix Hypervisor](#phoenix-hypervisor)
+  - [Table of Contents](#table-of-contents)
+  - [Architectural Principles](#architectural-principles)
+  - [High-Level System Architecture](#high-level-system-architecture)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Usage](#usage)
+    - [The `phoenix` CLI](#the-phoenix-cli)
+    - [Examples](#examples)
+  - [Contributing](#contributing)
+  - [Support](#support)
+  - [License](#license)
+
+## Architectural Principles
+
+The architectural principles guiding the Phoenix Hypervisor ensure a robust, efficient, and maintainable platform:
+
+*   **Modularity and Reusability**: Components are designed as independent, interchangeable modules that can be easily integrated and reused across different parts of the system.
+*   **Idempotency**: Operations and deployments are designed to produce the same result regardless of how many times they are executed, ensuring consistency and reliability.
+*   **Declarative Configuration**: The desired state of the system is defined in a declarative manner, and the system is responsible for achieving that state.
+*   **Configuration as Code**: Infrastructure and application configurations are managed as version-controlled code, enabling automated provisioning, consistent environments, and clear audit trails.
+*   **Security by Design**: Security is integrated into the architecture from the ground up, rather than being an afterthought.
+*   **Open-Source First**: Prioritize the adoption and integration of free and open-source software solutions to minimize costs and foster community collaboration.
+
+## High-Level System Architecture
+
+This diagram provides a comprehensive overview of the Phoenix Hypervisor ecosystem, including user interaction, orchestration, configuration management, and the virtualized resources.
+
+```mermaid
+graph TD
+    subgraph "User"
+        A[Developer/Admin]
+    end
+
+    subgraph "Phoenix Hypervisor (Proxmox Host)"
+        B[phoenix CLI]
+        C[Configuration Files]
+        D[LXC Containers]
+        E[Virtual Machines]
+        F[Storage Pools]
+        G[Networking]
+    end
+
+    subgraph "Configuration Files"
+        C1[/etc/phoenix_hypervisor_config.json]
+        C2[/etc/phoenix_lxc_configs.json]
+        C3[/etc/phoenix_vm_configs.json]
+    end
+
+    A -- Manages --> B
+    B -- Reads --> C1
+    B -- Reads --> C2
+    B -- Reads --> C3
+    B -- Provisions/Manages --> D
+    B -- Provisions/Manages --> E
+    B -- Manages --> F
+    B -- Configures --> G
+```
+
+## Prerequisites
+
+Before you begin, ensure you have the following:
+
+*   A Proxmox VE host.
+*   Root access to the Proxmox host.
+*   `git` installed on the Proxmox host.
 
 ## Installation
 
-These instructions will guide you through the process of downloading and extracting the necessary files for the Phoenix Hypervisor on a new Proxmox installation.
+1.  **Clone the repository:**
 
-### 1. Download the release
+    Log in to your Proxmox host as the `root` user and clone the repository into the `/usr/local` directory.
 
-Log in to your Proxmox host as the `root` user and download the latest release from the GitHub repository.
+    ```bash
+    git clone https://github.com/SirHeads/Testing-ideas.git /usr/local/phoenix_hypervisor
+    ```
 
-```bash
-wget https://github.com/SirHeads/Testing-ideas/archive/refs/tags/v01.05.01.tar.gz -O Testing-ideas-v01.05.01.tar.gz
-```
+2.  **Set permissions:**
 
-### 2. Extract the archive
+    Make the `phoenix` CLI executable.
 
-Extract the contents of the downloaded tar.gz file.
+    ```bash
+    chmod +x /usr/local/phoenix_hypervisor/bin/phoenix
+    ```
 
-```bash
-tar -xzvf Testing-ideas-v01.05.01.tar.gz
-```
+3.  **Initial Setup:**
 
-### 3. Move the `phoenix_hypervisor` directory
+    Run the `setup` command to initialize the hypervisor environment.
 
-This will move the `phoenix_hypervisor` directory from the extracted folder to `/usr/local/`.
+    ```bash
+    /usr/local/phoenix_hypervisor/bin/phoenix setup
+    ```
 
-```bash
-mv Testing-ideas-01.05.01/usr/local/phoenix_hypervisor /usr/local/
-```
+## Configuration
 
-### 4. Set permissions
+The Phoenix Hypervisor is configured through a set of JSON files located in `/usr/local/phoenix_hypervisor/etc`:
 
-Make the main orchestrator script executable. You may need to adjust permissions for other scripts as needed.
+*   `phoenix_hypervisor_config.json`: The main configuration file for the hypervisor, including network settings, storage pools, and user accounts.
+*   `phoenix_lxc_configs.json`: Defines the configuration for all LXC containers, including their resources, features, and dependencies.
+*   `phoenix_vm_configs.json`: Defines the configuration for all QEMU virtual machines.
 
-```bash
-chmod +x /usr/local/phoenix_hypervisor/bin/phoenix_orchestrator.sh
-```
+## Usage
 
-### 5. Clean up
+### The `phoenix` CLI
 
-Remove the downloaded archive and the extracted folder.
+The `phoenix` CLI is the primary tool for managing the Phoenix Hypervisor. It provides a simple, verb-first interface for all operations.
 
-```bash
-rm Testing-ideas-v01.05.01.tar.gz
-rm -rf Testing-ideas-01.05.01
-```
+| Command | Description |
+| :--- | :--- |
+| `phoenix LetsGo` | **Master Command:** Creates and starts all defined guests. |
+| `phoenix create <ID...>` | Creates one or more guests, automatically resolving dependencies. |
+| `phoenix delete <ID...>` | Deletes the specified guest(s). |
+| `phoenix start <ID...>` | Starts the specified guest(s), respecting boot order. |
+| `phoenix stop <ID...>` | Stops the specified guest(s). |
+| `phoenix test <ID> [--suite <name>]` | Runs a test suite against a specific guest. |
+| `phoenix setup` | **Special Case:** Initializes or configures the hypervisor. |
 
-## About the Project
+### Examples
 
-The Phoenix Hypervisor is a collection of scripts designed to automate the setup and management of LXC containers and VMs on a Proxmox host. It provides a declarative way to manage your infrastructure, making it easy to reproduce and maintain your environment.
+*   **Create a single container:**
 
-### Key Features
+    ```bash
+    /usr/local/phoenix_hypervisor/bin/phoenix create 950
+    ```
 
-*   **Declarative Configuration:** Define your containers and VMs in JSON configuration files.
-*   **Automated Setup:** Scripts to automate the installation and configuration of various services like Docker, NVIDIA drivers, Ollama, and more.
-*   **Modular Design:** The scripts are organized into modules for different functionalities, making it easy to extend and customize.
-*   **Health Checks:** Includes scripts to monitor the health of your containers and services.
+*   **Start multiple containers:**
 
-## Getting Started
+    ```bash
+    /usr/local/phoenix_hypervisor/bin/phoenix start 950 953
+    ```
 
-Once you have completed the installation steps, you can start using the `phoenix_orchestrator.sh` script to manage your environment.
+*   **Bring the entire environment online:**
 
-For more information on how to use the scripts and configure your environment, please refer to the documentation in the `Thinkheads.AI_docs` directory.
+    ```bash
+    /usr/local/phoenix_hypervisor/bin/phoenix LetsGo
+    ```
+
+## Contributing
+
+Contributions are welcome! Please refer to the contributing guidelines for more information.
+
+## Support
+
+If you encounter any issues or have any questions, please open an issue on the GitHub repository.
+
+## License
+
+This project is licensed under the MIT License.
