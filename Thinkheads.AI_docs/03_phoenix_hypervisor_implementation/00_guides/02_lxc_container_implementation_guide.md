@@ -3,7 +3,7 @@ title: "LXC Container Implementation Guide"
 summary: "A comprehensive, RAG-optimized master document detailing all LXC Container Implementations within the Phoenix Hypervisor project."
 document_type: "Implementation Guide"
 status: "Approved"
-version: "1.0.0"
+version: "2.0.0"
 author: "Phoenix Hypervisor Team"
 owner: "Developer"
 tags:
@@ -16,7 +16,7 @@ tags:
   - "Ollama"
   - "n8n"
 review_cadence: "Annual"
-last_reviewed: "2025-09-23"
+last_reviewed: "2025-09-29"
 ---
 
 # LXC Container Implementation Guide
@@ -27,7 +27,7 @@ This document provides a single, authoritative, and RAG-optimized overview of al
 
 ## 2. System Architecture
 
-The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway. This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
+The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway (CTID 953). This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
 
 ### High-Level Interaction Diagram
 
@@ -73,14 +73,14 @@ graph TD
 
 ## 3. Container Implementations
 
-This section provides a detailed breakdown of each container's purpose, key software, resource allocation, and configuration details.
+This section provides a detailed breakdown of each container's purpose, key software, resource allocation, and configuration details, sourced directly from `phoenix_lxc_configs.json`.
 
 ### Container 950: vLLM Chat Service (`vllm-qwen2.5-7b-awq`)
 
 *   **Purpose**: Hosts a vLLM instance serving the `Qwen/Qwen2.5-7B-Instruct-AWQ` model for high-performance chat completions.
 *   **Key Software**: vLLM
 *   **Resource Allocation**:
-    *   **CPU**: 12 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 72000 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -98,7 +98,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model for generating text embeddings.
 *   **Key Software**: vLLM
 *   **Resource Allocation**:
-    *   **CPU**: 12 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 72000 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -121,7 +121,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.152`
     *   **Port**: `6333`
-    *   **Data Persistence**: Data is stored in a shared volume mounted at `/qdrant/storage`.
+    *   **Data Persistence**: Data is stored in a dedicated 20GB volume mounted at `/qdrant/storage`.
 
 ### Container 953: API Gateway (`Nginx-VscodeRag`)
 
@@ -146,14 +146,14 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.154`
     *   **Port**: `5678`
-    *   **Data Persistence**: Data is stored in a shared volume mounted at `/home/node/.n8n`.
+    *   **Data Persistence**: Data is stored in a dedicated 10GB volume mounted at `/home/node/.n8n`.
 
 ### Container 955: Ollama Service (`ollama-oWUI`)
 
 *   **Purpose**: Provides a standardized, GPU-accelerated base for running Ollama models.
 *   **Key Software**: Ollama
 *   **Resource Allocation**:
-    *   **CPU**: 8 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 32768 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `0`
@@ -179,7 +179,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Purpose**: Provides a GPU-accelerated environment for compiling and running models with `llama.cpp`.
 *   **Key Software**: `llama.cpp`
 *   **Resource Allocation**:
-    *   **CPU**: 8 cores
+    *   **CPU**: 6 cores
     *   **Memory**: 32768 MB
     *   **Storage**: 128 GB
     *   **GPU**: Passthrough of GPU `1`

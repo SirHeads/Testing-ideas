@@ -139,4 +139,21 @@ The sequence of states is as follows:
 10. `run_health_check`
 11. `create_template_snapshot`
 
+### 4.1. Main State Machine Diagram
+
+```mermaid
+graph TD
+    A[Start] --> B[validate_inputs];
+    B --> C[ensure_container_defined];
+    C --> D[apply_configurations];
+    D --> E[apply_shared_volumes];
+    E --> F[apply_dedicated_volumes];
+    F --> G[ensure_container_disk_size];
+    G --> H[start_container];
+    H --> I[apply_features];
+    I --> J[run_application_script];
+    J --> K[run_health_check];
+    K --> L[create_template_snapshot];
+    L --> M[End];
+```
 This structured, stateful approach ensures that the orchestration is predictable, repeatable, and resilient to failure.

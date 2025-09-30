@@ -1,24 +1,43 @@
+# Nginx reverse proxy configuration for a generic vLLM (or other AI model) backend.
+# This configuration provides a simple, non-SSL proxy pass with caching enabled
+# to improve performance for repeated requests.
+# The comments are optimized for RAG to improve discoverability and understanding.
+
+# Defines the upstream server for the vLLM backend.
 upstream vllm_backend {
+    # The IP address and port of the vLLM service.
     server 10.0.0.151:8000;
 }
 
+# Main server block for handling HTTP traffic.
 server {
     listen 80;
+    # The underscore `_` makes this the default server block for any hostname
+    # not explicitly matched by another server block.
     server_name _;
 
+    # Location block for proxying all requests to the vLLM backend.
     location / {
+        # Forwards requests to the defined upstream.
         proxy_pass http://vllm_backend;
+        # Forwards the original Host header to the backend.
         proxy_set_header Host $host;
-        # Fix: Removed spaces around hyphens
+        # Forwards the client's real IP address.
         proxy_set_header X-Real-IP $remote_addr;
+        # Appends the proxy's IP to the X-Forwarded-For header.
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Informs the backend that the original request was made via HTTP.
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Enables caching for API responses.
         proxy_cache api_cache;
+        # Caches successful responses (200, 302) for 10 minutes.
         proxy_cache_valid 200 302 10m;
+        # Caches 'Not Found' (404) responses for 1 minute.
         proxy_cache_valid 404 1m;
+        # Defines the key for caching, based on the request scheme, method, host, and URI.
         proxy_cache_key "$scheme$request_method$host$request_uri";
-        # Fix: Removed spaces around hyphens
+        # Adds a header to the response indicating the cache status (e.g., HIT, MISS, EXPIRED).
         add_header X-Proxy-Cache $upstream_cache_status;
     }
 }

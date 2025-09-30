@@ -28,10 +28,11 @@
                 "base_setup"
             ],
             "lxc_options": [
-                "lxc.mount.auto=sys:rw"
+                "lxc.apparmor.profile=unconfined"
             ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true
         },
         "901": {
             "name": "Template-GPU",
@@ -49,15 +50,19 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:AA:BB:CD",
-            "gpu_assignment": "0,1",
+            "gpu_assignment": "0, 1",
             "portainer_role": "none",
             "unprivileged": true,
             "clone_from_ctid": "900",
             "features": [
                 "nvidia"
             ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true
         },
         "902": {
             "name": "Template-Docker",
@@ -82,8 +87,49 @@
             "features": [
                 "docker"
             ],
+            "lxc_options": [
+                "lxc.cgroup2.devices.allow=a",
+                "lxc.mount.entry=/dev/fuse dev/fuse none bind,create=file"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "tests": {
+                "health_checks": [
+                    {
+                        "name": "Check Docker Service",
+                        "type": "script",
+                        "path": "docker/check_docker_service.sh"
+                    },
+                    {
+                        "name": "Check Network Access",
+                        "type": "script",
+                        "path": "docker/check_network_access.sh"
+                    },
+                    {
+                        "name": "Check DNS Resolution",
+                        "type": "script",
+                        "path": "docker/check_dns_resolution.sh"
+                    }
+                ],
+                "integration_tests": [
+                    {
+                        "name": "Test Docker Hello World",
+                        "type": "script",
+                        "path": "docker/test_docker_hello_world.sh"
+                    },
+                    {
+                        "name": "Test Docker Storage Driver",
+                        "type": "script",
+                        "path": "docker/test_docker_storage_driver.sh"
+                    },
+                    {
+                        "name": "Test AppArmor Confinement",
+                        "type": "script",
+                        "path": "docker/test_apparmor_confinement.sh"
+                    }
+                ]
+            }
         },
         "903": {
             "name": "Template-Docker-GPU",
@@ -108,8 +154,12 @@
             "features": [
                 "docker"
             ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true
         },
         "910": {
             "name": "Portainer",
@@ -161,7 +211,15 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "pct_options": [
+                "nesting=1",
+                "keyctl=1"
+            ],
+            "apparmor_profile": "lxc-phoenix-v2",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.mount.auto=sys:rw"
+            ]
         },
         "920": {
             "name": "Template-VLLM",
@@ -169,9 +227,9 @@
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 10,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 128,
+            "storage_size_gb": 64,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -189,12 +247,16 @@
             ],
             "pct_options": [],
             "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "950": {
             "name": "vllm-qwen2.5-7b-awq",
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -283,12 +345,49 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
+            "tests": {
+                "health_checks": [
+                    {
+                        "name": "Dummy Pass",
+                        "type": "script",
+                        "path": "health_checks/dummy_pass.sh"
+                    },
+                    {
+                        "name": "Dummy Fail",
+                        "type": "script",
+                        "path": "health_checks/dummy_fail.sh"
+                    }
+                ],
+                "integration_tests": [
+                    {
+                        "name": "vLLM Context Window Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_context_window.py"
+                    },
+                    {
+                        "name": "vLLM Responsiveness Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_responsiveness.py"
+                    }
+                ]
+            },
+            "vllm": [
+                {
+                    "name": "vLLM Integration Tests",
+                    "type": "script",
+                    "path": "run_vllm_integration_tests.sh"
+                }
+            ]
         },
         "951": {
             "name": "vllm-granite-embed-r2",
             "memory_mb": 72000,
-            "cores": 12,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -313,7 +412,7 @@
             "vllm_served_model_name": "ibm-granite/granite-embedding-english-r2",
             "vllm_model_type": "embedding",
             "vllm_tensor_parallel_size": 1,
-            "vllm_gpu_memory_utilization": 0.10,
+            "vllm_gpu_memory_utilization": 0.1,
             "vllm_max_model_len": 1024,
             "pct_options": [],
             "vllm_args": [
@@ -350,7 +449,25 @@
                     "mount_point": "/vllm_models"
                 }
             ],
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
+            "tests": {
+                "integration_tests": [
+                    {
+                        "name": "vLLM Context Window Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_context_window.py"
+                    },
+                    {
+                        "name": "vLLM Responsiveness Test",
+                        "type": "script",
+                        "path": "vllm/test_vllm_responsiveness.py"
+                    }
+                ]
+            }
         },
         "952": {
             "name": "qdrant-VSCodeRag",
@@ -382,7 +499,11 @@
                 "retries": 5,
                 "interval": 5
             },
-            "pct_options": [],
+            "pct_options": [
+                "keyctl=1",
+                "nesting=1",
+                "mknod=1"
+            ],
             "firewall": {
                 "enabled": true,
                 "rules": [
@@ -409,7 +530,9 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": false,
+            "lxc_options": []
         },
         "953": {
             "name": "Nginx-VscodeRag",
@@ -442,7 +565,11 @@
             "start_at_boot": true,
             "boot_order": 1,
             "boot_delay": 5,
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "954": {
             "name": "n8n-phoenix",
@@ -461,14 +588,21 @@
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "902",
-            "features": [
-                "docker"
-            ],
+            "features": [],
             "application_script": "phoenix_hypervisor_lxc_954.sh",
             "ports": [
                 "5678:5678"
             ],
-            "pct_options": [],
+            "pct_options": [
+                "nesting=1"
+            ],
+            "lxc_options": [
+                "lxc.cgroup2.devices.allow=a",
+                "lxc.cap.keep=sys_admin,mknod,sys_chroot",
+                "lxc.mount.auto=proc:rw sys:rw",
+                "lxc.apparmor.allow_nesting=1",
+                "lxc.apparmor.profile=unconfined"
+            ],
             "firewall": {
                 "enabled": true,
                 "rules": [
@@ -495,12 +629,13 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true
         },
         "955": {
             "name": "ollama-oWUI",
             "memory_mb": 32768,
-            "cores": 8,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -529,7 +664,11 @@
             "start_at_boot": true,
             "boot_order": 2,
             "boot_delay": 5,
-            "apparmor_profile": "unconfined"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "956": {
             "name": "openWebUI-phoenix",
@@ -562,12 +701,16 @@
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "957": {
             "name": "llamacpp",
             "memory_mb": 32768,
-            "cores": 8,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 128,
             "network_config": {
@@ -594,7 +737,11 @@
             "start_at_boot": true,
             "boot_order": 2,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
         "960": {
             "name": "monitoring-stack",
@@ -627,7 +774,11 @@
             "start_at_boot": true,
             "boot_order": 4,
             "boot_delay": 5,
-            "apparmor_profile": "lxc-gpu-docker-storage"
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         }
     }
 }

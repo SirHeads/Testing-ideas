@@ -1,0 +1,116 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Phoenix Hypervisor VM Configuration Schema",
+    "description": "Schema for defining VM configurations in the Phoenix Hypervisor environment.",
+    "type": "object",
+    "properties": {
+        "vm_defaults": {
+            "description": "Default settings for all VMs.",
+            "type": "object",
+            "properties": {
+                "template": {
+                    "type": "string"
+                },
+                "cores": {
+                    "type": "integer"
+                },
+                "memory_mb": {
+                    "type": "integer"
+                },
+                "disk_size_gb": {
+                    "type": "integer"
+                },
+                "storage_pool": {
+                    "type": "string"
+                },
+                "network_bridge": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "template",
+                "cores",
+                "memory_mb",
+                "disk_size_gb",
+                "storage_pool",
+                "network_bridge"
+            ]
+        },
+        "vms": {
+            "description": "An array of VM definitions.",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "vmid": {
+                        "type": "integer"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "clone_from_vmid": {
+                        "type": "integer"
+                    },
+                    "template_image": {
+                        "type": "string"
+                    },
+                    "cores": {
+                        "type": "integer"
+                    },
+                    "memory_mb": {
+                        "type": "integer"
+                    },
+                    "disk_size_gb": {
+                        "type": "integer"
+                    },
+                    "storage_pool": {
+                        "type": "string"
+                    },
+                    "network_bridge": {
+                        "type": "string"
+                    },
+                    "features": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "network_config": {
+                        "type": "object",
+                        "properties": {
+                            "ip": {
+                                "type": "string"
+                            },
+                            "gw": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "ip",
+                            "gw"
+                        ]
+                    },
+                    "user_config": {
+                        "type": "object",
+                        "properties": {
+                            "username": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "username"
+                        ]
+                    }
+                },
+                "required": [
+                    "vmid",
+                    "name"
+                ]
+            }
+        }
+    },
+    "required": [
+        "vm_defaults",
+        "vms"
+    ]
+}

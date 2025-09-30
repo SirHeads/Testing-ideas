@@ -1,19 +1,29 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_common_utils.sh
-# Description: Provids centralized environment setup, logging utilities, and common functions
-#              for all Phoenix Hypervisor shell scripts. This script is designed to be sourced
-#              by other scripts to ensure a consistent execution environment and standardized
-#              logging practices across the hypervisor management system.
-#              It includes context-aware logic to dynamically set the LXC_CONFIG_FILE path
-#              based on whether it is running on the host or inside a container's temporary directory.
-# Dependencies: jq, pct, dpkg-query, ping, ip, zfs, zpool, usermod, exportfs, wget, curl, gpg, apt-get
-# Inputs: PHOENIX_DEBUG (environment variable for debug logging), DRY_RUN (environment variable for dry-run mode),
-#         Various function arguments (e.g., CTID, package names, hostnames, subnets, ZFS pool/dataset names,
-#         mount points, usernames, groups, commands, properties, options).
-# Outputs: Log messages to stdout and MAIN_LOG_FILE, queried values from JSON (jq_get_value),
-#          exit codes indicating success or failure.
-# Version: 1.0.0
+# Description: This script provides a centralized library of shell functions and environment settings for all
+#              Phoenix Hypervisor scripts. It is designed to be sourced by other scripts to ensure a consistent
+#              execution environment, standardized logging, and robust error handling. The script includes
+#              utilities for logging, interacting with Proxmox tools (`pct`, `qm`), querying JSON configuration
+#              files, and performing common system checks. This modular approach promotes code reuse and
+#              maintainability across the entire hypervisor management system.
+#
+# Dependencies:
+#   - jq: A command-line JSON processor used to parse the configuration files.
+#   - Proxmox VE command-line tools: `pct`, `qm`, `pvesm`.
+#   - Standard Linux utilities: `dpkg-query`, `ping`, `ip`, `zfs`, `zpool`, `usermod`, `exportfs`, `wget`, `curl`, `gpg`, `apt-get`.
+#
+# Inputs:
+#   - PHOENIX_DEBUG: An environment variable that, when set to "true", enables detailed debug logging.
+#   - DRY_RUN: An environment variable that, when set to "true", prevents the script from making any actual changes to the system.
+#   - Function arguments for the various utility functions provided by this script.
+#
+# Outputs:
+#   - Log messages to stdout and to the main log file at /var/log/phoenix_hypervisor.log.
+#   - Queried values from JSON configuration files.
+#   - Exit codes indicating the success or failure of the functions.
+#
+# Version: 1.1.0
 # Author: Phoenix Hypervisor Team
 
 # --- Shell Settings ---
@@ -26,7 +36,8 @@ export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_con
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 
 # --- Dynamic LXC_CONFIG_FILE Path ---
-# Determine the directory of the currently executing script.
+# This logic allows the script to be used both on the host and inside a container's temporary execution environment.
+# It dynamically sets the path to the LXC configuration file based on the script's execution context.
 SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
@@ -52,9 +63,12 @@ COLOR_RESET='\033[0m'
 # --- Logging Functions ---
 # =====================================================================================
 # Function: log_debug
-# Description: Logs a debug message to stdout and the main log file if PHOENIX_DEBUG is true.
+# Description: Logs a debug message to stdout and the main log file. This function is only
+#              active when the `PHOENIX_DEBUG` environment variable is set to "true".
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   None.
 # =====================================================================================
@@ -68,9 +82,12 @@ log_debug() {
 
 # =====================================================================================
 # Function: log_info
-# Description: Logs an informational message to stdout and the main log file.
+# Description: Logs an informational message to stdout and the main log file. This is the
+#              standard logging function for general-purpose messages.
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   None.
 # =====================================================================================
@@ -81,9 +98,12 @@ log_info() {
 
 # =====================================================================================
 # Function: log_success
-# Description: Logs a success message to stdout and the main log file.
+# Description: Logs a success message to stdout and the main log file. This is used to
+#              indicate that a significant operation has completed successfully.
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   None.
 # =====================================================================================
@@ -94,9 +114,12 @@ log_success() {
 
 # =====================================================================================
 # Function: log_warn
-# Description: Logs a warning message to stderr and the main log file.
+# Description: Logs a warning message to stderr and the main log file. This is used for
+#              non-fatal issues that should be brought to the user's attention.
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   None.
 # =====================================================================================
@@ -107,9 +130,12 @@ log_warn() {
 
 # =====================================================================================
 # Function: log_error
-# Description: Logs an error message to stderr and the main log file.
+# Description: Logs an error message to stderr and the main log file. This is used for
+#              recoverable errors that do not require the script to exit.
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   None.
 # =====================================================================================
@@ -120,9 +146,12 @@ log_error() {
 
 # =====================================================================================
 # Function: log_fatal
-# Description: Logs a fatal error message to stderr and the main log file, then exits the script with status 1.
+# Description: Logs a fatal error message to stderr and the main log file, and then exits
+#              the script with a status code of 1. This is used for unrecoverable errors.
+#
 # Arguments:
 #   $@ - The message to log.
+#
 # Returns:
 #   Exits the script with status 1.
 # =====================================================================================
@@ -135,9 +164,14 @@ log_fatal() {
 
 # =====================================================================================
 # Function: setup_logging
-# Description: Ensures the log directory exists and the log file is available.
+# Description: Ensures that the log directory exists and that the log file is available for
+#              writing. This function is called at the beginning of the main orchestrator script.
+#
 # Arguments:
 #   $1 - The full path to the log file.
+#
+# Returns:
+#   None. The function will exit with a fatal error if the log directory or file cannot be created.
 # =====================================================================================
 setup_logging() {
     local log_file="$1"
@@ -154,8 +188,14 @@ setup_logging() {
  
 # =====================================================================================
 # Function: log_plain_output
-# Description: Logs multi-line output from a variable or command, preserving formatting.
-#              Designed to be used with pipes.
+# Description: Logs multi-line output from a variable or command while preserving its
+#              original formatting. This function is designed to be used with pipes.
+#
+# Arguments:
+#   None. Reads from stdin.
+#
+# Returns:
+#   None.
 # =====================================================================================
 log_plain_output() {
     # This function is designed to be used with pipes for multi-line output.
@@ -178,13 +218,18 @@ log_plain_output() {
 
 # =====================================================================================
 # Function: pct_exec
-# Description: Executes a command inside an LXC container using 'pct exec'.
-#              Handles errors and ensures commands are run with appropriate privileges.
-#              NOTE: This function is robust and automatically handles the '--' separator.
-#              It is safe to call with or without it.
+# Description: Executes a command inside a specified LXC container using `pct exec`. This
+#              function is a robust wrapper that handles errors and ensures that commands
+#              are run with the appropriate privileges. It also includes context-aware logic
+#              to execute commands directly when running inside the container's temporary
+#              execution environment.
+#
 # Arguments:
-#   $1 (ctid) - The container ID.
+#   $1 - The CTID of the container.
 #   $@ - The command and its arguments to execute inside the container.
+#
+# Returns:
+#   0 on success, or the exit code of the failed command on failure.
 # =====================================================================================
 pct_exec() {
     local ctid="$1"
@@ -224,11 +269,14 @@ pct_exec() {
 
 # =====================================================================================
 # Function: jq_get_value
-# Description: A robust wrapper for jq to query the LXC config file.
-#              It retrieves a specific value from the JSON configuration for a given CTID.
+# Description: A robust wrapper for `jq` that retrieves a specific value from the LXC JSON
+#              configuration file for a given CTID. This function simplifies the process of
+#              querying the configuration and includes error handling.
+#
 # Arguments:
-#   $1 (ctid) - The container ID.
-#   $2 (jq_query) - The jq query string to execute.
+#   $1 - The CTID of the container.
+#   $2 - The `jq` query string to execute.
+#
 # Returns:
 #   The queried value on success, and a non-zero status code on failure.
 # =====================================================================================
@@ -266,11 +314,13 @@ jq_get_value() {
 
 # =====================================================================================
 # Function: jq_get_array
-# Description: A robust wrapper for jq to query the LXC config file for an array.
-#              It retrieves all elements of a JSON array for a given CTID.
+# Description: A robust wrapper for `jq` that retrieves all elements of a JSON array from the
+#              LXC configuration file for a given CTID.
+#
 # Arguments:
-#   $1 (ctid) - The container ID.
-#   $2 (jq_query) - The jq query string that selects the array.
+#   $1 - The CTID of the container.
+#   $2 - The `jq` query string that selects the array.
+#
 # Returns:
 #   The elements of the array, each on a new line.
 # =====================================================================================
@@ -294,10 +344,13 @@ jq_get_array() {
 
 # =====================================================================================
 # Function: run_pct_command
-# Description: A robust wrapper for executing pct commands with error handling.
-#              In dry-run mode, it logs the command instead of executing it.
+# Description: A robust wrapper for executing `pct` commands. It handles logging, error
+#              handling, and dry-run mode, ensuring that all container operations are
+#              consistently managed.
+#
 # Arguments:
-#   $@ - The arguments to pass to the 'pct' command.
+#   $@ - The arguments to pass to the `pct` command.
+#
 # Returns:
 #   0 on success, 1 on failure.
 # =====================================================================================
@@ -312,41 +365,42 @@ run_pct_command() {
     fi
 
     # Execute the pct command
-    local output
-    local exit_code=0
-    # Capture the output and exit code of the pct command.
-    output=$(pct "${pct_args[@]}" 2>&1) || exit_code=$?
+   local output
+   local exit_code=0
+   output=$(pct "${pct_args[@]}" 2>&1) || exit_code=$?
 
-    # Log the captured output and exit code for debugging purposes.
-    log_debug "pct command output:\n$output"
-    log_debug "pct command exit code: $exit_code"
+   log_debug "pct command output:\n$output"
+   log_debug "pct command exit code: $exit_code"
 
-    # Check if the command failed (exit code is not 0).
-    if [ $exit_code -ne 0 ]; then
-        # Check for the specific non-error condition of the disk already being the correct size.
-        if [[ "${pct_args[0]}" == "resize" && "$output" == *"disk is already at specified size"* ]]; then
-            log_info "Ignoring non-fatal error for 'pct resize': $output"
-        else
-            # For all other errors, log the failure and return an error code.
-            log_error "'pct ${pct_args[*]}' command failed with exit code $exit_code."
-            log_error "Output:\n$output"
-            return 1
-        fi
-    fi
+   if [ $exit_code -ne 0 ]; then
+       if [[ "${pct_args[0]}" == "resize" && "$output" == *"disk is already at specified size"* ]]; then
+           log_info "Ignoring non-fatal error for 'pct resize': $output"
+       elif [[ "${pct_args[0]}" == "start" && "$output" == *"explicitly configured lxc.apparmor.profile"* ]]; then
+           log_error "AppArmor profile conflict detected for CTID ${pct_args[1]}."
+           log_error "Output:\n$output"
+           # Decide if this should be a fatal error or just a warning
+           return 1 # Treat as a fatal error for now
+       else
+           log_error "'pct ${pct_args[*]}' command failed with exit code $exit_code."
+           log_error "Output:\n$output"
+           return 1
+       fi
+   fi
     log_info "'pct ${pct_args[*]}' command executed successfully."
     return 0
 }
 # =====================================================================================
 # Function: run_pct_push
-# Description: A robust wrapper for 'pct push' with retries and verification.
-#              This function pushes a file to a container, creating the destination
-#              directory if it doesn't exist, and verifies the transfer.
+# Description: A robust wrapper for `pct push` that includes retries and verification. This
+#              function is used to reliably copy files from the host to a container.
+#
 # Arguments:
-#   $1 (ctid) - The container ID.
-#   $2 (host_path) - The path of the file on the host.
-#   $3 (container_path) - The destination path in the container.
-#   $4 (max_attempts) - Optional: Maximum number of push attempts (default: 3).
-#   $5 (delay) - Optional: Delay in seconds between retries (default: 5).
+#   $1 - The CTID of the container.
+#   $2 - The path of the file on the host.
+#   $3 - The destination path in the container.
+#   $4 - Optional: Maximum number of push attempts (default: 3).
+#   $5 - Optional: Delay in seconds between retries (default: 5).
+#
 # Returns:
 #   0 on success, 1 on failure after all retries.
 # =====================================================================================
@@ -401,10 +455,15 @@ run_pct_push() {
 
 # =====================================================================================
 # Function: ensure_nvidia_repo_is_configured
-# Description: Ensures the NVIDIA CUDA repository is configured in the container.
-#              This function is idempotent and can be called safely multiple times.
+# Description: Ensures that the NVIDIA CUDA repository is correctly configured in the specified
+#              container. This function is idempotent and will not make any changes if the
+#              repository is already configured.
+#
 # Arguments:
-#   $1 (ctid) - The container ID.
+#   $1 - The CTID of the container.
+#
+# Returns:
+#   None. The function will exit with a fatal error if the repository setup fails.
 # =====================================================================================
 ensure_nvidia_repo_is_configured() {
     local ctid="$1"
@@ -455,9 +514,12 @@ fi
 
 # =====================================================================================
 # Function: check_root
-# Description: Ensures that the script is being run with root privileges.
+# Description: Ensures that the script is being run with root privileges. This is a critical
+#              security check for scripts that perform system-level operations.
+#
 # Arguments:
 #   None.
+#
 # Returns:
 #   Exits with a fatal error if the script is not run as root.
 # =====================================================================================
@@ -471,8 +533,10 @@ check_root() {
 # =====================================================================================
 # Function: check_package
 # Description: Verifies if a specified Debian package is installed on the system.
+#
 # Arguments:
-#   $1 (package) - The name of the package to check.
+#   $1 - The name of the package to check.
+#
 # Returns:
 #   0 if the package is installed, 1 otherwise.
 # =====================================================================================
@@ -482,16 +546,17 @@ check_package() {
   dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"
 }
 
-# Algorithm: Network connectivity check
-# Pings host with retries to verify reachability
-# Keywords: [network, ping]
 # =====================================================================================
 # Function: check_network_connectivity
 # Description: Verifies network connectivity to a specified host by pinging it with retries.
+#              This is a useful utility for ensuring that the system has access to required
+#              network resources.
+#
 # Arguments:
-#   $1 (host) - The hostname or IP address to ping.
+#   $1 - The hostname or IP address to ping.
+#
 # Returns:
-#   0 on successful connectivity, exits with a fatal error on failure after retries.
+#   0 on successful connectivity. Exits with a fatal error on failure after retries.
 # =====================================================================================
 check_network_connectivity() {
   local host="$1" # Host to check connectivity against
@@ -517,14 +582,14 @@ check_network_connectivity() {
   log_info "Network connectivity to $host verified"
 }
 
-# Algorithm: Internet connectivity check
-# Pings DNS server with retries to verify internet access
-# Keywords: [internet, ping]
 # =====================================================================================
 # Function: check_internet_connectivity
-# Description: Verifies general internet connectivity by pinging a well-known DNS server (8.8.8.8) with retries.
+# Description: Verifies general internet connectivity by pinging a well-known DNS server
+#              (8.8.8.8) with retries.
+#
 # Arguments:
 #   None.
+#
 # Returns:
 #   0 on successful internet connectivity, 1 on failure after retries.
 # =====================================================================================
@@ -550,11 +615,15 @@ check_internet_connectivity() {
 
 # =====================================================================================
 # Function: check_interface_in_subnet
-# Description: Checks if any network interface on the system is configured within a given IPv4 subnet.
+# Description: Checks if any network interface on the system is configured within a given
+#              IPv4 subnet. This is useful for verifying network configurations.
+#
 # Arguments:
-#   $1 (subnet) - The IPv4 subnet in CIDR notation (e.g., "192.168.1.0/24").
+#   $1 - The IPv4 subnet in CIDR notation (e.g., "192.168.1.0/24").
+#
 # Returns:
-#   0 if an interface is found in the subnet, 1 otherwise. Exits with a fatal error for invalid subnet format.
+#   0 if an interface is found in the subnet, 1 otherwise. Exits with a fatal error for
+#   invalid subnet format.
 # =====================================================================================
 check_interface_in_subnet() {
   local subnet="$1" # The subnet to check against
@@ -591,12 +660,15 @@ check_interface_in_subnet() {
 
 # =====================================================================================
 # Function: create_zfs_dataset
-# Description: Creates a ZFS dataset with a specified mountpoint and optional additional properties.
+# Description: Creates a ZFS dataset with a specified mountpoint and optional additional
+#              properties. This is a key utility for managing storage in the hypervisor.
+#
 # Arguments:
-#   $1 (pool) - The name of the ZFS pool.
-#   $2 (dataset) - The name of the dataset to create within the pool.
-#   $3 (mountpoint) - The desired mountpoint for the new dataset.
-#   $@ (additional properties) - Optional additional ZFS properties to set (e.g., "compression=lz4").
+#   $1 - The name of the ZFS pool.
+#   $2 - The name of the dataset to create within the pool.
+#   $3 - The desired mountpoint for the new dataset.
+#   $@ - Optional additional ZFS properties to set (e.g., "compression=lz4").
+#
 # Returns:
 #   Exits with a fatal error if dataset creation or verification fails.
 # =====================================================================================
@@ -619,9 +691,11 @@ create_zfs_dataset() {
 # =====================================================================================
 # Function: set_zfs_properties
 # Description: Sets one or more properties on a specified ZFS dataset.
+#
 # Arguments:
-#   $1 (dataset) - The full name of the ZFS dataset (e.g., "pool/dataset").
-#   $@ (properties) - A list of properties to set (e.g., "compression=lz4", "sharenfs=on").
+#   $1 - The full name of the ZFS dataset (e.g., "pool/dataset").
+#   $@ - A list of properties to set (e.g., "compression=lz4", "sharenfs=on").
+#
 # Returns:
 #   Exits with a fatal error if any property fails to be set.
 # =====================================================================================
@@ -641,13 +715,15 @@ set_zfs_properties() {
 
 # =====================================================================================
 # Function: configure_nfs_export
-# Description: Configures an NFS export for a given dataset by adding an entry to /etc/exports
-#              and refreshing the NFS export list.
+# Description: Configures an NFS export for a given dataset by adding an entry to
+#              `/etc/exports` and refreshing the NFS export list.
+#
 # Arguments:
-#   $1 (dataset) - The name of the ZFS dataset being exported (for logging purposes).
-#   $2 (mountpoint) - The mountpoint of the dataset to be exported.
-#   $3 (subnet) - The network subnet allowed to access the export (e.g., "192.168.1.0/24").
-#   $4 (options) - NFS export options (e.g., "rw,sync,no_subtree_check").
+#   $1 - The name of the ZFS dataset being exported (for logging purposes).
+#   $2 - The mountpoint of the dataset to be exported.
+#   $3 - The network subnet allowed to access the export (e.g., "192.168.1.0/24").
+#   $4 - NFS export options (e.g., "rw,sync,no_subtree_check").
+#
 # Returns:
 #   Exits with a fatal error if adding the export or refreshing fails.
 # =====================================================================================
@@ -668,15 +744,14 @@ configure_nfs_export() {
   log_info "Configured NFS export for $dataset at $mountpoint"
 }
 
-# Algorithm: Command retry
-# Executes command with retries on failure
-# Keywords: [retry, error_handling]
 # =====================================================================================
 # Function: retry_command
 # Description: Executes a given command, retrying it up to a maximum number of attempts
-#              if it fails.
+#              if it fails. This is a useful utility for handling transient errors.
+#
 # Arguments:
-#   $1 (cmd) - The command string to execute.
+#   $1 - The command string to execute.
+#
 # Returns:
 #   0 on successful command execution, 1 if the command fails after all retries.
 # =====================================================================================
@@ -703,9 +778,11 @@ retry_command() {
 # =====================================================================================
 # Function: add_user_to_group
 # Description: Adds a specified user to a specified group if the user is not already a member.
+#
 # Arguments:
-#   $1 (username) - The username to add to the group.
-#   $2 (group) - The name of the group.
+#   $1 - The username to add to the group.
+#   $2 - The name of the group.
+#
 # Returns:
 #   Exits with a fatal error if adding the user to the group fails.
 # =====================================================================================
@@ -726,8 +803,10 @@ add_user_to_group() {
 # =====================================================================================
 # Function: verify_nfs_exports
 # Description: Verifies the current NFS export configuration by attempting to list them.
+#
 # Arguments:
 #   None.
+#
 # Returns:
 #   Exits with a fatal error if NFS exports cannot be verified.
 # =====================================================================================
@@ -742,8 +821,10 @@ verify_nfs_exports() {
 # =====================================================================================
 # Function: zfs_pool_exists
 # Description: Checks if a ZFS pool with the given name exists on the system.
+#
 # Arguments:
-#   $1 (pool) - The name of the ZFS pool to check.
+#   $1 - The name of the ZFS pool to check.
+#
 # Returns:
 #   0 if the ZFS pool exists, 1 otherwise.
 # =====================================================================================
@@ -759,8 +840,10 @@ zfs_pool_exists() {
 # =====================================================================================
 # Function: zfs_dataset_exists
 # Description: Checks if a ZFS dataset with the given name exists on the system.
+#
 # Arguments:
-#   $1 (dataset) - The full name of the ZFS dataset to check (e.g., "pool/dataset").
+#   $1 - The full name of the ZFS dataset to check (e.g., "pool/dataset").
+#
 # Returns:
 #   0 if the ZFS dataset exists, 1 otherwise.
 # =====================================================================================
@@ -775,9 +858,11 @@ zfs_dataset_exists() {
 # =====================================================================================
 # Function: is_command_available
 # Description: Checks if a command is available inside a specified LXC container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
-#   $2 (command_name) - The name of the command to check.
+#   $1 - The CTID of the container.
+#   $2 - The name of the command to check.
+#
 # Returns:
 #   0 if the command is available, 1 otherwise.
 # =====================================================================================
@@ -812,9 +897,11 @@ is_command_available() {
 # Function: cache_and_get_file
 # Description: Downloads a file from a URL to a local cache directory if it doesn't
 #              already exist and returns the path to the cached file.
+#
 # Arguments:
-#   $1 (URL) - The URL of the file to download.
-#   $2 (cache_dir) - The directory to store the cached file.
+#   $1 - The URL of the file to download.
+#   $2 - The directory to store the cached file.
+#
 # Returns:
 #   Echoes the full path to the cached file and returns 0 on success.
 #   Returns a non-zero value if the download fails.
@@ -853,9 +940,11 @@ cache_and_get_file() {
 }
 # =====================================================================================
 # Function: is_nvidia_installed_robust
-# Description: A robust check to see if the NVIDIA feature is installed.
+# Description: A robust check to see if the NVIDIA feature is installed in a container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -897,9 +986,11 @@ is_nvidia_installed_robust() {
 
 # =====================================================================================
 # Function: _check_docker_installed
-# Description: Private function to check if the Docker feature is installed.
+# Description: Private function to check if the Docker feature is installed in a container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -922,9 +1013,11 @@ _check_docker_installed() {
 
 # =====================================================================================
 # Function: _check_base_setup_installed
-# Description: Private function to check if the base_setup feature is installed.
+# Description: Private function to check if the base_setup feature is installed in a container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -950,9 +1043,11 @@ _check_base_setup_installed() {
 
 # =====================================================================================
 # Function: _check_ollama_installed
-# Description: Private function to check if the Ollama feature is installed.
+# Description: Private function to check if the Ollama feature is installed in a container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -971,8 +1066,10 @@ _check_ollama_installed() {
 # =====================================================================================
 # Function: _check_python_api_service_installed
 # Description: Private function to check if the python_api_service feature is installed.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -1000,9 +1097,11 @@ _check_python_api_service_installed() {
 
 # =====================================================================================
 # Function: _check_vllm_installed
-# Description: Private function to check if the vLLM feature is installed.
+# Description: Private function to check if the vLLM feature is installed in a container.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 if the feature is installed, 1 otherwise.
 # =====================================================================================
@@ -1032,9 +1131,11 @@ _check_vllm_installed() {
 # =====================================================================================
 # Function: is_feature_present_on_container
 # Description: Recursively checks if a feature is present on a container, including its templates.
+#
 # Arguments:
-#   $1 (CTID) - The container ID to check.
-#   $2 (feature_name) - The name of the feature to look for.
+#   $1 - The CTID of the container to check.
+#   $2 - The name of the feature to look for.
+#
 # Returns:
 #   0 if the feature is found, 1 otherwise.
 # =====================================================================================
@@ -1070,8 +1171,10 @@ is_feature_present_on_container() {
 # =====================================================================================
 # Function: wait_for_container_initialization
 # Description: Waits for a container to have network connectivity.
+#
 # Arguments:
-#   $1 (CTID) - The container ID.
+#   $1 - The CTID of the container.
+#
 # Returns:
 #   0 on success, exits with a fatal error on timeout.
 # =====================================================================================
@@ -1091,4 +1194,181 @@ wait_for_container_initialization() {
     done
 
     log_fatal "Timeout reached: Container $ctid did not initialize within $timeout seconds."
+}
+# =====================================================================================
+# Function: verify_lxc_network_connectivity
+# Description: Verifies network connectivity and DNS resolution within a container.
+#
+# Arguments:
+#   $1 - The CTID of the container.
+#
+# Returns:
+#   0 if network is healthy, 1 otherwise.
+# =====================================================================================
+verify_lxc_network_connectivity() {
+    local CTID="$1"
+    log_info "Verifying network connectivity for CTID: $CTID..."
+    local attempts=0
+    local max_attempts=5
+    local interval=10
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        log_info "Attempting to resolve google.com (Attempt $((attempts + 1))/$max_attempts)..."
+        if pct exec "$CTID" -- ping -c 1 google.com &> /dev/null; then
+            log_info "DNS resolution and network connectivity are operational for CTID $CTID."
+            return 0
+        fi
+        attempts=$((attempts + 1))
+        if [ "$attempts" -lt "$max_attempts" ]; then
+            log_info "Network check failed. Retrying in $interval seconds..."
+            sleep "$interval"
+        fi
+    done
+
+    log_error "Network connectivity check failed for CTID $CTID after $max_attempts attempts."
+    return 1
+}
+# =====================================================================================
+# Function: start_vm
+# Description: Starts a Proxmox VM if it is not already running.
+#
+# Arguments:
+#   $1 - The VMID of the VM to start.
+#
+# Returns:
+#   None. Exits with a fatal error if the VM fails to start.
+# =====================================================================================
+start_vm() {
+    local VMID="$1"
+    log_info "Attempting to start VM $VMID..."
+
+    if qm status "$VMID" | grep -q "status: running"; then
+        log_info "VM $VMID is already running."
+        return 0
+    fi
+
+    if ! run_qm_command start "$VMID"; then
+        log_fatal "Failed to start VM $VMID."
+    fi
+    log_info "VM $VMID started successfully."
+}
+
+# =====================================================================================
+# Function: wait_for_guest_agent
+# Description: Waits for the QEMU guest agent to become responsive.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#
+# Returns:
+#   None. Exits with a fatal error on timeout.
+# =====================================================================================
+wait_for_guest_agent() {
+    local VMID="$1"
+    log_info "Waiting for QEMU guest agent on VM $VMID..."
+    local max_attempts=30
+    local attempt=0
+    local interval=10
+
+    while [ $attempt -lt $max_attempts ]; do
+        if qm agent "$VMID" ping 1>/dev/null 2>&1; then
+            log_info "QEMU guest agent is responsive on VM $VMID."
+            return 0
+        fi
+        log_info "Guest agent not ready yet. Retrying in $interval seconds... (Attempt $((attempt + 1))/$max_attempts)"
+        sleep $interval
+        attempt=$((attempt + 1))
+    done
+
+    log_fatal "Timeout waiting for QEMU guest agent on VM $VMID."
+}
+
+# =====================================================================================
+# Function: apply_vm_features
+# Description: Executes feature installation scripts inside the VM.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#
+# Returns:
+#   None. Exits with a fatal error if a feature script fails.
+# =====================================================================================
+apply_vm_features() {
+    local VMID="$1"
+    log_info "Applying features for VMID: $VMID"
+    
+    local features
+    features=$(jq -r ".vms[] | select(.vmid == ${VMID}) | .features[]?" "$VM_CONFIG_FILE")
+
+    if [ -z "$features" ]; then
+        log_info "No features to apply for VMID $VMID."
+        return 0
+    fi
+
+    for feature in $features; do
+        local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
+        log_info "Applying feature: $feature ($feature_script_path)"
+
+        if [ ! -f "$feature_script_path" ]; then
+            log_fatal "Feature script not found at $feature_script_path."
+        fi
+
+        # Copy script to VM
+        local vm_script_path="/tmp/feature_install_${feature}.sh"
+        if ! run_qm_command push "$VMID" "$feature_script_path" "$vm_script_path"; then
+            log_fatal "Failed to copy feature script '$feature' to VM $VMID."
+        fi
+
+        # Make script executable
+        if ! qm agent "$VMID" exec -- /bin/chmod +x "$vm_script_path"; then
+             log_fatal "Failed to make feature script '$feature' executable in VM $VMID."
+        fi
+
+        # Execute script
+        if ! qm agent "$VMID" exec -- "$vm_script_path"; then
+            log_fatal "Feature script '$feature' failed for VMID $VMID."
+        fi
+        
+        # Cleanup script
+        if ! qm agent "$VMID" exec -- /bin/rm "$vm_script_path"; then
+            log_warn "Failed to remove feature script '$feature' from VM $VMID."
+        fi
+    done
+
+    log_info "All features applied successfully for VMID $VMID."
+}
+
+# =====================================================================================
+# Function: create_vm_snapshot
+# Description: Creates a snapshot of a VM if a snapshot name is defined.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#
+# Returns:
+#   None. Exits with a fatal error if snapshot creation fails.
+# =====================================================================================
+create_vm_snapshot() {
+    local VMID="$1"
+    log_info "Checking for snapshot creation for VMID: $VMID"
+    
+    local snapshot_name
+    snapshot_name=$(jq -r ".vms[] | select(.vmid == ${VMID}) | .template_snapshot_name // \"\"" "$VM_CONFIG_FILE")
+
+    if [ -z "$snapshot_name" ]; then
+        log_info "No template_snapshot_name defined for VMID $VMID. Skipping snapshot creation."
+        return 0
+    fi
+
+    if qm listsnapshot "$VMID" | grep -q "$snapshot_name"; then
+        log_info "Snapshot '$snapshot_name' already exists for VMID $VMID. Skipping."
+        return 0
+    fi
+
+    log_info "Creating snapshot '$snapshot_name' for VM $VMID..."
+    if ! run_qm_command snapshot "$VMID" "$snapshot_name"; then
+        log_fatal "Failed to create snapshot '$snapshot_name' for VMID $VMID."
+    fi
+
+    log_info "Snapshot '$snapshot_name' created successfully."
 }

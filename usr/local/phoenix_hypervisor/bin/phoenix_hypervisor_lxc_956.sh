@@ -1,27 +1,30 @@
 #!/bin/bash
 
 # File: phoenix_hypervisor_lxc_956.sh
-# Description: Installs and configures Open WebUI within an LXC container (CTID 956),
-#              connecting it to an Ollama API backend. This script automates the
-#              deployment of Open WebUI using Docker, including image pulling,
-#              volume creation, container management, and a health check.
-# Dependencies: docker, curl, hostname, awk.
-# Inputs:
-#   LXC_ID (hardcoded as 956) - The container ID for Open WebUI.
-#   LXC_NAME (hardcoded as "openWebUIBase") - The name of the LXC container.
-#   OPENWEBUI_PORT (hardcoded as 8080) - The port Open WebUI will listen on.
-#   OLLAMA_API_IP (hardcoded as 10.0.0.155) - The IP address of the Ollama API backend.
-#   OLLAMA_API_PORT (hardcoded as 11434) - The port of the Ollama API backend.
-#   OPENWEBUI_DATA_VOLUME (hardcoded as "openwebui-data") - The Docker volume name for persistent data.
-# Outputs:
-#   Docker command outputs (pull, volume create, stop, rm, run), curl health check results,
-#   log messages to stdout, exit codes indicating success or failure.
-# Version: 1.1.0
-# Author: Phoenix Hypervisor Team
+# Description: This script configures and launches the Open WebUI service within LXC container 956.
+#              It serves as the final application-specific step in the orchestration process for this container.
+#              The script automates the deployment of Open WebUI using Docker, which provides a web-based
+#              user interface for interacting with the backend Ollama API service. The script handles
+#              Docker checks, image pulling, persistent volume creation, and container lifecycle management.
+#
+# Dependencies: - A running Docker service within the container.
+#               - The Ollama service running in container 955 (at 10.0.0.155:11434).
+#               - `curl` for health checks.
+#
+# Inputs: - CTID (Container ID): Implicitly 956.
+#         - Configuration values are hardcoded but align with the central `phoenix_lxc_configs.json`.
+#
+# Outputs: - A running Docker container named "open-webui" hosting the Open WebUI service.
+#          - A persistent Docker volume named "openwebui-data" for application data.
+#          - The service is accessible at http://<container_ip>:8080.
 
-# Exit immediately if a command exits with a non-zero status.
+# --- Script Initialization ---
+# Exit immediately if a command exits with a non-zero status to prevent unintended behavior.
 set -e
 
+# --- Configuration Variables ---
+# Hardcoded configuration values for the Open WebUI container.
+# These should align with the values specified in the main `phoenix_lxc_configs.json`.
 LXC_ID="956"
 LXC_NAME="openWebUIBase"
 OPENWEBUI_PORT="8080"
@@ -31,17 +34,15 @@ OPENWEBUI_DATA_VOLUME="openwebui-data"
 
 # =====================================================================================
 # Function: check_docker_installation
-# Description: Checks if Docker is installed and available in the system's PATH.
-# Arguments:
-#   None.
-# Returns:
-#   Exits with status 1 if Docker is not found.
+# Description: Verifies that the Docker engine is installed and accessible.
+#              This is a critical prerequisite for running the Open WebUI container.
+# Arguments: None
+# Returns: Exits with status 1 if Docker is not found.
 # =====================================================================================
 check_docker_installation() {
     echo "Checking for Docker installation..."
-    # Check if the 'docker' command exists in the system's PATH
     if ! command -v docker > /dev/null; then
-        echo "Docker is not installed. This script requires Docker. Please ensure the 'docker' feature is enabled for this LXC."
+        echo "Docker is not installed. This script requires Docker. Please ensure the 'docker' feature is enabled for this LXC." >&2
         exit 1
     fi
     echo "Docker is installed."
@@ -49,11 +50,10 @@ check_docker_installation() {
 
 # =====================================================================================
 # Function: pull_openwebui_image
-# Description: Pulls the official Open WebUI Docker image from ghcr.io.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a non-zero status if the Docker pull command fails.
+# Description: Pulls the latest official Open WebUI Docker image from the GitHub Container Registry.
+#              Ensures the container uses the most recent stable version of the application.
+# Arguments: None
+# Returns: None. Exits on failure due to `set -e`.
 # =====================================================================================
 pull_openwebui_image() {
     echo "Pulling the official Open WebUI Docker image..."
@@ -62,11 +62,11 @@ pull_openwebui_image() {
 
 # =====================================================================================
 # Function: create_data_volume
-# Description: Creates a persistent Docker volume for Open WebUI data.
-# Arguments:
-#   None (uses global OPENWEBUI_DATA_VOLUME).
-# Returns:
-#   None. Exits with a non-zero status if the Docker volume creation command fails.
+# Description: Creates a named Docker volume to persist Open WebUI data.
+#              This ensures that user settings, chat history, and other data are not lost
+#              if the container is removed or recreated.
+# Arguments: None (uses global OPENWEBUI_DATA_VOLUME)
+# Returns: None. Exits on failure.
 # =====================================================================================
 create_data_volume() {
     echo "Creating persistent volume for Open WebUI data: ${OPENWEBUI_DATA_VOLUME}"
@@ -75,29 +75,26 @@ create_data_volume() {
 
 # =====================================================================================
 # Function: stop_and_remove_existing_container
-# Description: Stops and removes any existing Open WebUI Docker container.
-#              The '|| true' ensures the script continues even if the container
-#              does not exist (e.g., on first run).
-# Arguments:
-#   None.
-# Returns:
-#   None.
+# Description: Ensures a clean state by stopping and removing any previously existing
+#              Open WebUI container. This makes the script idempotent.
+#              The '|| true' construct prevents the script from exiting if the container
+#              does not exist on the first run.
+# Arguments: None
+# Returns: None
 # =====================================================================================
 stop_and_remove_existing_container() {
-    echo "Stopping and removing any existing Open WebUI container..."
-    docker stop open-webui || true # Stop the container if it's running
-    docker rm open-webui || true # Remove the container if it exists
+    echo "Stopping and removing any existing Open WebUI container to ensure a fresh start..."
+    docker stop open-webui || true
+    docker rm open-webui || true
 }
 
 # =====================================================================================
 # Function: start_openwebui_container
-# Description: Starts the Open WebUI Docker container with specified configurations.
-#              It maps ports, mounts the data volume, sets restart policy, and
-#              configures the OLLAMA API backend URL.
-# Arguments:
-#   None (uses global OPENWEBUI_PORT, OPENWEBUI_DATA_VOLUME, OLLAMA_API_IP, OLLAMA_API_PORT).
-# Returns:
-#   None. Exits with a non-zero status if the Docker run command fails.
+# Description: Starts the Open WebUI Docker container with all necessary configurations.
+#              This includes port mapping, volume mounting, restart policy, and crucially,
+#              the environment variable to connect to the backend Ollama API.
+# Arguments: None (uses global configuration variables)
+# Returns: None. Exits on failure.
 # =====================================================================================
 start_openwebui_container() {
     echo "Starting the Open WebUI container..."
@@ -113,26 +110,24 @@ start_openwebui_container() {
 
 # =====================================================================================
 # Function: perform_health_check
-# Description: Performs a health check on the Open WebUI service by attempting to
-#              access its local HTTP endpoint. It includes a delay to allow the
-#              container to fully start.
-# Arguments:
-#   None (uses global OPENWEBUI_PORT, OLLAMA_API_IP, OLLAMA_API_PORT).
-# Returns:
-#   Exits with status 1 if the health check fails.
+# Description: Verifies that the Open WebUI container has started successfully and is
+#              accessible. It waits for a short period to allow the service to initialize
+#              before attempting a connection.
+# Arguments: None (uses global configuration variables)
+# Returns: Exits with status 1 if the health check fails.
 # =====================================================================================
 perform_health_check() {
     echo "Performing health check on Open WebUI..."
-    # Give the container a moment to start up before performing the health check
+    # A delay is necessary to give the web server inside the container time to start.
     sleep 30
 
-    # Attempt to access the Open WebUI endpoint using curl
+    # Use curl to check if the web interface is responding on the configured port.
     if curl -s http://localhost:${OPENWEBUI_PORT} > /dev/null; then
-        echo "Open WebUI is accessible at http://$(hostname -I | awk '{print $1}'):${OPENWEBUI_PORT}"
-        echo "Open WebUI successfully connected to Ollama API at http://${OLLAMA_API_IP}:${OLLAMA_API_PORT}"
+        echo "Health check successful: Open WebUI is accessible at http://$(hostname -I | awk '{print $1}'):${OPENWEBUI_PORT}"
+        echo "Open WebUI is configured to connect to the Ollama API at http://${OLLAMA_API_IP}:${OLLAMA_API_PORT}"
     else
-        echo "Health check failed: Open WebUI is not accessible."
-        echo "Dumping container logs for debugging:"
+        echo "Health check failed: Open WebUI is not accessible." >&2
+        echo "Dumping container logs for debugging:" >&2
         docker logs open-webui
         exit 1
     fi
@@ -140,15 +135,13 @@ perform_health_check() {
 
 # =====================================================================================
 # Function: main
-# Description: Main entry point for the Open WebUI installation and configuration script.
-#              Orchestrates the entire process of setting up Open WebUI within an LXC container.
-# Arguments:
-#   None (uses global LXC_ID, LXC_NAME, OPENWEBUI_PORT, OLLAMA_API_IP, OLLAMA_API_PORT, OPENWEBUI_DATA_VOLUME).
-# Returns:
-#   Exits with status 0 on successful completion, or a non-zero status on failure.
+# Description: The main entry point for the script. It orchestrates the sequence of
+#              setup steps required to deploy the Open WebUI service.
+# Arguments: All script arguments are passed to this function.
+# Returns: Exits with status 0 on success, or a non-zero status on failure.
 # =====================================================================================
 main() {
-    echo "Starting setup for LXC ${LXC_ID}: ${LXC_NAME}"
+    echo "Starting setup for Open WebUI in LXC ${LXC_ID}: ${LXC_NAME}"
 
     check_docker_installation
     pull_openwebui_image
@@ -160,4 +153,5 @@ main() {
     echo "Setup for LXC ${LXC_ID}: ${LXC_NAME} completed successfully."
 }
 
+# Execute the main function, passing all script arguments to it.
 main "$@"

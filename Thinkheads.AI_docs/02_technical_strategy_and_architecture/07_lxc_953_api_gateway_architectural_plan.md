@@ -7,23 +7,26 @@ version: '1.0'
 author: Roo
 owner: Thinkheads.AI
 tags:
-  - lxc
-  - nginx
-  - api_gateway
-  - architecture
+  - LXC
+  - Nginx
+  - API Gateway
+  - Architecture
+  - Reverse Proxy
+  - Security
+  - Performance
 review_cadence: Annual
 last_reviewed: '2025-09-23'
 ---
 
 ## 1. Introduction
 
-This document provides a detailed architectural plan for the transformation of LXC container `953` into a dedicated Nginx reverse proxy, named `api-gateway-lxc`. This container will serve as a secure and efficient entry point for all backend services within the Proxmox environment, aligning with modern microservice architecture principles.
+This document provides a detailed architectural plan for LXC container `953`, which functions as a multi-service Nginx reverse proxy and API gateway. This container, named `api-gateway-lxc`, serves as a secure and efficient entry point for a variety of backend services within the Proxmox environment, aligning with modern microservice architecture principles.
 
 The plan addresses key considerations, including performance optimization, security hardening, integration with the existing infrastructure, and specific configurations for the Proxmox LXC environment.
 
 ## 2. Nginx Security and Performance Best Practices
 
-To ensure the reverse proxy is both secure and performant, the following best practices will be implemented:
+To ensure the reverse proxy is both secure and performant, the following best practices are recommended for implementation:
 
 ### 2.1. Performance Best Practices
 
@@ -60,9 +63,14 @@ graph TD
         end
 
         subgraph "Backend Services"
-            C[vLLM Container 1]
-            D[vLLM Container 2]
-            E[Future Service]
+            C[Embedding Service]
+            D[Qwen Service]
+            E[Qdrant Service]
+            F[n8n Service]
+            G[Open WebUI Service]
+            H[Ollama Service]
+            I[Llamacpp Service]
+            J[Portainer Service]
         end
     end
 
@@ -70,15 +78,25 @@ graph TD
     B --> C
     B --> D
     B --> E
+    B --> F
+    B --> G
+    B --> H
+    B --> I
+    B --> J
 ```
 
 ### 3.2. Backend Services
 
-Initially, the reverse proxy will be configured to route traffic to the following backend services:
+The reverse proxy is configured to route traffic to the following backend services:
 
-*   **vLLM Embedding Service:** `http://10.0.0.151:8000`
-
-Additional services can be easily added to the configuration as needed.
+*   **Embedding Service:** `http://10.0.0.151:8000`
+*   **Qwen Service:** `http://10.0.0.150:8000`
+*   **Qdrant Service:** `http://10.0.0.152:6333`
+*   **n8n Service:** `http://10.0.0.154:5678`
+*   **Open WebUI Service:** `http://10.0.0.156:8080`
+*   **Ollama Service:** `http://10.0.0.155:11434`
+*   **Llamacpp Service:** `http://10.0.0.157:8081`
+*   **Portainer Service:** `http://10.0.0.99:9443`
 
 ## 4. Nginx Configuration Plan
 
@@ -90,23 +108,32 @@ The main configuration file will be kept clean and will include the `sites-enabl
 
 ### 4.2. Server Blocks (`/etc/nginx/sites-available/`)
 
-A separate server block will be created for each domain or service. For example, a server block for the vLLM services would look like this:
+A separate server block is created for each domain or service. The primary server block for the API gateway routes traffic to multiple backend services based on the request path:
 
 ```nginx
-upstream vllm_backend {
+upstream embedding_service {
     server 10.0.0.151:8000;
+}
+
+upstream qwen_service {
+    server 10.0.0.150:8000;
 }
 
 server {
     listen 80;
-    server_name api.example.com;
+    server_name api.yourdomain.com 10.0.0.153;
 
-    location / {
-        proxy_pass http://vllm_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    location /v1/chat/completions {
+        proxy_pass http://qwen_service;
+    }
+
+    location /v1/embeddings {
+        proxy_pass http://embedding_service;
     }
 }
 ```
@@ -139,7 +166,7 @@ The LXC container will be configured with the following network and resource set
 
 ## 6. Security Hardening and Mitigation Strategies
 
-A multi-layered security approach will be implemented to protect the reverse proxy and the backend services.
+A multi-layered security approach is recommended to protect the reverse proxy and the backend services. The current implementation includes basic SSL/TLS termination, but additional hardening is required.
 
 ### 6.1. LXC Container Hardening
 
@@ -164,11 +191,11 @@ The implementation will be carried out in a phased approach to minimize disrupti
 
 ### 7.1. Implementation Steps
 
-1.  **Update `phoenix_lxc_configs.json`:** Modify the configuration for LXC container `953` with the new settings.
-2.  **Create `phoenix_hypervisor_lxc_953.sh`:** Develop the application runner script to automate the installation and configuration of Nginx.
-3.  **Run `phoenix_orchestrator.sh`:** Execute the orchestrator script to create and configure the container.
-4.  **Deploy Nginx Configuration:** Apply the Nginx configuration files.
-5.  **Enable Security Features:** Install and configure Fail2ban and ModSecurity.
+1.  **Review and Update `phoenix_lxc_configs.json`:** Ensure the configuration for LXC container `953` aligns with the resource and networking requirements.
+2.  **Enhance `phoenix_hypervisor_lxc_953.sh`:** Update the application runner script to include the installation and configuration of the recommended security and performance features.
+3.  **Run `phoenix_orchestrator.sh`:** Execute the orchestrator script to apply the updated configuration.
+4.  **Refine Nginx Configuration:** Update the Nginx configuration to implement caching, rate limiting, and other performance and security enhancements.
+5.  **Implement Security Features:** Install and configure Fail2ban and ModSecurity.
 
 ### 7.2. Validation Plan
 

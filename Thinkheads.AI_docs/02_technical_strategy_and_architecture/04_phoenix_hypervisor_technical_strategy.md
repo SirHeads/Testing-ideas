@@ -1,9 +1,9 @@
 ---
 title: Phoenix Hypervisor Technical Strategy
-summary: This document outlines the detailed technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostics, NGINX configuration, firewall remediation, orchestration, and vLLM deployment.
+summary: This document outlines the detailed technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostics, NGINX configuration, firewall management, orchestration, and vLLM deployment.
 document_type: Technical Strategy
 status: Approved
-version: 1.0.0
+version: 2.0.0
 author: Thinkheads.AI
 owner: Technical VP
 tags:
@@ -14,21 +14,23 @@ tags:
   - Firewall
   - Orchestration
   - vLLM
+  - Remediation
+  - Deployment
 review_cadence: Quarterly
-last_reviewed: 2025-09-23
+last_reviewed: 2025-09-29
 ---
 
 # Phoenix Hypervisor Technical Strategy
 
 ## 1. Introduction
 
-This document outlines the technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostic procedures, NGINX gateway configuration, firewall remediation, orchestration scripts, and vLLM deployment strategies.
+This document outlines the technical strategy for the Phoenix Hypervisor ecosystem, covering diagnostic procedures, NGINX gateway configuration, firewall management, orchestration scripts, and vLLM deployment strategies. The strategy is grounded in the principles of declarative configuration, idempotency, and modularity, as implemented in the `phoenix_orchestrator.sh` script and its associated configuration files.
 
 ## 2. Service Diagnostic and Remediation Plan
 
 ### 2.1. Diagnostic Principles
 
-The core principle is to test the system from the inside out. When a service is unavailable from the client's perspective, we will follow a step-by-step process to pinpoint the exact location of the failure.
+The core principle is to test the system from the inside out. When a service is unavailable from the client's perspective, we will follow a step-by-step process to pinpoint the exact location of the failure. This process is supported by a suite of health check scripts and the centralized logging facilitated by the orchestrator.
 
 ```mermaid
 graph TD
@@ -46,9 +48,9 @@ graph TD
 
 ### 2.2. Diagnostic Toolkit
 
-#### 2.2.1. Service Health Scripts (to be run inside the LXC)
+#### 2.2.1. Service Health Scripts (run inside the LXC)
 
-A simple shell script can be created for each service to check its status.
+The `health_checks` directory contains a suite of scripts for verifying the health of individual services. These scripts are executed by the `phoenix_orchestrator.sh` script and check for running processes, API responsiveness, and other service-specific indicators.
 
 **Example (`check_ollama.sh`):**
 ```bash
@@ -71,15 +73,15 @@ echo "Success: Ollama is healthy."
 exit 0
 ```
 
-#### 2.2.2. Host-Level Checks (to be run on the Proxmox host)
+#### 2.2.2. Host-Level Checks (run on the Proxmox host)
 
 *   **Ping:** `ping <lxc_ip>`
 *   **Port Check:** `nc -zv <lxc_ip> <service_port>`
 *   **API Check:** `curl http://<lxc_ip>:<port>/health`
 
-#### 2.2.3. NGINX Health Checks (to be configured in NGINX)
+#### 2.2.3. NGINX Health Checks (configured in NGINX)
 
-This provides automated, proactive monitoring of backend services.
+The NGINX configuration includes active health checks for upstream services, providing proactive monitoring of backend availability.
 
 **Example NGINX Configuration:**
 ```nginx
@@ -102,14 +104,14 @@ server {
 ### 2.3. Remediation Workflow
 
 1.  **Client reports an issue:** User cannot access a service (e.g., n8n).
-2.  **Check NGINX Health Status:** NGINX provides a status page for health checks. This is the first place to look.
+2.  **Check NGINX Health Status:** The NGINX health status page is the first point of investigation.
 3.  **If NGINX marks the service as down:**
     *   SSH into the **Proxmox Host**.
     *   Run **Host-Level Checks** against the service's LXC.
     *   **If Host-Level Checks fail:**
         *   SSH into the **LXC Container**.
-        *   Run the **Service Health Script**.
-        *   Investigate the service logs (`journalctl`, application logs) within the LXC.
+        *   Run the appropriate **Service Health Script**.
+        *   Investigate service logs (`journalctl`, application logs) within the LXC.
     *   **If Host-Level Checks succeed:**
         *   The issue is likely between the NGINX container and the service container. Check firewall rules and NGINX logs.
 4.  **If NGINX marks the service as up:**
@@ -119,13 +121,9 @@ server {
 
 ### 3.1. NGINX Gateway Analysis and Testing Plan
 
-This section outlines the expected functionality of the services exposed through the nginx gateway at `10.0.0.153`.
+The NGINX gateway at `10.0.0.153` serves as the central entry point for all services. The configuration is managed declaratively through the `phoenix_hypervisor_config.json` and the `sites-available` directory.
 
-#### 3.1.1. NGINX Gateway IP Address
-
-*   **IP Address:** `10.0.0.153`
-
-#### 3.1.2. Service Definitions
+#### 3.1.1. Service Definitions
 
 *   **qdrant:**
     *   **Local Endpoint:** `http://10.0.0.153/qdrant/`
@@ -149,10 +147,6 @@ This section outlines the expected functionality of the services exposed through
 
 ### 3.2. NGINX Gateway Enhancement Plan
 
-This section summarizes the findings from our detailed service-by-service analysis and presents a prioritized plan for enhancing the NGINX gateway.
-
-#### 3.2.1. Key Themes and Recommendations
-
 *   **Security (High Priority):**
     *   Implement SSL/TLS on all HTTP endpoints.
     *   Enable upstream SSL verification.
@@ -168,75 +162,30 @@ This section summarizes the findings from our detailed service-by-service analys
     *   Implement caching for static assets.
     *   Consider adding a caching layer for idempotent API endpoints.
 
-### 3.3. NGINX Request Capabilities
+## 4. Firewall Management Strategy
 
-This section provides a detailed breakdown of the types of requests that the NGINX gateway is configured to handle for each backend service.
+Firewall management is handled declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files. The `phoenix_orchestrator.sh` script applies the firewall rules during container provisioning, ensuring a consistent and reproducible security posture.
 
-*   **n8n (`n8n_proxy`):** Standard HTTP/HTTPS and WebSocket.
-*   **Portainer (`portainer_proxy`):** Standard HTTP/HTTPS and WebSocket.
-*   **Ollama (`ollama_proxy` and `vllm_gateway`):** API requests.
-*   **vLLM Services (`vllm_gateway`):** OpenAI-Compatible API requests with dynamic routing.
-*   **Qdrant (`vllm_gateway`):** API requests.
-*   **Open WebUI (`vllm_gateway`):** Standard HTTP/HTTPS and WebSocket.
-*   **Llama.cpp (`vllm_gateway`):** API requests.
+### 4.1. Declarative Firewall Configuration
 
-### 3.4. NGINX Service-by-Service Analysis
+The firewall for an LXC container is enabled on a per-network-interface basis (e.g., `net0`) using the command `pct set <vmid> --net0 firewall=1`. The specific firewall rules are defined in the `firewall.rules` section of the container's configuration in `phoenix_lxc_configs.json`.
 
-This section contains a detailed analysis of each service proxied by the NGINX gateway, including current configuration, areas for improvement, and actionable recommendations.
+## 5. Orchestrator Script Strategy
 
-## 4. Firewall Remediation Plan
+The `phoenix_orchestrator.sh` script is the cornerstone of the Phoenix Hypervisor's automation strategy. It implements a state machine to manage the entire lifecycle of LXC containers and VMs, from creation and configuration to feature installation and application deployment.
 
-This section outlines the root cause of the recent firewall configuration failures and presents a robust, system-wide solution that aligns with the Phoenix Hypervisor architecture.
+### 5.1. State Machine and Idempotency
 
-### 4.1. Root Cause Analysis
+The orchestrator is designed to be idempotent, meaning it can be run multiple times without causing unintended side effects. It tracks the state of each container and only performs the necessary actions to bring it to the desired state as defined in the configuration files.
 
-The previous attempts to fix the firewall script failed due to a fundamental misunderstanding of how Proxmox enables container-level firewalls. The firewall for an LXC container must be enabled on a per-network-interface basis (e.g., `net0`) using the command `pct set <vmid> --net0 firewall=1`.
+### 5.2. Modular Feature Installation
 
-### 4.2. Proposed Solution
-
-The solution is to modify the `phoenix_hypervisor_firewall.sh` script to use the correct, idempotent Proxmox commands for enabling and disabling the firewall, while continuing to manage the specific firewall rules from the JSON configuration.
-
-## 5. Orchestrator Script Refinement Plan
-
-This section outlines the necessary refinements to the `phoenix_orchestrator.sh` script to resolve deployment failures related to shared volume permissions.
-
-### 5.1. Analysis of the Root Cause
-
-The deployment failures stem from two primary logical flaws in the script:
-
-1.  **Incorrect Timing of `idmap` Generation:** The script attempts to read the `idmap` from a container's configuration file *before* the container has been set as unprivileged.
-2.  **Over-reaching Scope in Volume Application:** The `apply_shared_volumes` function iterates through all containers associated with a shared volume, even those not part of the current orchestration run.
-
-### 5.2. Proposed Logical Changes
-
-To resolve these issues, the following changes will be made to the script's logic:
-
-1.  **Introduce `ensure_container_defined` function:** A new function, `ensure_container_defined`, will be created to handle the initial creation or cloning of a container.
-2.  **Refine `get_container_mapped_root_uid` function:** This function will be made more robust with explicit checks for the existence of the container's configuration file and the `idmap` line within it.
-3.  **Refine `apply_shared_volumes` function:** The logic for setting `container_root` ownership will be modified to only act on the container specified in the current orchestration run (`$CTID`).
+Features such as Docker, NVIDIA drivers, and vLLM are installed through a modular system of scripts located in the `lxc_setup` and `vm_features` directories. This allows for easy extension and modification of container and VM capabilities.
 
 ## 6. Shared Volume Permissions Strategy
 
-This section outlines a new, system-wide strategy for managing permissions on shared volumes mounted into unprivileged LXC containers within the Phoenix Hypervisor environment.
-
-### 6.1. New Architectural Strategy
-
-The new strategy is to enhance the `phoenix_orchestrator.sh` script to dynamically manage shared volume permissions. This will be achieved by:
-
-1.  **Introducing an `owner` property** to the `shared_volumes` definition in `phoenix_hypervisor_config.json`.
-2.  **Modifying the `apply_shared_volumes` function** in `phoenix_orchestrator.sh` to read this new property and apply ownership accordingly.
-3.  **Implementing a helper function** to determine the mapped root UID for a given container.
+The `phoenix_orchestrator.sh` script dynamically manages permissions on shared volumes mounted into unprivileged LXC containers. This is achieved through the `owner` property in the `shared_volumes` definition in `phoenix_hypervisor_config.json`, which ensures that the container's mapped root UID is correctly applied to the shared volume.
 
 ## 7. vLLM Orchestration and Deployment Strategy
 
-### 7.1. vLLM Orchestration Refinement Plan
-
-This section outlines the plan to correct a logic error in the vLLM feature installation script and to streamline the container configuration by removing redundant feature definitions.
-
-### 7.2. vLLM Remediation and Automation Plan
-
-This section outlines the plan to verify the exact conditions that led to the successful launch of the vLLM service in container 950 and to integrate these findings into the `phoenix_orchestrator.sh` deployment script.
-
-### 7.3. vLLM Template-Based Deployment Strategy
-
-This section outlines a new strategy for deploying vLLM containers. The current model, where each container builds its own environment from scratch, is slow and prone to inconsistencies. This plan details a transition to a template-based model, where a "golden" template container (CTID 920) is fully provisioned with a known-good vLLM environment, and new containers (e.g., 950, 951) are created as lightweight clones of this template.
+The deployment of vLLM containers is managed through a template-based strategy. A "golden" template container (CTID 920) is fully provisioned with a known-good vLLM environment, and new containers are created as lightweight clones of this template. This approach ensures consistency and significantly reduces deployment time. The specific vLLM model and its configuration are defined in the `phoenix_lxc_configs.json` file for each container.

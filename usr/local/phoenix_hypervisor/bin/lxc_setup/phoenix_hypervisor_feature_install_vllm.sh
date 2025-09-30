@@ -2,23 +2,30 @@
 #
 # File: phoenix_hypervisor_feature_install_vllm.sh
 # File: phoenix_hypervisor_feature_install_vllm.sh
-# Description: Automates the installation and verification of the vLLM inference server
-#              from source within a Proxmox LXC container. This script ensures NVIDIA
-#              GPU access, installs Python and build tools, sets up a Python virtual
-#              environment, installs PyTorch nightly, clones the vLLM repository,
-#              builds and installs vLLM from source, and verifies the installation.
-#              It is designed to be idempotent and is typically called by the main orchestrator.
-# Dependencies: phoenix_hypervisor_common_utils.sh (sourced), pct, nvidia-smi,
-#               apt-get, software-properties-common, add-apt-repository, python3.11-full,
-#               python3.11-dev, python3.11-venv, python3-pip, build-essential, cmake,
-#               git, mkdir, python3.11, pip, rm, grep.
+# Description: This modular feature script automates the complete setup of the vLLM (vLLM)
+#              inference engine from source within an LXC container. It prepares the container
+#              to serve high-throughput large language models by performing a series of critical
+#              steps: verifying GPU access, installing a specific Python version and build tools,
+#              creating an isolated Python virtual environment, installing a compatible nightly
+#              build of PyTorch, and finally, building and installing vLLM from a pinned commit
+#              in its source repository. It also creates a generic systemd service file that acts
+#              as a template for the final application runner script.
+#
+# Dependencies:
+#   - The 'nvidia' and 'python_api_service' features must be installed first.
+#   - phoenix_hypervisor_common_utils.sh: For shared functions.
+#   - Internet access for downloading packages and cloning the git repository.
+#
 # Inputs:
-#   $1 (CTID) - The container ID for the LXC container.
+#   - $1 (CTID): The unique Container ID for the target LXC container.
+#
 # Outputs:
-#   Package installation logs, virtual environment creation, PyTorch and vLLM
-#   installation logs, vLLM version output for verification, log messages to stdout
-#   and MAIN_LOG_FILE, exit codes indicating success or failure.
-# Version: 1.0.0
+#   - A complete vLLM installation within a Python virtual environment at /opt/vllm.
+#   - A generic systemd service template at /etc/systemd/system/vllm_model_server.service.
+#   - Logs the entire build and installation process.
+#   - Returns exit code 0 on success, non-zero on failure.
+#
+# Version: 1.1.0
 # Author: Phoenix Hypervisor Team
 
 # --- Shell Settings ---
@@ -49,13 +56,13 @@ CTID=""
 #   Exits with status 2 if no CTID is provided.
 # =====================================================================================
 parse_arguments() {
-    # Check if exactly one argument (CTID) is provided
     if [ "$#" -ne 1 ]; then
         log_error "Usage: $0 <CTID>"
+        log_error "This script requires the LXC Container ID to install the vLLM feature."
         exit_script 2
     fi
-    CTID="$1" # Assign the first argument to CTID
-    log_info "Executing vLLM feature for CTID: $CTID"
+    CTID="$1"
+    log_info "Executing vLLM modular feature for CTID: $CTID"
 }
 
 # =====================================================================================
@@ -120,92 +127,89 @@ install_and_test_vllm() {
     log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
     # --- Dependency Check ---
-    log_info "Verifying NVIDIA feature dependency..."
+    # vLLM requires both a Python environment and NVIDIA drivers to function.
+    log_info "Verifying 'nvidia' and 'python_api_service' feature dependencies..."
     if ! is_feature_present_on_container "$CTID" "nvidia"; then
-        log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found on CTID $CTID or its templates."
+        log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found."
     fi
-
-    log_info "Verifying NVIDIA driver installation..."
+    if ! is_feature_present_on_container "$CTID" "python_api_service"; then
+        log_fatal "The 'vllm' feature requires the 'python_api_service' feature, which was not found."
+    fi
     if ! is_command_available "$CTID" "nvidia-smi"; then
-        log_fatal "NVIDIA driver not found in CTID $CTID. The 'vllm' feature depends on a functional NVIDIA driver."
+        log_fatal "NVIDIA driver command 'nvidia-smi' not found. The 'vllm' feature depends on a functional NVIDIA driver."
     fi
 
+    # This is a critical check to ensure the GPU is properly passed through to the container.
     log_info "Verifying NVIDIA GPU access in CTID $CTID..."
-    # Check for NVIDIA GPU access using `nvidia-smi`
-    if ! pct_exec "$CTID" nvidia-smi; then
-        log_fatal "NVIDIA GPU not accessible in CTID $CTID. 'nvidia-smi' command failed. Aborting vLLM installation."
+    if ! pct_exec "$CTID" -- nvidia-smi; then
+        log_fatal "NVIDIA GPU not accessible in CTID $CTID. 'nvidia-smi' command failed."
     fi
-    log_info "NVIDIA GPU access verified."
-    local vllm_dir="/opt/vllm" # Directory for vLLM virtual environment
-    local vllm_repo_dir="/opt/vllm_repo" # Directory for vLLM source repository
+    log_success "NVIDIA GPU access verified."
 
-    # Idempotency Check for Template-Based Deployments
-    log_info "Checking for existing vLLM installation..."
-    if pct_exec "$CTID" test -f "${vllm_dir}/bin/vllm"; then
-        log_info "Existing vLLM installation found (vllm executable exists). Skipping feature installation."
-        log_info "This is expected when deploying from a pre-built template."
+    local vllm_dir="/opt/vllm"
+    local vllm_repo_dir="/opt/vllm_repo"
+
+    # --- Idempotency Check ---
+    # This check is crucial for template-based deployments where vLLM is pre-installed.
+    log_info "Checking for existing vLLM installation at ${vllm_dir}/bin/python..."
+    if pct_exec "$CTID" -- test -f "${vllm_dir}/bin/python"; then
+        log_info "Existing vLLM installation found. Skipping feature installation."
         return 0
     fi
-    log_info "No existing vLLM installation found. Proceeding with full installation."
+    log_info "No existing vLLM installation found. Proceeding with full source installation."
 
-    # Install Python, build tools, and git
-    # Install Python 3.11, build tools, and git
-    log_info "Installing Python 3.11, build tools, and git in CTID $CTID..."
-    pct_exec "$CTID" apt-get update
-    pct_exec "$CTID" apt-get install -y software-properties-common
-    pct_exec "$CTID" add-apt-repository -y ppa:deadsnakes/ppa
-    pct_exec "$CTID" apt-get update
-    pct_exec "$CTID" apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git ninja-build
+    # --- Environment Setup ---
+    # Using a specific Python version (3.11) ensures a consistent and reproducible build environment.
+    log_info "Installing Python 3.11, build tools, and git..."
+    pct_exec "$CTID" -- apt-get update
+    pct_exec "$CTID" -- apt-get install -y software-properties-common
+    pct_exec "$CTID" -- add-apt-repository -y ppa:deadsnakes/ppa
+    pct_exec "$CTID" -- apt-get update
+    pct_exec "$CTID" -- apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git ninja-build
 
-    # Create vLLM virtual environment
-    # Create vLLM Python virtual environment
-    log_info "Creating vLLM virtual environment in ${vllm_dir} for CTID $CTID..."
-    pct_exec "$CTID" mkdir -p "$vllm_dir"
-    pct_exec "$CTID" python3.11 -m venv "$vllm_dir"
+    # A virtual environment is essential for isolating vLLM's dependencies from system packages.
+    log_info "Creating Python virtual environment in ${vllm_dir}..."
+    pct_exec "$CTID" -- mkdir -p "$vllm_dir"
+    pct_exec "$CTID" -- python3.11 -m venv "$vllm_dir"
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --upgrade pip
 
-    # Upgrade pip
-    # Upgrade pip within the new virtual environment
-    log_info "Upgrading pip in the new virtual environment..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --upgrade pip
-
-    # Install PyTorch Nightly
-    # Install PyTorch Nightly for CUDA 12.8+ compatibility
+    # --- Core Library Installation ---
+    # vLLM often requires the latest features from PyTorch, necessitating a nightly build.
     log_info "Installing PyTorch nightly for CUDA 12.1+..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
 
-    # Clone vLLM Repository
-    # Clone vLLM Repository or pull latest changes if it exists
-    log_info "Cloning vLLM repository..."
-    if pct_exec "$CTID" test -d "${vllm_repo_dir}"; then
-        log_info "vLLM repository already exists. Fetching latest changes and checking out known-good commit."
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" fetch --all
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
+    # --- vLLM Source Installation ---
+    # We clone the repository and check out a specific, known-good commit to ensure stability and prevent
+    # breaking changes from the main branch affecting our deployments.
+    log_info "Cloning vLLM repository and checking out a known-good commit..."
+    if pct_exec "$CTID" -- test -d "${vllm_repo_dir}"; then
+        log_warn "vLLM repository already exists. Fetching latest changes."
+        pct_exec "$CTID" -- git -C "${vllm_repo_dir}" fetch --all
     else
-        pct_exec "$CTID" git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
-        log_info "Checking out known-good vLLM commit..."
-        pct_exec "$CTID" git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
+        pct_exec "$CTID" -- git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
     fi
+    pct_exec "$CTID" -- git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
 
-    # Build and Install vLLM from Source
-    # Build and Install vLLM from Source in editable mode (includes flash-attn)
-    log_info "Building and installing vLLM from source (includes flash-attn)..."
-    pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
-    log_info "Installing FlashInfer from source..."
-    if pct_exec "$CTID" test -d "/opt/flashinfer"; then
+    # Installing in editable mode (-e) is useful for development and debugging.
+    log_info "Building and installing vLLM and FlashInfer from source..."
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
+    
+    # FlashInfer is a dependency for optimized attention kernels.
+    if pct_exec "$CTID" -- test -d "/opt/flashinfer"; then
         log_info "FlashInfer directory already exists. Skipping clone and install."
     else
-        pct_exec "$CTID" git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
-        pct_exec "$CTID" "${vllm_dir}/bin/pip" install -e /opt/flashinfer
+        pct_exec "$CTID" -- git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
+        pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e /opt/flashinfer
     fi
 
-    # Verification
-    # Verification: Check vLLM installation by importing and printing its version
-    log_info "Verifying vLLM source installation..."
-    if ! pct_exec "$CTID" "${vllm_dir}/bin/python" -c "import vllm; print(vllm.__version__)"; then
-        log_fatal "vLLM installation verification failed in CTID $CTID."
+    # --- Verification ---
+    # This final check confirms that the vLLM library is correctly installed in the virtual environment.
+    log_info "Verifying vLLM installation by checking the version..."
+    if ! pct_exec "$CTID" -- "${vllm_dir}/bin/python" -c "import vllm; print(vllm.__version__)"; then
+        log_fatal "vLLM installation verification failed."
     fi
     
-    log_info "vLLM installation and verification complete for CTID $CTID."
+    log_success "vLLM source installation and verification complete."
 }
 
 # =====================================================================================
@@ -269,15 +273,11 @@ EOF
 #   Exits with status 0 on successful completion.
 # =====================================================================================
 main() {
-    parse_arguments "$@" # Parse command-line arguments
-    if _check_vllm_installed "$CTID"; then
-        log_info "vLLM feature is already installed. Skipping."
-        exit_script 0
-    fi
-    install_and_test_vllm # Install and test vLLM
-    create_vllm_systemd_service # Create the systemd service file
-    
-    exit_script 0 # Exit successfully
+    parse_arguments "$@"
+    install_and_test_vllm
+    create_vllm_systemd_service
+    log_info "Successfully completed vLLM feature for CTID $CTID."
+    exit_script 0
 }
 
 main "$@"

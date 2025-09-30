@@ -1,36 +1,99 @@
-# Do not load this file. Rather, load /etc/apparmor.d/lxc-containers, which
-# sources this file.
+# AppArmor profile for LXC containers requiring GPU, Docker, and shared storage access.
+# This profile is specifically designed for AI/ML workloads that need hardware
+# acceleration, containerization, and access to large datasets. It is a critical
+# component of the Phoenix Hypervisor's strategy for secure, high-performance computing.
+# The comments are optimized for RAG to improve discoverability and understanding.
 
-profile lxc-gpu-docker-storage flags=(attach_disconnected,mediate_deleted) {
-  #include <tunables/global>
+#include <tunables/global>
+
+profile lxc_gpu_docker_storage flags=(attach_disconnected,mediate_deleted) {
+  # Base abstractions for LXC containers. These provide the foundational rules
+  # for a standard unprivileged container.
   #include <abstractions/lxc/container-base>
   #include <abstractions/lxc/start-container>
 
-  # Allow necessary mounts for the container filesystem
-  mount fstype=rpc_pipefs -> **,
-  mount fstype=cgroup -> **,
-  mount fstype=cgroup2 -> **,
-  mount fstype=debugfs -> **,
-  mount fstype=proc -> **,
-  mount options=(rw,nosuid,nodev,noexec,relatime) -> /sys/kernel/debug/,
+  # Capabilities required for nesting, Docker, GPU access, and network management.
+  # sys_admin: A broad capability needed for container nesting and management.
+  # sys_chroot: Allows changing the root directory, essential for containers.
+  # mknod: Permits the creation of special files (devices).
+  # sys_nice: Allows modification of process priority.
+  # sys_resource: Allows adjustments to resource limits.
+  # net_bind_service: Allows binding to privileged ports (below 1024).
+  capability sys_admin,
+  capability sys_chroot,
+  capability mknod,
+  capability sys_nice,
+  capability sys_resource,
+  capability net_bind_service,
 
-  # Allow NVIDIA GPU device files
-  /dev/nvidia* rwm,
+  # Allow standard network protocols (TCP/UDP over IPv4/IPv6).
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # Allow read access to files required for DNS name resolution.
+  # Also permits network access to DNS ports (53) for queries.
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  network inet dgram port 53,
+  network inet stream port 53,
+
+  # Allow read, write, and mount access to NVIDIA GPU devices. This is essential
+  # for passing through GPU hardware to the container for AI/ML workloads.
+  # This profile supports up to two GPUs (nvidia0, nvidia1).
+  /dev/nvidia0 rwm,
+  /dev/nvidia1 rwm,
   /dev/nvidia-uvm rwm,
   /dev/nvidia-uvm-tools rwm,
   /dev/nvidia-caps/* rwm,
+  /dev/dri/* rwm,
 
-  # Allow Docker
-  /var/lib/docker/ r,
+  # Docker-specific permissions. These rules allow the container to interact with
+  # the Docker daemon, its executables, and its data directory for nested containerization.
   /var/lib/docker/** rwm,
   /run/docker.sock rw,
+  /usr/bin/docker rix,
+  /usr/libexec/docker/** rix,
 
-  # Allow shared storage
+  # Allow read, write, and mount access to shared storage locations.
+  # These paths are used for persistent data, models, and datasets.
   /mnt/shared/** rwm,
+  /zfs/storage/** rwm,
 
-  # Deny writes to /proc/sys/fs/binfmt_misc/register
-  deny audit mount fstype=binfmt_misc,
+  # Security: Explicitly deny access to sensitive host-level proc and sys files
+  # exposed by LXC. This is a critical security measure to prevent container escapes.
+  deny /dev/.lxc/proc/** rw,
+  deny /dev/.lxc/sys/** rw,
 
-  # Audit write attempts to /etc/ for monitoring
-  audit /etc/** w,
+  # Allow mounting of standard and temporary filesystems required for container operation.
+  mount fstype=proc -> /var/cache/lxc/**,
+  mount fstype=sysfs -> /var/cache/lxc/**,
+  mount fstype=cgroup -> /sys/fs/cgroup/**,
+  mount fstype=cgroup2 -> /sys/fs/cgroup/**,
+  mount fstype=tmpfs -> /run/**,
+  mount fstype=devpts -> /dev/pts/**,
+  mount fstype=mqueue -> /dev/mqueue/**,
+
+  # Allow mounting of filesystems required for Docker (overlay), eBPF (bpf),
+  # security introspection (securityfs), and ZFS storage.
+  mount fstype=overlay -> /var/lib/docker/**,
+  mount fstype=bpf -> /sys/fs/bpf/**,
+  mount fstype=securityfs -> /sys/kernel/security/**,
+  mount fstype=sysfs -> /sys/**,
+  mount fstype=tracefs -> /sys/kernel/tracing/**,
+  mount fstype=zfs -> /zfs/storage/**,
+
+  # Allow bind mounts, which are essential for mounting shared storage directories
+  # into the container from the host.
+  mount options=(rw,bind) -> /mnt/**,
+  mount options=(rw,remount) -> /mnt/**,
+  mount options=(rw,nosuid,nodev,noexec,relatime,bind) -> /mnt/**,
+
+  # Security: Deny mounting of binfmt_misc by default to prevent the execution
+  # of arbitrary binary formats.
+  audit deny mount fstype=binfmt_misc,
+
+  # Allow read-only access to user home directories on the host.
+  /home/*/ r,
 }

@@ -1,0 +1,51 @@
+{
+    "vm_defaults": {
+        "template": "ubuntu-24.04-standard",
+        "cores": 4,
+        "memory_mb": 8192,
+        "disk_size_gb": 100,
+        "storage_pool": "quickOS-vm-disks",
+        "network_bridge": "vmbr0"
+    },
+    "vms": [
+        {
+            "vmid": 8000,
+            "name": "ubuntu-2404-cloud-template",
+            "is_template": true,
+            "template_image": "noble-server-cloudimg-amd64.img",
+            "network_config": {
+                "ip": "10.0.0.45/24",
+                "gw": "10.0.0.1",
+                "nameservers": [
+                    "75.75.75.75",
+                    "75.75.76.76"
+                ]
+            },
+            "user_config": {
+                "username": "phoenix_user",
+                "gw": "10.0.0.1"
+            }
+        },
+        {
+            "vmid": 8001,
+            "name": "docker-vm-01",
+            "clone_from_vmid": 8000,
+            "template_snapshot_name": "initial",
+            "cores": 4,
+            "memory_mb": 8192,
+            "disk_size_gb": 100,
+            "storage_pool": "quickOS-vm-disks",
+            "network_bridge": "vmbr0",
+            "features": [
+                "docker"
+            ],
+            "network_config": {
+                "ip": "10.0.0.101/24",
+                "gw": "10.0.0.1"
+            },
+            "user_config": {
+                "username": "phoenix_user"
+            }
+        }
+    ]
+}

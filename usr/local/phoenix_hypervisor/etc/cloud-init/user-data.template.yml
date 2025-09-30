@@ -1,0 +1,76 @@
+# File: user-data.template.yml
+# Description: This is a comprehensive Cloud-Init user-data template for the dynamic provisioning of VMs
+#              within the Phoenix Hypervisor ecosystem. The phoenix_orchestrator.sh script uses this template
+#              to inject VM-specific configurations from phoenix_vm_configs.json, enabling fully automated
+#              and customized deployments. It handles hostname setup, user creation, package installation
+#              (like the QEMU Guest Agent), disk partitioning, and the execution of feature scripts.
+#
+# Placeholders:
+#   - __HOSTNAME__: Replaced with the VM's hostname.
+#   - __USERNAME__: Replaced with the primary administrative username.
+#   - #FEATURE_FILES_PLACEHOLDER#: This is a special placeholder where the orchestrator injects a 'write_files'
+#     block. This block contains the content of any feature scripts (e.g., feature_install_docker.sh)
+#     that need to be run inside the VM.
+#
+# Workflow:
+#   1. The orchestrator reads a VM's configuration from phoenix_vm_configs.json.
+#   2. It replaces the placeholders in this template with the corresponding values.
+#   3. It dynamically generates the 'write_files' section based on the 'features' array in the VM's config.
+#   4. The final, rendered YAML is passed to the VM via the Cloud-Init datasource.
+#   5. On first boot, the VM executes these directives to configure itself.
+#
+
+#cloud-config
+
+# Sets the hostname of the machine.
+hostname: __HOSTNAME__
+# Ensures the hostname is correctly mapped in /etc/hosts.
+manage_etc_hosts: true
+
+# Defines the primary user account for the VM.
+users:
+  - name: __USERNAME__
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+    shell: /bin/bash
+    lock_passwd: false
+    # This is a default, securely hashed password. It's recommended to use SSH keys for access.
+    passwd: "$6$IZCfjyCnr57kLlPA$eqctrwsGmoBoEKaM3eTCICfSmCqSrUhiiH2nfyyD91129IS205lB6kcDdNpzWG0zV79wJB8XEn7p.c0ewUPJg."
+    ssh_pwauth: true
+
+# Ensures the package manager's cache is updated on first boot.
+package_update: true
+# Installs essential packages. The QEMU Guest Agent is critical for communication between the hypervisor and the VM.
+packages:
+  - qemu-guest-agent
+
+# Automatically expands the root partition to fill the available disk space.
+growpart:
+  mode: auto
+  devices: ['/']
+
+# This section is dynamically populated by the orchestrator to write feature scripts to the VM's filesystem.
+write_files:
+#FEATURE_FILES_PLACEHOLDER#
+
+# Commands to be run after the system is up and packages are installed.
+runcmd:
+  # Ensures the root filesystem is resized after the partition has been grown.
+  - [ xfs_growfs, / ]
+  # Reinstalls the guest agent to ensure it's running correctly after all setup.
+  - [ apt-get, -y, --reinstall, install, qemu-guest-agent ]
+  # Makes all feature scripts executable.
+  - [ chmod, +x, /tmp/features/*.sh ]
+  # Executes all feature scripts in a loop. This is the core of the feature installation framework.
+  - [ /bin/bash, -c, "for script in /tmp/features/*.sh; do \"$script\"; done" ]
+
+# Commands to be run very early in the boot process.
+bootcmd:
+  # Configures the GRUB bootloader to output boot messages to the serial console.
+  # This is essential for debugging boot issues in a headless virtual environment.
+  - sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0"/' /etc/default/grub
+  - update-grub
+
+# Configures Cloud-Init to log all output to a file and to the serial console for easy debugging.
+output:
+  all: '| tee -a /var/log/cloud-init-output.log | tee /dev/ttyS0'

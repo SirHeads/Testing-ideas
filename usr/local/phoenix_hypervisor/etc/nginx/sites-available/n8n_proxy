@@ -1,32 +1,57 @@
+# Nginx reverse proxy configuration for the n8n automation service.
+# This configuration provides secure HTTPS access to the n8n backend,
+# including WebSocket support for real-time UI updates. It follows best
+# practices for SSL/TLS termination and header forwarding.
+# The comments are optimized for RAG to improve discoverability and understanding.
+
+# Defines the upstream server for the n8n backend.
 upstream n8n_backend {
-    server 10.0.0.154:5679; # Intentionally incorrect port for testing
+    # The address of the n8n service. Note: The port was intentionally
+    # set incorrectly to 5679 for testing purposes and should be 5678.
+    server 10.0.0.154:5679;
+    # Enables active health checks for the upstream server.
     health_check;
 }
 
+# Server block to redirect HTTP traffic to HTTPS.
 server {
     listen 80;
     server_name n8n.phoenix.local;
+    # Issues a permanent redirect (301) to the HTTPS version of the site.
     return 301 https://$host$request_uri;
 }
 
+# Main server block for handling HTTPS traffic.
 server {
     listen 443 ssl http2;
     server_name n8n.phoenix.local;
 
+    # SSL/TLS certificate configuration.
     ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
     ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
+    # Specifies the enabled SSL/TLS protocols.
     ssl_protocols TLSv1.2 TLSv1.3;
+    # Defines the list of cipher suites to be used.
     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    # Specifies that the client's preference for cipher suites should be used.
     ssl_prefer_server_ciphers off;
 
+    # Location block for proxying all requests to the n8n backend.
     location / {
+        # Forwards requests to the defined upstream.
         proxy_pass http://n8n_backend;
+        # Disables SSL verification for the backend connection (useful for self-signed certs).
         proxy_ssl_verify off;
+        # Forwards the original Host header to the backend.
         proxy_set_header Host $host;
+        # Forwards the client's real IP address.
         proxy_set_header X-Real-IP $remote_addr;
+        # Appends the proxy's IP to the X-Forwarded-For header.
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Informs the backend that the original request was made via HTTPS.
         proxy_set_header X-Forwarded-Proto https;
-        # WebSocket support
+
+        # Enables WebSocket support, which is required for n8n's real-time features.
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
