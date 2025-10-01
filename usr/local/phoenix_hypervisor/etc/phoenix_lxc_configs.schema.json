@@ -366,6 +366,10 @@
                         "apparmor_manages_nesting": {
                             "type": "boolean",
                             "description": "If true, indicates the AppArmor profile handles nesting, and the orchestrator should not apply the 'nesting=1' feature flag."
+                        },
+                        "enable_lifecycle_snapshots": {
+                            "type": "boolean",
+                            "description": "If true, the orchestrator will create 'pre-configured' and 'final-form' snapshots during the create lifecycle."
                         }
                     },
                     "required": [

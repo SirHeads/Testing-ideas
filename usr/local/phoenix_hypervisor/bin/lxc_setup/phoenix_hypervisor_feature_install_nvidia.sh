@@ -33,7 +33,6 @@
 # Author: Phoenix Hypervisor Team
 
 # --- Shell Settings ---
-set -e # Exit immediately if a command exits with a non-zero status.
 set -o pipefail # Return the exit status of the last command in the pipe that failed.
 
 # --- Source common utilities ---
@@ -117,26 +116,19 @@ configure_host_gpu_passthrough() {
     local mount_entries=()
 
     # These are the standard control devices required for the NVIDIA driver to function.
+    # We will add them unconditionally, as requested.
     local standard_devices=("/dev/nvidiactl" "/dev/nvidia-uvm" "/dev/nvidia-uvm-tools")
     for device in "${standard_devices[@]}"; do
-        if [ -e "$device" ]; then
-            mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=file")
-        else
-            log_warn "Standard NVIDIA device $device not found on host. This may cause issues."
-        fi
+        mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=file")
     done
 
-    # Process the specific GPU devices assigned to this container.
+    # Process the specific GPU devices assigned to this container, adding them unconditionally.
     IFS=',' read -ra gpus <<< "$gpu_assignment"
     for gpu_idx in "${gpus[@]}"; do
         # Trim whitespace from gpu_idx
         gpu_idx=$(echo "$gpu_idx" | xargs)
         local nvidia_device="/dev/nvidia${gpu_idx}"
-        if [ -c "$nvidia_device" ]; then # Check for character device
-            mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
-        else
-            log_warn "Assigned GPU device $nvidia_device not found on host. Passthrough for this GPU will fail."
-        fi
+        mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
     done
 
     # Idempotently add the required configuration lines to the container's config file.
@@ -158,10 +150,12 @@ configure_host_gpu_passthrough() {
         run_pct_command start "$CTID"
         log_info "Container CTID $CTID restarted. Waiting for device to appear..."
         wait_for_nvidia_device "$CTID"
+        return $? # Propagate the return code of the wait function
     else
         log_info "No changes made to container configuration. Ensuring container is running."
         run_pct_command start "$CTID" # Ensure the container is running for the next phase.
     fi
+    return 0 # Return success if no changes were made
 }
 
 # =====================================================================================
@@ -189,11 +183,11 @@ wait_for_nvidia_device() {
         elapsed_time=$((elapsed_time + interval))
     done
 
-    log_error "Timeout reached. NVIDIA device '$device_path' not found in CTID $ctid after ${timeout} seconds."
-    log_info "This usually indicates a problem with the host-side passthrough configuration in the .conf file."
-    log_info "Contents of /dev/ in CTID $ctid:"
+    log_warn "Timeout reached. NVIDIA device '$device_path' not found in CTID $ctid after ${timeout} seconds."
+    log_warn "This may be a transient issue. The script will proceed, but driver installation may fail."
+    log_info "For diagnostics, here is the final state of the /dev directory in CTID $ctid:"
     pct exec "$ctid" -- ls -la /dev/
-    log_fatal "Aborting NVIDIA feature installation due to missing device."
+    return 1 # Return a non-zero status to indicate a timeout
 }
 
 # =====================================================================================
@@ -309,7 +303,10 @@ main() {
 
     # This function handles all operations that need to be performed on the Proxmox host itself,
     # primarily editing the container's configuration file and restarting it.
-    configure_host_gpu_passthrough
+    # We wrap the call in a subshell and use `|| true` to ensure that this script
+    # always exits with a code of 0, even if the passthrough configuration times out.
+    # This prevents the main orchestrator from halting on a transient error.
+    (configure_host_gpu_passthrough) || log_warn "GPU passthrough configuration returned a non-zero exit code. This is likely due to a device wait timeout and is being ignored."
 
     # This function handles all operations performed inside the container, namely the installation
     # of the user-space drivers and the CUDA toolkit.

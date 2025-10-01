@@ -145,12 +145,15 @@ graph TD
         D[ensure_container_defined];
         E[apply_configurations];
         F[start_container];
-        G[apply_features];
-        H[run_application_script];
-        I[run_health_check];
+        G[create_pre_configured_snapshot];
+        H[apply_features];
+        I[run_application_script];
+        J[run_health_check];
+        K[create_template_snapshot];
+        L[create_final_form_snapshot];
     end
-    B --> C --> D --> E --> F --> G --> H --> I;
-    I --> J[End];
+    B --> C --> D --> E --> F --> G --> H --> I --> J --> K --> L;
+    L --> M[End];
 ```
 
 #### 3.3.3. VM Construction
@@ -191,6 +194,15 @@ Virtual Machines are used for development environments that require a full OS, s
 ### 4.3. Templating Strategy
 
 The system uses a hierarchical, snapshot-based template structure to optimize the creation of both VMs and LXCs. This allows for the creation of "golden" templates with common features (e.g., base setup, NVIDIA drivers, Docker), which can then be cloned to create more specialized containers and VMs.
+
+#### 4.3.1. Lifecycle Snapshots
+
+To enhance idempotency and provide well-defined restore points, the orchestration engine creates two standardized snapshots during the `create` workflow for containers with `enable_lifecycle_snapshots` set to `true`:
+
+*   **`pre-configured`**: This snapshot is taken after the container has been created and started, but *before* any feature or application scripts have been run. It represents a clean, baseline state.
+*   **`final-form`**: This snapshot is taken after all provisioning steps are complete, including feature installation, application scripts, and health checks. It represents the fully provisioned and validated state of the container.
+
+These lifecycle snapshots are complemented by the `template_snapshot_name` property, which is used to create a persistent, named snapshot for containers that are intended to be used as cloneable templates.
 
 ```mermaid
 graph TD

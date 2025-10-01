@@ -59,17 +59,18 @@ print_usage() {
     echo "  The main dispatcher for the Phoenix Hypervisor CLI."
     echo ""
     echo "VERBS:"
-    echo "  setup    Initializes or configures the hypervisor environment."
-    echo "  create   Creates a specific LXC container or VM."
-    echo "  delete   Deletes a specific LXC container or VM."
-    echo "  start    Starts a specific LXC container or VM."
-    echo "  stop     Stops a specific LXC container or VM."
-    echo "  restart  Restarts a specific LXC container or VM."
-    echo "  status   Gets the status of a specific LXC container or VM."
-    echo "  LetsGo   Creates and starts all defined guests in the correct order."
+    echo "  setup     Initializes or configures the hypervisor environment."
+    echo "  create    Creates a specific LXC container or VM if it doesn't exist."
+    echo "  converge  Creates a guest if it doesn't exist, and forcefully re-applies all configurations and features for the guest and its entire dependency chain."
+    echo "  delete    Deletes a specific LXC container or VM."
+    echo "  start     Starts a specific LXC container or VM."
+    echo "  stop      Stops a specific LXC container or VM."
+    echo "  restart   Restarts a specific LXC container or VM."
+    echo "  status    Gets the status of a specific LXC container or VM."
+    echo "  LetsGo    Creates and starts all defined guests in the correct order."
     echo ""
     echo "OPTIONS:"
-    echo "  --help   Display this help message."
+    echo "  --help    Display this help message."
 }
 
 # -----------------------------------------------------------------------------
@@ -115,6 +116,28 @@ is_vm_target() {
         return 0
     else
         return 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# FUNCTION: guest_exists
+# DESCRIPTION: Checks if a given guest (LXC or VM) exists on the system.
+# ARGUMENTS:
+#   $1 - The ID of the guest to check.
+# RETURNS:
+#   0 if the guest exists.
+#   1 otherwise.
+# -----------------------------------------------------------------------------
+guest_exists() {
+    local target_id="$1"
+    if is_lxc_target "$target_id"; then
+        pct status "$target_id" > /dev/null 2>&1
+        return $?
+    elif is_vm_target "$target_id"; then
+        qm status "$target_id" > /dev/null 2>&1
+        return $?
+    else
+        return 1 # Not a known guest type
     fi
 }
 
@@ -293,7 +316,7 @@ main() {
 
     # --- VERB VALIDATION ---
     # Before proceeding, ensure the provided verb is valid.
-    local valid_verbs="setup create delete start stop restart status LetsGo"
+    local valid_verbs="setup create delete start stop restart status LetsGo converge"
     if ! [[ $valid_verbs =~ (^|[[:space:]])"$VERB"($|[[:space:]]) ]]; then
         log_error "Invalid verb '$VERB'."
         print_usage
@@ -369,7 +392,40 @@ main() {
         targets_to_process=($sorted_targets)
     fi
 
+    # --- EXECUTION LOOP ---
+    # Get the last target in the original user-provided list.
+    local final_target="${TARGETS[${#TARGETS[@]}-1]}"
+
     for target in "${targets_to_process[@]}"; do
+        # --- CONVERGE LOGIC ---
+        # If the verb is 'converge', we treat every target in the dependency
+        # chain as a final target, forcing a full configuration apply.
+        if [ "$VERB" == "converge" ]; then
+            log_info "Converging target '$target'. Routing to manager for 'create'..."
+            if is_lxc_target "$target"; then
+                source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "create" "$target"
+            elif is_vm_target "$target"; then
+                "$MANAGER_DIR/vm-manager.sh" "create" "$target"
+            else
+                log_warn "Target '$target' is not a valid LXC or VM. Skipping convergence."
+            fi
+            continue # Move to the next target
+        fi
+
+        # --- CREATE LOGIC ---
+        # For the 'create' verb, we only create dependencies if they don't exist.
+        if [ "$VERB" == "create" ]; then
+            # Check if the current target is a dependency (i.e., not the final target)
+            if [ "$target" != "$final_target" ]; then
+                if guest_exists "$target"; then
+                    log_info "Dependency '$target' already exists. Skipping creation."
+                    continue # Skip to the next target
+                fi
+            fi
+            # If it's the final target or a missing dependency, fall through to the generic handler below.
+        fi
+
+        # --- GENERIC VERB AND FINAL TARGET PROCESSING ---
         log_info "Processing target '$target' for action '$VERB'..."
         if is_lxc_target "$target"; then
             log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."
@@ -378,8 +434,7 @@ main() {
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
             "$MANAGER_DIR/vm-manager.sh" "$VERB" "$target"
         else
-            # Handle cases where a target is neither an LXC nor a VM.
-            # This could be a setup command with arguments or an error.
+            # Handle non-guest targets (e.g., setup commands)
             case "$VERB" in
                 setup)
                     log_info "Routing 'setup' with target '$target' to hypervisor-manager.sh..."

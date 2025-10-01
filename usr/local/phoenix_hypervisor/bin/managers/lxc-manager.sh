@@ -1037,15 +1037,28 @@ main_lxc_orchestrator() {
             log_info "Starting 'create' workflow for CTID $ctid..."
             if ensure_container_defined "$ctid"; then
                 apply_configurations "$ctid"
-            apply_zfs_volumes "$ctid"
-            apply_dedicated_volumes "$ctid"
-            ensure_container_disk_size "$ctid"
-            start_container "$ctid"
-            apply_features "$ctid"
-            run_application_script "$ctid"
-            run_health_check "$ctid"
-            create_template_snapshot "$ctid"
-            log_info "'create' workflow completed for CTID $ctid."
+                apply_zfs_volumes "$ctid"
+                apply_dedicated_volumes "$ctid"
+                ensure_container_disk_size "$ctid"
+                start_container "$ctid"
+
+                local enable_lifecycle_snapshots
+                enable_lifecycle_snapshots=$(jq_get_value "$ctid" ".enable_lifecycle_snapshots" || echo "false")
+
+                if [ "$enable_lifecycle_snapshots" == "true" ]; then
+                    create_pre_configured_snapshot "$ctid"
+                fi
+
+                apply_features "$ctid"
+                run_application_script "$ctid"
+                run_health_check "$ctid"
+                create_template_snapshot "$ctid"
+
+                if [ "$enable_lifecycle_snapshots" == "true" ]; then
+                    create_final_form_snapshot "$ctid"
+                fi
+
+                log_info "'create' workflow completed for CTID $ctid."
             fi
             ;;
         start)
