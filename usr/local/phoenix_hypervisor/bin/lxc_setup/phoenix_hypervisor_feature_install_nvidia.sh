@@ -129,8 +129,10 @@ configure_host_gpu_passthrough() {
     # Process the specific GPU devices assigned to this container.
     IFS=',' read -ra gpus <<< "$gpu_assignment"
     for gpu_idx in "${gpus[@]}"; do
+        # Trim whitespace from gpu_idx
+        gpu_idx=$(echo "$gpu_idx" | xargs)
         local nvidia_device="/dev/nvidia${gpu_idx}"
-        if [ -e "$nvidia_device" ]; then
+        if [ -c "$nvidia_device" ]; then # Check for character device
             mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
         else
             log_warn "Assigned GPU device $nvidia_device not found on host. Passthrough for this GPU will fail."
@@ -158,7 +160,7 @@ configure_host_gpu_passthrough() {
         wait_for_nvidia_device "$CTID"
     else
         log_info "No changes made to container configuration. Ensuring container is running."
-        run_pct_command start "$CTID" --force # Ensure the container is running for the next phase.
+        run_pct_command start "$CTID" # Ensure the container is running for the next phase.
     fi
 }
 

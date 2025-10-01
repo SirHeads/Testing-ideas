@@ -269,6 +269,41 @@ pct_exec() {
     return 0
 }
 # =====================================================================================
+# Function: pct_exec_silent
+# Description: Executes a command inside a specified LXC container without any logging
+#              or output. This function is designed for silent checks where only the
+#              exit code is needed.
+#
+# Arguments:
+#   $1 - The CTID of the container.
+#   $@ - The command and its arguments to execute inside the container.
+#
+# Returns:
+#   The exit code of the executed command.
+# =====================================================================================
+pct_exec_silent() {
+    local ctid="$1"
+    shift
+
+    if [[ "$1" == "--" ]]; then
+        shift
+    fi
+
+    local cmd_args=("$@")
+
+    # Context-aware execution
+    if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+        # When inside the container, execute directly and suppress output
+        "${cmd_args[@]}" >/dev/null 2>&1
+        return $?
+    else
+        # When on the host, use 'pct exec' and suppress output
+        pct exec "$ctid" -- "${cmd_args[@]}" >/dev/null 2>&1
+        return $?
+    fi
+}
+
+# =====================================================================================
 # FUNCTION: get_global_config_value
 # DESCRIPTION: Retrieves a global configuration value from the hypervisor config file.
 # ARGUMENTS:
@@ -389,6 +424,8 @@ run_pct_command() {
    if [ $exit_code -ne 0 ]; then
        if [[ "${pct_args[0]}" == "resize" && "$output" == *"disk is already at specified size"* ]]; then
            log_info "Ignoring non-fatal error for 'pct resize': $output"
+       elif [[ "${pct_args[0]}" == "start" && "$output" == *"already running"* ]]; then
+           log_info "Ignoring non-fatal error for 'pct start': container is already running."
        elif [[ "${pct_args[0]}" == "start" && "$output" == *"explicitly configured lxc.apparmor.profile"* ]]; then
            log_error "AppArmor profile conflict detected for CTID ${pct_args[1]}."
            log_error "Output:\n$output"
@@ -880,6 +917,7 @@ zfs_dataset_exists() {
 # =====================================================================================
 # Function: is_command_available
 # Description: Checks if a command is available inside a specified LXC container.
+#              This function is designed to be silent and is used for idempotent checks.
 #
 # Arguments:
 #   $1 - The CTID of the container.
@@ -892,26 +930,20 @@ is_command_available() {
     local CTID="$1"
     local command_name="$2"
     
-    log_debug "Checking for command '$command_name' in CTID $CTID..."
-    
-    # First, try the standard 'command -v' which is fast and checks the PATH
-    if pct_exec "$CTID" command -v "$command_name" >/dev/null 2>&1; then
-        log_debug "Command '$command_name' found in PATH for CTID $CTID."
+    # Use the silent executor to check if the command is in the PATH
+    if pct_exec_silent "$CTID" command -v "$command_name"; then
         return 0
     fi
     
-    # If not found in PATH, check for the file's existence in common locations using 'test -f'
-    log_debug "Command '$command_name' not in PATH. Checking common locations with 'test -f' in CTID $CTID..."
+    # If not in PATH, check common locations
     local search_paths=("/usr/bin" "/usr/sbin" "/bin" "/sbin" "/usr/local/bin" "/usr/local/sbin" "/opt/bin" "/usr/local/cuda/bin" "/usr/local/cuda-12.8/bin")
     
     for path in "${search_paths[@]}"; do
-        if pct_exec "$CTID" test -f "${path}/${command_name}"; then
-            log_debug "Command '$command_name' found at ${path}/${command_name} in CTID $CTID."
+        if pct_exec_silent "$CTID" test -f "${path}/${command_name}"; then
             return 0
         fi
     done
 
-    log_debug "Command '$command_name' not found in CTID $CTID after full search."
     return 1
 }
 

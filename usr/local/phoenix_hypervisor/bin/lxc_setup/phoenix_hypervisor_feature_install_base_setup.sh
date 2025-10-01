@@ -84,40 +84,35 @@ perform_base_os_setup() {
     log_info "Performing base OS setup in CTID: $CTID"
 
     # --- Idempotency Check & Package Installation ---
-    # This section ensures that a standard set of command-line tools are available in every container.
-    log_info "Checking for essential packages in CTID $CTID..."
+    log_info "Verifying essential packages in CTID $CTID..."
     local essential_packages=("curl" "wget" "vim" "htop" "jq" "git" "rsync" "s-tui" "gnupg" "locales")
     local packages_to_install=()
+    local packages_found=()
 
-    # Iterate through the list of essential packages. For each one, check if it's already installed.
-    # The `is_command_available` function (from common_utils) checks if a command is in the container's PATH.
     for pkg in "${essential_packages[@]}"; do
-        if ! is_command_available "$CTID" "$pkg"; then
-            # If a package is not found, add it to the list of packages to be installed.
+        if is_command_available "$CTID" "$pkg"; then
+            packages_found+=("$pkg")
+        else
             packages_to_install+=("$pkg")
         fi
     done
 
-    # Check if there are any packages that need to be installed.
+    if [ ${#packages_found[@]} -gt 0 ]; then
+        log_info "Found packages: ${packages_found[*]}"
+    fi
+
     if [ ${#packages_to_install[@]} -gt 0 ]; then
-        log_info "Installing missing packages: ${packages_to_install[*]}"
-        # First, update the package list to ensure we get the latest versions.
+        log_info "Missing packages: ${packages_to_install[*]}. Installing..."
         pct_exec "$CTID" apt-get update
-        # Install all missing packages in a single `apt-get install` command.
         pct_exec "$CTID" apt-get install -y "${packages_to_install[@]}"
     else
-        # If all packages are already present, log it and skip the installation. This is key to idempotency.
         log_info "All essential packages are already installed."
     fi
 
     # --- Locale Configuration ---
-    # Standardizing the locale is crucial for consistent behavior of text processing and other tools.
     log_info "Configuring locale to en_US.UTF-8..."
-    # Uncomment the en_US.UTF-8 line in the locale generation file.
     pct_exec "$CTID" sed -i 's/^# *\\(en_US.UTF-8\\)/\\1/' /etc/locale.gen
-    # Generate the locale.
     pct_exec "$CTID" locale-gen en_US.UTF-8
-    # Set the newly generated locale as the system default.
     pct_exec "$CTID" update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
     log_info "Locale configuration complete."
 
