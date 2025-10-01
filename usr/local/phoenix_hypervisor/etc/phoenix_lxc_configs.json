@@ -228,6 +228,50 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
+        "921": {
+            "name": "Template-VLLM-FP8",
+            "clone_from_ctid": "901",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 72000,
+            "cores": 10,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 64,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.221/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:D2",
+            "gpu_assignment": "0",
+            "features": [
+                "nvidia",
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2-7B-Instruct",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 8192
+                },
+                "CacheConfig": {
+                    "quantization": "fp8",
+                    "gpu_memory_utilization": 0.9
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2-7b-fp8"
+                }
+            }
+        },
         "950": {
             "name": "vllm-qwen2.5-7b-awq",
             "memory_mb": 72000,

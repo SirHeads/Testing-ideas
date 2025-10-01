@@ -206,11 +206,9 @@ clone_container() {
     # These checks ensure that the source container and snapshot are available before proceeding.
     if ! pct status "$source_ctid" > /dev/null 2>&1; then
         log_warn "Source container $source_ctid does not exist yet. Will retry."
-        return 1
     fi
     if ! pct listsnapshot "$source_ctid" | grep -q "$source_snapshot_name"; then
         log_warn "Snapshot '$source_snapshot_name' not found on source container $source_ctid yet. Will retry."
-        return 1
     fi
 
     local hostname=$(jq_get_value "$CTID" ".name") # New hostname for the cloned container
@@ -667,15 +665,17 @@ run_application_script() {
     log_info "Temporary directory verified successfully."
 
     # 2. Copy common_utils.sh to the container
-    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
-    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
-        log_fatal "Failed to copy common_utils.sh to container $CTID."
-    fi
 
     # 3. Copy the application script to the container
     log_info "Copying application script to $CTID:$app_script_dest_path..."
     if ! pct push "$CTID" "$app_script_path" "$app_script_dest_path"; then
         log_fatal "Failed to copy application script to container $CTID."
+    fi
+
+    # 2. Copy common_utils.sh to the container
+    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
+    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
+        log_fatal "Failed to copy common_utils.sh to container $CTID."
     fi
 
     # 3b. Copy http.js if it exists and the app script is for nginx
@@ -1035,8 +1035,8 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
-            ensure_container_defined "$ctid"
-            apply_configurations "$ctid"
+            if ensure_container_defined "$ctid"; then
+                apply_configurations "$ctid"
             apply_zfs_volumes "$ctid"
             apply_dedicated_volumes "$ctid"
             ensure_container_disk_size "$ctid"
@@ -1046,6 +1046,7 @@ main_lxc_orchestrator() {
             run_health_check "$ctid"
             create_template_snapshot "$ctid"
             log_info "'create' workflow completed for CTID $ctid."
+            fi
             ;;
         start)
             log_info "Starting 'start' workflow for CTID $ctid..."

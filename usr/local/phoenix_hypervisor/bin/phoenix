@@ -376,7 +376,7 @@ main() {
             source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "$VERB" "$target"
         elif is_vm_target "$target"; then
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
-            source "$MANAGER_DIR/vm-manager.sh" && main_vm_orchestrator "$VERB" "$target"
+            "$MANAGER_DIR/vm-manager.sh" "$VERB" "$target"
         else
             # Handle cases where a target is neither an LXC nor a VM.
             # This could be a setup command with arguments or an error.

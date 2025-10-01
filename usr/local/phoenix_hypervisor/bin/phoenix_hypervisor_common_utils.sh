@@ -440,18 +440,26 @@ run_pct_push() {
         
         local output
         local exit_code=0
-        output=$(pct push "$ctid" "$host_path" "$container_path" 2>&1) || exit_code=$?
+        
+        # Context-aware execution: check if running inside the container's temp dir
+        if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+            # Inside the container, use 'cp'
+            output=$(cp "$host_path" "$container_path" 2>&1) || exit_code=$?
+        else
+            # On the host, use 'pct push'
+            output=$(pct push "$ctid" "$host_path" "$container_path" 2>&1) || exit_code=$?
+        fi
 
         if [ $exit_code -eq 0 ]; then
-            log_info "File push command succeeded. Verifying file existence in container..."
+            log_info "File push/copy command succeeded. Verifying file existence in container..."
             if pct_exec "$ctid" test -f "$container_path"; then
-                log_success "File successfully pushed and verified in CTID $ctid."
+                log_success "File successfully pushed/copied and verified in CTID $ctid."
                 return 0
             else
-                log_warn "File push command succeeded, but verification failed. File not found at '$container_path'."
+                log_warn "File push/copy command succeeded, but verification failed. File not found at '$container_path'."
             fi
         else
-            log_error "File push command failed with exit code $exit_code."
+            log_error "File push/copy command failed with exit code $exit_code."
             log_error "Output:\n$output"
         fi
 
@@ -462,7 +470,7 @@ run_pct_push() {
         ((attempt++))
     done
 
-    log_fatal "Failed to push file to CTID $ctid after $max_attempts attempts."
+    log_fatal "Failed to push/copy file to CTID $ctid after $max_attempts attempts."
     return 1
 }
 
