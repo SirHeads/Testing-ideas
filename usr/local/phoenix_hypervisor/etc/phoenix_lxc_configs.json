@@ -197,14 +197,14 @@
             ]
         },
         "920": {
-            "name": "Template-VLLM",
+            "name": "Template-VLLM-AWQ-MultiGPU",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 72000,
             "cores": 10,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 64,
+            "storage_size_gb": 128,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -220,7 +220,27 @@
                 "nvidia",
                 "vllm"
             ],
-            "pct_options": [],
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 4096
+                },
+                "CacheConfig": {
+                    "quantization": "awq_marlin",
+                    "gpu_memory_utilization": 0.50
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 2
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2.5-7b-awq"
+                }
+            },
             "template_snapshot_name": "pre-configured",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
