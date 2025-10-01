@@ -357,13 +357,19 @@ main() {
     fi
 
     # With targets present, resolve dependencies and route to the correct manager.
-    log_info "Targets detected. Resolving dependencies for all targets..."
-    local sorted_targets
-    sorted_targets=$(resolve_dependencies "${TARGETS[@]}")
+    local targets_to_process
+    if [ "$VERB" == "delete" ]; then
+        log_info "Delete command detected. Processing targets without dependency resolution."
+        targets_to_process=("${TARGETS[@]}")
+    else
+        log_info "Targets detected. Resolving dependencies for all targets..."
+        local sorted_targets
+        sorted_targets=$(resolve_dependencies "${TARGETS[@]}")
+        log_info "Dependency resolution complete. Executing actions in order: $sorted_targets"
+        targets_to_process=($sorted_targets)
+    fi
 
-    log_info "Dependency resolution complete. Executing actions in order: $sorted_targets"
-
-    for target in $sorted_targets; do
+    for target in "${targets_to_process[@]}"; do
         log_info "Processing target '$target' for action '$VERB'..."
         if is_lxc_target "$target"; then
             log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."

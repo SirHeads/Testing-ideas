@@ -127,13 +127,10 @@ install_and_test_vllm() {
     log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
     # --- Dependency Check ---
-    # vLLM requires both a Python environment and NVIDIA drivers to function.
-    log_info "Verifying 'nvidia' and 'python_api_service' feature dependencies..."
+    # vLLM requires NVIDIA drivers to function.
+    log_info "Verifying 'nvidia' feature dependency..."
     if ! is_feature_present_on_container "$CTID" "nvidia"; then
         log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found."
-    fi
-    if ! is_feature_present_on_container "$CTID" "python_api_service"; then
-        log_fatal "The 'vllm' feature requires the 'python_api_service' feature, which was not found."
     fi
     if ! is_command_available "$CTID" "nvidia-smi"; then
         log_fatal "NVIDIA driver command 'nvidia-smi' not found. The 'vllm' feature depends on a functional NVIDIA driver."
@@ -237,6 +234,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=/opt/vllm
+Environment="PATH=/usr/local/cuda-12.8/bin:/opt/vllm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server --model "VLLM_MODEL_PLACEHOLDER" --served-model-name "VLLM_SERVED_MODEL_NAME_PLACEHOLDER" --host 0.0.0.0 --port VLLM_PORT_PLACEHOLDER VLLM_ARGS_PLACEHOLDER
 Restart=always
 RestartSec=10
