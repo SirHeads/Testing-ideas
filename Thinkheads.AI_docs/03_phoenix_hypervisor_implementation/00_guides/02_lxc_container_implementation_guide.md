@@ -88,10 +88,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **IP Address**: `10.0.0.150`
     *   **Port**: `8000`
     *   **Model**: `Qwen/Qwen2.5-7B-Instruct-AWQ`
-    *   **Quantization**: `awq_marlin`
-    *   **Max Model Length**: 32768
-    *   **GPU Memory Utilization**: 0.85
-    *   **Tensor Parallel Size**: 1
+    *   **Configuration**: Managed by a `vllm_engine_config` object in `phoenix_lxc_configs.json`.
 
 ### Container 951: Embedding Service (`vllm-granite-embed-r2`)
 
@@ -105,10 +102,7 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.151`
     *   **Port**: `8000`
-    *   **Model**: `ibm-granite/granite-embedding-english-r2`
-    *   **Max Model Length**: 1024
-    *   **GPU Memory Utilization**: 0.10
-    *   **Tensor Parallel Size**: 1
+    *   **Configuration**: Managed by a `vllm_engine_config` object in `phoenix_lxc_configs.json`.
 
 ### Container 952: Vector Database (`qdrant-VSCodeRag`)
 
@@ -187,3 +181,16 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **IP Address**: `10.0.0.157`
     *   **Port**: `8081` (if server is run)
     *   **Compilation**: Compiled with cuBLAS support for NVIDIA GPUs.
+
+---
+
+## 4. Advanced Configuration Patterns
+
+### 4.1. The Application Script Pattern
+
+A key architectural pattern in the Phoenix Hypervisor is the use of an `application_script` defined in `phoenix_lxc_configs.json`. This pattern separates the installation of a feature's dependencies from its runtime configuration and execution.
+
+*   **Feature Script (`lxc_setup/`)**: Responsible for installing the necessary software and libraries (e.g., `phoenix_hypervisor_feature_install_vllm.sh` installs vLLM, PyTorch, etc.). This script prepares the container with all the required tools.
+*   **Application Script (`bin/`)**: Responsible for taking the declarative configuration from `phoenix_lxc_configs.json` and dynamically generating the runtime environment. For example, `phoenix_hypervisor_lxc_vllm.sh` reads the `vllm_engine_config` object, generates a systemd service file, and starts the vLLM server.
+
+This separation of concerns ensures that our feature scripts are modular and reusable, while the application scripts provide a powerful mechanism for declarative, runtime configuration. The recent refactoring of the vLLM deployment serves as the canonical example of this pattern.

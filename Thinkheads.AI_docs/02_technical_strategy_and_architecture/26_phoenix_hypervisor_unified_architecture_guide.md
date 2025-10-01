@@ -321,7 +321,15 @@ The hypervisor is configured to support NVIDIA GPU passthrough to both LXC conta
 
 ### 8.3. vLLM Deployment
 
-The deployment of vLLM containers is managed through a template-based strategy. A "golden" template container (CTID 920) is fully provisioned with a known-good vLLM environment, and new containers are created as lightweight clones of this template. The specific vLLM model and its configuration are defined in the `phoenix_lxc_configs.json` file for each container.
+The deployment of vLLM containers has been refactored to a declarative, two-script model that enhances modularity and aligns with our core architectural principles.
+
+*   **Declarative Configuration**: The entire vLLM service is now defined by a structured `vllm_engine_config` object within `phoenix_lxc_configs.json`. This object mirrors the official vLLM Engine Arguments, providing a clear and robust method for configuring the model, cache, parallelism, and server settings.
+
+*   **Separation of Concerns**:
+    *   The feature script, `phoenix_hypervisor_feature_install_vllm.sh`, is solely responsible for installing the required software dependencies (vLLM, PyTorch, FlashInfer) at specific versions.
+    *   A dedicated application script, `phoenix_hypervisor_lxc_vllm.sh`, is responsible for dynamically generating the `vllm_model_server.service` file based on the `vllm_engine_config` and deploying it.
+
+*   **New FP8 Template**: A new template, `Template-VLLM-FP8` (CTID 921), has been introduced for FP8 quantization. It is cloned from the base GPU template (901) to ensure a clean environment, free from legacy configurations. This new, streamlined process serves as the blueprint for all future vLLM deployments.
 
 ### 8.4. Docker Integration
 

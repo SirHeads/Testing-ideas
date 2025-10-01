@@ -136,6 +136,6 @@ For services that do not have automated health checks, the following manual veri
 
 | Container | Service | Verification Method |
 | :--- | :--- | :--- |
-| 951 | vLLM API Server | `curl http://localhost:8000/health` |
+| 950, 951 | vLLM API Server | `curl http://localhost:8000/v1/models` |
 | 953 | Nginx | `systemctl is-active --quiet nginx` |
 | 952 | Qdrant | `curl http://localhost:6333` |

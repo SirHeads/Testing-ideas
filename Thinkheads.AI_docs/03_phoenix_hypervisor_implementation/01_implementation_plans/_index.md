@@ -208,8 +208,7 @@ This plan outlines the deployment, refactoring, and enhancement of LXC container
 
 **Deployment and Refactoring:**
 
-*   **Unified Application Script:** The deployment process has been refactored to use a single, unified application script, `phoenix_hypervisor_lxc_vllm.sh`, for all vLLM containers.
-*   **Model Type Configuration:** A `vllm_model_type` field has been added to `phoenix_lxc_configs.json` to differentiate between `chat` and `embedding` models, allowing the unified script to adapt its validation logic accordingly.
+*   **Declarative Configuration:** The deployment process has been refactored to use the new `vllm_engine_config` object, and the `phoenix_hypervisor_lxc_vllm.sh` script now dynamically generates the systemd service.
 
 **Enhancement Plan: Microservices Architecture**
 
@@ -240,7 +239,7 @@ This plan outlines the complete integration and operationalization of the Ollama
 This plan details the setup for a complete semantic search solution, leveraging high-quality embeddings.
 
 *   **Core Components:**
-    *   **vLLM:** Serves the `Qwen/Qwen3-Embedding-8B-GGUF:Q8_0` model to generate embeddings.
+    *   **vLLM:** Serves a high-performance embedding model, configured declaratively via the `vllm_engine_config` object.
     *   **Qdrant:** Runs in a separate LXC container to store and retrieve embeddings.
     *   **Roocode:** A Python-based application that processes documents, generates embeddings, and interacts with Qdrant.
 *   **Implementation:** The plan provides detailed configuration for vLLM, a setup script for the Qdrant LXC container, and a comprehensive Python integration script for `roocode`.

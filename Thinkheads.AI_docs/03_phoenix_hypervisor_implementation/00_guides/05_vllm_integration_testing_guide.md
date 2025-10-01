@@ -34,33 +34,28 @@ The testing framework consists of three main components:
 
 ## 3. Control Flow
 
-The testing process is triggered automatically at the end of a successful container creation workflow. The control flow is as follows:
+The testing process is triggered automatically at the end of a successful container creation workflow. The new control flow, reflecting the two-script implementation, is as follows:
 
-1.  The `lxc-manager.sh` script completes the container's setup, including feature installation and application script execution.
-2.  It then calls the `run_post_deployment_validation` function, which in turn executes the `test_runner.sh` script for the appropriate test suite.
-3.  The `test_runner.sh` script reads the `vllm_served_model_name` and `vllm_max_model_len` from `phoenix_lxc_configs.json`.
-4.  The Python test scripts are copied into the container's `/tmp/` directory.
-5.  The `python3-openai` package is installed in the container.
-6.  The Python scripts are executed with the parameters read from the configuration file.
-7.  If any test fails, the orchestration script exits with a non-zero status code, signaling a failure in the deployment process.
+1.  The `lxc-manager.sh` script orchestrates the container setup.
+2.  It first executes `phoenix_hypervisor_feature_install_vllm.sh` to install all necessary dependencies.
+3.  Next, it runs the container's designated `application_script` (e.g., `phoenix_hypervisor_lxc_vllm.sh`), which generates and deploys the systemd service.
+4.  Finally, it calls the `run_post_deployment_validation` function, which executes the `test_runner.sh` script.
+5.  The `test_runner.sh` script now parses the `vllm_engine_config` object in `phoenix_lxc_configs.json` to extract the `served_model_name` and `max_model_len`.
+6.  The Python test scripts are copied into the container, dependencies are installed, and the tests are executed with the extracted parameters.
+7.  A test failure will halt the deployment and signal an error.
 
 ```mermaid
 graph TD
     A[Start vLLM Deployment] --> B{Call phoenix_hypervisor_feature_install_vllm.sh};
-    B --> C[vLLM Service Configured and Started];
-    C --> D{Call /usr/local/phoenix_hypervisor/bin/tests/run_vllm_integration_tests.sh};
-    D --> E[Read phoenix_lxc_configs.json];
-    E --> F[Copy Test Scripts to Container];
-    F --> G[Install Dependencies in Container];
-    G --> H[Execute test_vllm_context_window.py];
-    G --> I[Execute test_vllm_responsiveness.py];
-    H --> J{Test Succeeded?};
-    I --> K{Test Succeeded?};
-    J --> L[Log Success];
-    K --> L;
-    J -- No --> M[Log Failure and Exit];
-    K -- No --> M;
-    L --> N[Deployment Complete];
+    B --> C{Call phoenix_hypervisor_lxc_vllm.sh};
+    C --> D[vLLM Service Configured and Started];
+    D --> E{Call /usr/local/phoenix_hypervisor/bin/tests/test_runner.sh};
+    E --> F[Read vllm_engine_config from phoenix_lxc_configs.json];
+    F --> G[Copy Test Scripts & Install Dependencies];
+    G --> H[Execute Tests];
+    H --> I{Tests Succeeded?};
+    I -- Yes --> J[Deployment Complete];
+    I -- No --> K[Log Failure and Exit];
 ```
 
 ## 4. Usage

@@ -270,7 +270,7 @@ Metrics: GPU utilization, VRAM usage, temperature, power draw, ECC errors.
 
 ### vLLM Metrics
 
-vLLM (CTID 950) exposes `/metrics` for request latency, throughput, queue size, token generation rate. Scrape directly; use Grafana for visualization of inference performance.
+vLLM containers (e.g., CTID 950, 951) expose a Prometheus-compatible `/metrics` endpoint. This can be scraped to monitor request latency, throughput, queue size, and token generation rate, providing critical insights into inference performance.
 
 ### Qdrant Metrics
 
