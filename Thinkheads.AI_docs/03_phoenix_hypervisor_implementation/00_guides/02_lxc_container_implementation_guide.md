@@ -50,9 +50,7 @@ graph TD
     end
 
     subgraph "Supporting Services"
-        N8N[LXC 954: n8n Workflow Automation]
-        WebUI[LXC 956: Open WebUI]
-        Portainer[LXC 910: Portainer]
+        DockerVM["VM 8001: Docker Services"]
     end
 
     User -- HTTPS --> API_Gateway
@@ -61,9 +59,12 @@ graph TD
     API_Gateway -- Routes to --> Qdrant
     API_Gateway -- Routes to --> Ollama
     API_Gateway -- Routes to --> LlamaCPP
-    API_Gateway -- Routes to --> N8N
-    API_Gateway -- Routes to --> WebUI
-    API_Gateway -- Routes to --> Portainer
+    API_Gateway -- Routes to --> DockerVM
+
+    DockerVM -- Hosts --> N8N[n8n]
+    DockerVM -- Hosts --> WebUI[Open WebUI]
+    DockerVM -- Hosts --> Portainer[Portainer]
+    DockerVM -- Hosts --> Monitoring[Monitoring]
 
     WebUI -- Interacts with --> Ollama
     VLLM_Embed -- Stores embeddings in --> Qdrant
@@ -129,19 +130,6 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **IP Address**: `10.0.0.153`
     *   **Functionality**: Routes requests to backend services based on hostname and request path. Manages SSL termination.
 
-### Container 954: Workflow Automation (`n8n-phoenix`)
-
-*   **Purpose**: Hosts an n8n instance for workflow automation and service integration.
-*   **Key Software**: n8n (via Docker)
-*   **Resource Allocation**:
-    *   **CPU**: 2 cores
-    *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.154`
-    *   **Port**: `5678`
-    *   **Data Persistence**: Data is stored in a dedicated 10GB volume mounted at `/home/node/.n8n`.
-
 ### Container 955: Ollama Service (`ollama-oWUI`)
 
 *   **Purpose**: Provides a standardized, GPU-accelerated base for running Ollama models.
@@ -154,19 +142,6 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.155`
     *   **Port**: `11434`
-
-### Container 956: Web Interface (`openWebUI-phoenix`)
-
-*   **Purpose**: Provides a web-based user interface for interacting with the Ollama API.
-*   **Key Software**: Open WebUI (via Docker)
-*   **Resource Allocation**:
-    *   **CPU**: 2 cores
-    *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.156`
-    *   **Port**: `8080`
-    *   **Backend**: Connects to the Ollama service at `10.0.0.155:11434`.
 
 ### Container 957: Llama.cpp Service (`llamacpp`)
 

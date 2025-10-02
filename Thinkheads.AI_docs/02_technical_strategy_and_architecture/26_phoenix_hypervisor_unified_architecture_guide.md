@@ -221,29 +221,36 @@ graph TD
         T1[ubuntu-24.04-standard]
     end
 
-    subgraph "Feature-Specific Templates"
+    subgraph "Feature-Specific LXC Templates"
         T2[900: Template-Base]
         T3[901: Template-GPU]
-        T4[902: Template-Docker]
-        T5[903: Template-Docker-GPU]
     end
 
-    subgraph "Provisioned Containers"
+    subgraph "Provisioned LXC Containers"
         C1[950: vllm-qwen2.5-7b-awq]
         C2[953: Nginx-VscodeRag]
         C3[955: ollama-oWUI]
-        C4[910: Portainer]
+    end
+
+    subgraph "VM & Docker Services"
+        VM[8001: docker-vm-01]
+        Portainer["Portainer"]
+        N8N["n8n"]
+        OpenWebUI["OpenWebUI"]
+        Monitoring["Monitoring"]
     end
 
     T1 -- Creates --> T2
     T2 -- Cloned to create --> T3
-    T2 -- Cloned to create --> T4
-    T3 -- Cloned to create --> T5
 
-    T5 -- Cloned to create --> C1
+    T3 -- Cloned to create --> C1
     T2 -- Cloned to create --> C2
     T3 -- Cloned to create --> C3
-    T4 -- Cloned to create --> C4
+
+    VM -- Hosts --> Portainer
+    VM -- Hosts --> N8N
+    VM -- Hosts --> OpenWebUI
+    VM -- Hosts --> Monitoring
 ```
 
 ## 5. Networking
@@ -269,15 +276,16 @@ graph TD
             B[Nginx Reverse Proxy]
         end
 
-        subgraph "Backend Services"
+        subgraph "Backend LXC Services"
             C[Embedding Service]
             D[Qwen Service]
             E[Qdrant Service]
-            F[n8n Service]
-            G[Open WebUI Service]
             H[Ollama Service]
             I[Llamacpp Service]
-            J[Portainer Service]
+        end
+
+        subgraph "Backend VM Services"
+            VM[VM 8001: Docker Services]
         end
     end
 
@@ -285,11 +293,9 @@ graph TD
     B --> C
     B --> D
     B --> E
-    B --> F
-    B --> G
     B --> H
     B --> I
-    B --> J
+    B --> VM
 ```
 
 ### 5.3. Firewall Management
@@ -318,9 +324,9 @@ The primary goal with AppArmor is to enforce the **principle of least privilege*
 
 The `hypervisor_feature_setup_apparmor.sh` script is the single source of truth for deploying and reloading AppArmor profiles, while `lxc-manager.sh` is responsible for applying the profiles to the containers based on the `apparmor_profile` key in the configuration.
 
-### 7.2. Docker-in-LXC Security
+### 7.2. Docker Security
 
-Running Docker within unprivileged LXC containers requires a careful balance of security and functionality. The `fuse-overlayfs` storage driver is used for its compatibility with unprivileged containers and ZFS. To ensure a consistent and secure baseline, the `lxc-phoenix-v2` AppArmor profile is recommended for all containers with the `docker` feature.
+The recommended approach for running Docker workloads is within a dedicated Virtual Machine (e.g., `docker-vm-01`). This provides a higher level of isolation and security compared to running Docker within an LXC container. While Docker-in-LXC is still possible, it should be reserved for specific use cases where the overhead of a full VM is not justified.
 
 ### 7.3. User and Secret Management
 
@@ -352,7 +358,7 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 ### 8.4. Docker Integration
 
-Docker is seamlessly integrated into the LXC containers as a feature, allowing for the deployment of containerized applications within the Phoenix Hypervisor ecosystem. This nested virtualization approach provides a flexible and scalable environment for application deployment.
+Docker is now primarily integrated through a dedicated VM (`docker-vm-01`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature can still be applied to LXC containers, but the VM-based approach is the recommended standard.
 
 ## 9. Testing & QA
 
@@ -383,7 +389,7 @@ This section provides solutions to common issues that may arise when working wit
 ### 10.2. Common Issues and Resolutions
 
 *   **LXC Container Fails to Start:** Check the container's configuration, system logs for AppArmor denials, and try starting the container in debug mode.
-*   **Docker Issues in LXC:** This is often due to an incorrect AppArmor profile or a missing dependency like `fuse-overlayfs`. Verify the AppArmor profile is set correctly (e.g., `lxc-phoenix-v2`) and check the Docker daemon logs.
+*   **Docker Issues:** With the migration to a dedicated VM, Docker-related issues are now isolated to that environment. Check the Docker daemon logs within the VM (`journalctl -u docker`) and the container logs (`docker logs <container_name>`).
 *   **Network Issues:** Verify the container's IP address, gateway, and bridge configuration. Check the host's firewall rules and use `ping` and `traceroute` to diagnose connectivity.
 *   **VM Fails to Start:** Check the VM's configuration, review the Proxmox task logs, and access the VM's console to check for boot errors.
 *   **Cloud-Init Issues:** Check the generated Cloud-Init files and review the Cloud-Init logs inside the VM at `/var/log/cloud-init.log`.
