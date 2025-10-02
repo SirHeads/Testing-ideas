@@ -16,7 +16,10 @@
 # Determine the absolute path of the script's directory to ensure reliable
 # execution of the main phoenix script, regardless of where this script is
 # called from.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Determine the absolute path of the script's directory, resolving any symlinks.
+# This ensures that we can reliably locate phoenix-cli, even when the phoenix
+# command is called from a symlinked location.
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 
 # Execute the main phoenix script, passing all command-line arguments ("$@").
 exec "$SCRIPT_DIR/phoenix-cli" "$@"
