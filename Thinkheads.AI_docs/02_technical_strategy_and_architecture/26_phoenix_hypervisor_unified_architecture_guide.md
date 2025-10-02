@@ -286,15 +286,11 @@ Firewall management is handled declaratively through the `phoenix_hypervisor_con
 
 ## 6. Storage
 
-The Phoenix Hypervisor leverages ZFS for its storage backend, providing a robust and flexible foundation for managing virtualized resources.
+The Phoenix Hypervisor's storage architecture is built on a declarative model, with ZFS as its foundation. The desired state of all storage resources is defined in `phoenix_hypervisor_config.json`, and a series of idempotent scripts are responsible for implementing this state.
 
-### 6.1. ZFS Storage Architecture
+The system utilizes ZFS for its robust and high-performance pools and datasets. These are then exposed to the Proxmox environment and guest machines through direct integration, NFS shares, and Samba (SMB/CIFS) shares, providing a flexible and powerful storage solution.
 
-The storage architecture is defined in `phoenix_hypervisor_config.json`, which specifies the ZFS pools, datasets, and their properties. This includes RAID levels, disk assignments, and dataset-specific settings such as compression and record size. This declarative approach allows for a clear and version-controllable definition of the storage layout.
-
-### 6.2. Declarative Storage Management
-
-The `hypervisor_feature_setup_zfs.sh` script manages the ZFS pools and datasets in a state-validating, non-destructive manner. By default, the script will abort if it detects any change that could be destructive. Any destructive operation requires explicit user consent, either through an interactive prompt or a specific override flag. This "state-validation" model prioritizes data safety over unchecked automation.
+For a comprehensive deep dive into the storage architecture, including ZFS, NFS, and Samba configuration, implementation details, and architectural diagrams, please refer to the **[Phoenix Hypervisor Storage Architecture Guide](../03_phoenix_hypervisor_implementation/00_guides/14_storage_architecture_guide.md)**.
 
 ## 7. Security
 

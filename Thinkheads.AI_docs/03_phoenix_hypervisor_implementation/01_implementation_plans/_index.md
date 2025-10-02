@@ -91,7 +91,7 @@ This section details the implementation plans for the core components and featur
 
 ### 7.1. ZFS Dataset Structure and Configuration
 
-This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization for the `quickOS` and `fastData` pools.
+This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization for the `quickOS` and `fastData` pools. For a comprehensive overview of the entire storage architecture, please refer to the **[Phoenix Hypervisor Storage Architecture Guide](../00_guides/14_storage_architecture_guide.md)**.
 
 #### 7.1.1. Proposed ZFS Dataset Structure
 
