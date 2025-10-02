@@ -5,7 +5,7 @@
     "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
     "lxc_configs": {
         "900": {
-            "name": "Template-Base",
+            "name": "Copy-Base",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
@@ -13,7 +13,7 @@
             "cores": 2,
             "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -36,14 +36,14 @@
             "enable_lifecycle_snapshots": true
         },
         "901": {
-            "name": "Template-GPU",
+            "name": "Copy-Cuda12.8",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -66,8 +66,8 @@
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true
         },
-        "920": {
-            "name": "Template-VLLM-AWQ-MultiGPU",
+        "910": {
+            "name": "Copy-VLLM-GPUx2",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
@@ -119,8 +119,8 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "921": {
-            "name": "Template-VLLM-FP8",
+        "911": {
+            "name": "Copy-VLLM-GPU0",
             "clone_from_ctid": "901",
             "start_at_boot": false,
             "boot_order": 0,
@@ -170,8 +170,59 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "941": {
-            "name": "granite-new",
+        "912": {
+            "name": "Copy-VLLM-GPU1",
+            "clone_from_ctid": "901",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 72000,
+            "cores": 10,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 64,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.222/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:D3",
+            "gpu_assignment": "1",
+            "features": [
+                "nvidia",
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2-7B-Instruct",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 8192
+                },
+                "CacheConfig": {
+                    "quantization": "fp8",
+                    "gpu_memory_utilization": 0.9
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2-7b-fp8"
+                }
+            },
+            "template_snapshot_name": "final-form",
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
+        },
+        "801": {
+            "name": "granite-embedding",
             "memory_mb": 72000,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -186,7 +237,7 @@
             "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "921",
+            "clone_from_ctid": "911",
             "features": [
                 "vllm"
             ],
@@ -227,7 +278,7 @@
                 ]
             },
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 3,
@@ -260,7 +311,7 @@
                 ]
             }
         },
-        "942": {
+        "802": {
             "name": "vllm-granite-3.3-8b-fp8",
             "memory_mb": 72000,
             "cores": 6,
@@ -276,7 +327,7 @@
             "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "921",
+            "clone_from_ctid": "911",
             "features": [
                 "vllm"
             ],
@@ -308,7 +359,7 @@
             "boot_order": 3,
             "boot_delay": 5,
             "dependencies": [
-                "953"
+                "101"
             ],
             "zfs_volumes": [
                 {
@@ -340,7 +391,7 @@
             "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "920",
+            "clone_from_ctid": "910",
             "features": [
                 "vllm"
             ],
@@ -391,7 +442,7 @@
                 ]
             },
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 3,
@@ -463,7 +514,7 @@
             "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "920",
+            "clone_from_ctid": "910",
             "features": [
                 "vllm"
             ],
@@ -499,7 +550,7 @@
                 ]
             },
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 3,
@@ -548,7 +599,7 @@
             "gpu_assignment": "none",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "902",
+            "clone_from_ctid": "900",
             "features": [
                 "docker"
             ],
@@ -580,7 +631,7 @@
                 ]
             },
             "dependencies": [
-                "953"
+                "101"
             ],
             "volumes": [
                 {
@@ -597,8 +648,8 @@
             "apparmor_manages_nesting": false,
             "lxc_options": []
         },
-        "953": {
-            "name": "Nginx-VscodeRag",
+        "101": {
+            "name": "Nginx-Phoenix",
             "memory_mb": 4096,
             "swap_mb": 512,
             "cores": 4,
@@ -621,7 +672,7 @@
             "pct_options": [
                 "nesting=1"
             ],
-            "application_script": "phoenix_hypervisor_lxc_953.sh",
+            "application_script": "phoenix_hypervisor_lxc_101.sh",
             "firewall": {
                 "enabled": true
             },
@@ -634,8 +685,8 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "955": {
-            "name": "ollama-oWUI",
+        "803": {
+            "name": "ollama-gpu0",
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -661,7 +712,7 @@
             ],
             "pct_options": [],
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 2,
@@ -672,8 +723,8 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "957": {
-            "name": "llamacpp",
+        "804": {
+            "name": "llamacpp-gpu0",
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -685,7 +736,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:67:89:B7",
-            "gpu_assignment": "1",
+            "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "901",
@@ -697,7 +748,7 @@
                 "8081:8081"
             ],
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 2,

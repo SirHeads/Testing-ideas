@@ -23,7 +23,7 @@
         },
         {
             "vmid": 8001,
-            "name": "docker-vm-01",
+            "name": "Dr-Phoenix",
             "clone_from_vmid": 8000,
             "cores": 4,
             "memory_mb": 8192,

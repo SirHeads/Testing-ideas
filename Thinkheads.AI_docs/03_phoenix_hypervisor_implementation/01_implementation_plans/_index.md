@@ -219,9 +219,9 @@ To enhance responsiveness and context-checking, the single-container architectur
 *   **Context Validation Service:** A new microservice to validate the semantic relevance of input data.
 *   **Auto-scaling Group of vLLM Instances:** A pool of `lxc 951` containers that can be automatically scaled.
 
-#### 7.4.2. LXC 953: api-gateway-lxc
+#### 7.4.2. LXC 101: api-gateway-lxc
 
-This plan details the transformation of LXC container 953 into a dedicated Nginx reverse proxy and API gateway.
+This plan details the transformation of LXC container 101 into a dedicated Nginx reverse proxy and API gateway.
 
 *   **Core Functionality:** The container is provisioned with Nginx and configured to act as a reverse proxy with caching, load balancing, and SSL/TLS termination.
 *   **Security Hardening:** The implementation includes robust security measures, such as rate limiting, security headers, and the integration of ModSecurity (WAF) and Fail2ban.
@@ -231,7 +231,7 @@ This plan details the transformation of LXC container 953 into a dedicated Nginx
 This plan outlines the complete integration and operationalization of the Ollama service within LXC container 955.
 
 *   **Service Management:** A `systemd` service is created to ensure the Ollama process starts automatically on boot and is managed consistently.
-*   **Nginx Reverse Proxy:** The Ollama API is securely exposed to the host network via a reverse proxy configuration in the `api-gateway-lxc` (953).
+*   **Nginx Reverse Proxy:** The Ollama API is securely exposed to the host network via a reverse proxy configuration in the `api-gateway-lxc` (101).
 
 #### 7.4.4. LXC Embedding Setup with Qdrant and vLLM
 

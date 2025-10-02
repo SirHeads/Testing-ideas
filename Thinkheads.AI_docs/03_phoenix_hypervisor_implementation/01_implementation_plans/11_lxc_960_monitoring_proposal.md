@@ -47,7 +47,7 @@ last_reviewed: '2025-09-23'
 
 ## Executive Summary
 
-This proposal outlines the implementation of a dedicated LXC container (CTID 960) within the Phoenix Orchestrator to host Prometheus (metrics collection) and Grafana (visualization and alerting). This monitoring solution enhances observability across the Thinkheads.AI ecosystem, covering the Proxmox host, LXC containers, NVIDIA GPUs, and AI/ML applications like vLLM, Qdrant, n8n, Ollama, and llama.cpp. Deployed using Docker within an unprivileged LXC container cloned from the "Template-Docker" (CTID 902), the setup ensures modularity, idempotency, and alignment with existing engineering principles. Key benefits include real-time insights, proactive alerting, and optimized resource utilization for AI workloads, with integration into the existing NGINX proxy (CTID 953) for secure dashboard access. The implementation is low-overhead, scalable, and designed to showcase DevOps expertise to potential employers.
+This proposal outlines the implementation of a dedicated LXC container (CTID 960) within the Phoenix Orchestrator to host Prometheus (metrics collection) and Grafana (visualization and alerting). This monitoring solution enhances observability across the Thinkheads.AI ecosystem, covering the Proxmox host, LXC containers, NVIDIA GPUs, and AI/ML applications like vLLM, Qdrant, n8n, Ollama, and llama.cpp. Deployed using Docker within an unprivileged LXC container cloned from the "Template-Docker" (CTID 902), the setup ensures modularity, idempotency, and alignment with existing engineering principles. Key benefits include real-time insights, proactive alerting, and optimized resource utilization for AI workloads, with integration into the existing NGINX proxy (CTID 101) for secure dashboard access. The implementation is low-overhead, scalable, and designed to showcase DevOps expertise to potential employers.
 
 ---
 
@@ -110,7 +110,7 @@ Create an unprivileged LXC container (CTID 960) cloned from "Template-Docker" (C
             }
         ]
     },
-    "dependencies": ["953"]
+    "dependencies": ["101"]
 }
 ```
 
@@ -373,7 +373,7 @@ Dependency: CTID 953 (NGINX) for proxying Grafana/Prometheus (e.g., `/grafana` t
 2. Run orchestrator to provision CTID 960.
 3. Install exporters: `node-exporter`, `pve-exporter` on host; `dcgm-exporter` as needed.
 4. Deploy Docker Compose in CTID 960.
-5. Configure NGINX (CTID 953) for proxying.
+5. Configure NGINX (CTID 101) for proxying.
 6. Import Grafana dashboards (Proxmox ID 10471, DCGM ID 12238).
 7. Set up alerts and validate scraping.
 8. Test end-to-end functionality.

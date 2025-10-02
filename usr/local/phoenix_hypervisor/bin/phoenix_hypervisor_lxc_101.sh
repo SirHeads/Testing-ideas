@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# File: phoenix_hypervisor_lxc_953.sh
-# Description: This script configures and launches the Nginx API Gateway and reverse proxy within LXC container 953.
+# File: phoenix_hypervisor_lxc_101.sh
+# Description: This script configures and launches the Nginx API Gateway and reverse proxy within LXC container 101.
 #              It serves as the final application-specific step in the orchestration process for this container.
 #              The script installs Nginx, deploys a static gateway configuration, generates self-signed SSL
 #              certificates for various local services, and ensures the Nginx service is running and enabled.
@@ -11,7 +11,7 @@
 #               - The main `phoenix_orchestrator.sh` script, which prepares and calls this script.
 #               - A pre-staged Nginx configuration file at `/tmp/phoenix_run/vllm_gateway`.
 #
-# Inputs: - CTID (Container ID): Implicitly 953.
+# Inputs: - CTID (Container ID): Implicitly 101.
 #         - Nginx site configuration file (`vllm_gateway`) provided by the orchestrator.
 #
 # Outputs: - A running and enabled Nginx service (`systemd`).
@@ -95,5 +95,5 @@ if ! systemctl is-active --quiet nginx; then
     exit 1
 fi
 
-echo "Nginx API Gateway has been installed and configured successfully in LXC 953."
+echo "Nginx API Gateway has been installed and configured successfully in LXC 101."
 exit 0

@@ -27,7 +27,7 @@ This document provides a single, authoritative, and RAG-optimized overview of al
 
 ## 2. System Architecture
 
-The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway (CTID 953). This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
+The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway (CTID 101). This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
 
 ### High-Level Interaction Diagram
 

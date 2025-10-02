@@ -263,7 +263,7 @@ The network is configured with a single bridge (`vmbr0`) that provides connectiv
 
 ### 5.2. API Gateway (NGINX)
 
-LXC container `953` functions as a multi-service Nginx reverse proxy and API gateway. This container serves as a secure and efficient entry point for a variety of backend services, aligning with modern microservice architecture principles. The configuration is managed declaratively, with site configurations stored in the project repository and mounted into the container.
+LXC container `101` functions as a multi-service Nginx reverse proxy and API gateway. This container serves as a secure and efficient entry point for a variety of backend services, aligning with modern microservice architecture principles. The configuration is managed declaratively, with site configurations stored in the project repository and mounted into the container.
 
 ```mermaid
 graph TD
@@ -272,7 +272,7 @@ graph TD
     end
 
     subgraph "Proxmox Host"
-        subgraph "LXC 953: api-gateway-lxc"
+        subgraph "LXC 101: api-gateway-lxc"
             B[Nginx Reverse Proxy]
         end
 
