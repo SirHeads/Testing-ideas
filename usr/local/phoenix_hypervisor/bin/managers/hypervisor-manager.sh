@@ -44,6 +44,38 @@ WIPE_DISKS=false # Flag to enable destructive disk operations during ZFS setup.
 CONFIG_FILE=""   # Path to the hypervisor configuration file.
 
 # =====================================================================================
+# Function: create_global_symlink
+# Description: Creates a symbolic link to the phoenix-global wrapper script in /usr/local/bin,
+#              making the 'phoenix' command globally accessible. This function is called at the
+#              end of a successful hypervisor setup.
+#
+# Arguments:
+#   None.
+#
+# Returns:
+#   None. The function will call log_fatal and exit if the symlink creation fails.
+# =====================================================================================
+create_global_symlink() {
+    log_info "Creating global symlink for the phoenix command..."
+    local source_path="${PHOENIX_BASE_DIR}/bin/phoenix-global"
+    local target_path="/usr/local/bin/phoenix"
+
+    if [ -L "$target_path" ]; then
+        log_info "Symlink already exists at $target_path. Removing it to ensure it's up-to-date."
+        if ! rm "$target_path"; then
+            log_fatal "Failed to remove existing symlink at $target_path."
+        fi
+    fi
+
+    log_info "Creating new symlink from $source_path to $target_path..."
+    if ! ln -s "$source_path" "$target_path"; then
+        log_fatal "Failed to create symlink. Please ensure you have the necessary permissions."
+    fi
+
+    log_info "Phoenix command is now globally accessible."
+}
+
+# =====================================================================================
 # Function: setup_hypervisor
 # Description: Orchestrates the initial setup of the Proxmox hypervisor by executing a
 #              predefined sequence of modular setup scripts. This function ensures that all
@@ -109,6 +141,9 @@ setup_hypervisor() {
     done
 
     log_info "Hypervisor setup completed successfully."
+
+    # As the final step, create the global symlink to make the phoenix command accessible.
+    create_global_symlink
 }
 
 # =====================================================================================

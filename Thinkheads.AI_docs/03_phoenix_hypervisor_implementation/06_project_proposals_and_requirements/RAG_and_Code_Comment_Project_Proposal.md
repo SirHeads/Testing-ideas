@@ -1,6 +1,6 @@
 ---
 title: "Project Proposal: RAG Optimization and Code Commenting for Phoenix Hypervisor"
-summary: "A proposal to conduct a comprehensive code commenting and RAG optimization initiative for the phoenix_hypervisor codebase to improve maintainability and prepare for future refactoring."
+summary: "A proposal to conduct a comprehensive code commenting and RAG optimization initiative for the phoenix-cli_hypervisor codebase to improve maintainability and prepare for future refactoring."
 document_type: "Project Proposal"
 status: "Draft"
 version: "1.1.0"
@@ -19,7 +19,7 @@ last_reviewed: "2025-09-30"
 
 ## 1. Introduction
 
-The `phoenix_hypervisor` project has grown into a complex and powerful system for orchestrating our AI/ML workloads. To improve our understanding of the codebase, it is crucial that we establish a deep and shared understanding of the existing scripts. This project proposes a comprehensive initiative to add detailed, RAG-optimized comments to the entire `phoenix_hypervisor` ecosystem.
+The `phoenix-cli_hypervisor` project has grown into a complex and powerful system for orchestrating our AI/ML workloads. To improve our understanding of the codebase, it is crucial that we establish a deep and shared understanding of the existing scripts. This project proposes a comprehensive initiative to add detailed, RAG-optimized comments to the entire `phoenix-cli_hypervisor` ecosystem.
 
 The primary goal is to enhance the clarity, maintainability, and searchability of our scripts and configurations. This will not only de-risk future refactoring but also accelerate onboarding for new developers and improve our ability to troubleshoot and extend the system.
 
@@ -28,21 +28,21 @@ The primary goal is to enhance the clarity, maintainability, and searchability o
 *   **Improve Codebase Clarity:** Add comprehensive comments to all scripts and configuration files to explain their purpose, logic, and interactions.
 *   **Optimize for RAG (Retrieval-Augmented Generation):** Structure comments to be easily discoverable and understandable by semantic search tools, creating a self-documenting codebase.
 *   **Establish a Knowledge Baseline:** Create a detailed, in-code knowledge base that captures the architectural decisions and operational logic of the system.
-*   **Prepare for Future Refactoring:** Provide the necessary context and understanding to enable successful and efficient refactoring of the `phoenix_hypervisor` codebase.
+*   **Prepare for Future Refactoring:** Provide the necessary context and understanding to enable successful and efficient refactoring of the `phoenix-cli_hypervisor` codebase.
 
 ## 3. Scope and File Groupings
 
-This project will cover all scripts and configuration files within the `usr/local/phoenix_hypervisor/` directory. To ensure a systematic and focused effort, the work will be divided into the following functional groups. Each group will be treated as a sub-task.
+This project will cover all scripts and configuration files within the `usr/local/phoenix-cli_hypervisor/` directory. To ensure a systematic and focused effort, the work will be divided into the following functional groups. Each group will be treated as a sub-task.
 
 ### Group 1: Core Orchestration & Configuration
-*   `bin/phoenix`
+*   `bin/phoenix-cli`
 *   `bin/managers/hypervisor-manager.sh`
 *   `bin/managers/lxc-manager.sh`
 *   `bin/managers/vm-manager.sh`
-*   `bin/phoenix_hypervisor_common_utils.sh`
-*   `etc/phoenix_hypervisor_config.json` (External documentation)
-*   `etc/phoenix_lxc_configs.json` (External documentation)
-*   `etc/phoenix_vm_configs.json` (External documentation)
+*   `bin/phoenix-cli_hypervisor_common_utils.sh`
+*   `etc/phoenix-cli_hypervisor_config.json` (External documentation)
+*   `etc/phoenix-cli_lxc_configs.json` (External documentation)
+*   `etc/phoenix-cli_vm_configs.json` (External documentation)
 
 ### Group 2: Hypervisor Setup
 *   All scripts in `bin/hypervisor_setup/`
@@ -55,14 +55,14 @@ This project will cover all scripts and configuration files within the `usr/loca
 *   All files in `etc/cloud-init/`
 
 ### Group 5: Application-Specific Scripts
-*   `bin/phoenix_hypervisor_lxc_952.sh`
-*   `bin/phoenix_hypervisor_lxc_953.sh`
-*   `bin/phoenix_hypervisor_lxc_954.sh`
-*   `bin/phoenix_hypervisor_lxc_955.sh`
-*   `bin/phoenix_hypervisor_lxc_956.sh`
-*   `bin/phoenix_hypervisor_lxc_957.sh`
-*   `bin/phoenix_hypervisor_lxc_960.sh`
-*   `bin/phoenix_hypervisor_lxc_vllm.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_952.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_953.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_954.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_955.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_956.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_957.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_960.sh`
+*   `bin/phoenix-cli_hypervisor_lxc_vllm.sh`
 
 ### Group 6: Health Checks & Testing
 *   All scripts in `bin/health_checks/`
@@ -103,7 +103,7 @@ Your comments should be clear, detailed, and optimized for semantic search (RAG)
     *   When a script implements a concept from a `Thinkheads.AI_docs` markdown file, reference it in the comments.
 
 ### 4.3. Workflow
-1.  **Understand the Core:** Before starting, ensure you have a solid understanding of the main orchestration files: `phoenix`, the manager scripts, and the JSON configuration files.
+1.  **Understand the Core:** Before starting, ensure you have a solid understanding of the main orchestration files: `phoenix-cli`, the manager scripts, and the JSON configuration files.
 2.  **Use `codebase_search`:** Before commenting on a file or a group of files, use the `codebase_search` tool to find relevant documentation and context within the `Thinkheads.AI_docs` directory.
 3.  **Follow the Groupings:** Tackle the project using the systematically defined file groups. Complete one group before moving to the next.
 4.  **Submit for Review:** After completing each group, submit the changes for review.

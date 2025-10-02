@@ -1,0 +1,22 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# phoenix-global - Global Wrapper for the Phoenix Hypervisor CLI
+#
+# This script allows the 'phoenix' command to be run from any directory.
+# It determines the location of the main 'phoenix' script and executes it,
+# passing along all command-line arguments. This provides a seamless
+# experience, making it feel like the 'phoenix' command is installed
+# globally.
+#
+# To use this script, create a symbolic link to it from a directory in your
+# system's $PATH. For example:
+# sudo ln -s /usr/local/phoenix_hypervisor/bin/phoenix-global /usr/local/bin/phoenix
+# -----------------------------------------------------------------------------
+
+# Determine the absolute path of the script's directory to ensure reliable
+# execution of the main phoenix script, regardless of where this script is
+# called from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Execute the main phoenix script, passing all command-line arguments ("$@").
+exec "$SCRIPT_DIR/phoenix-cli" "$@"

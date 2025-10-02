@@ -22,9 +22,9 @@ This document provides a comprehensive overview of the enhanced Virtual Machine 
 
 The Phoenix Hypervisor's VM management system is designed to be declarative, idempotent, and modular, aligning with the core architectural principles of the project. This guide will walk you through the entire lifecycle of a VM, from its definition in the central configuration file to its deployment and customization.
 
-## 2. The `phoenix_vm_configs.json` File
+## 2. The `phoenix-cli_vm_configs.json` File
 
-The `phoenix_vm_configs.json` file is the heart of the VM management system. It provides a declarative, centralized, and version-controllable definition of the desired state for all Virtual Machines. This file is the single source of truth that the `phoenix` CLI uses to create, configure, and manage the entire lifecycle of your VMs.
+The `phoenix-cli_vm_configs.json` file is the heart of the VM management system. It provides a declarative, centralized, and version-controllable definition of the desired state for all Virtual Machines. This file is the single source of truth that the `phoenix-cli` CLI uses to create, configure, and manage the entire lifecycle of your VMs.
 
 ### 2.1. High-Level Structure
 
@@ -91,11 +91,11 @@ The following table provides a detailed explanation of each configuration option
 
 ## 3. The VM Creation Workflow
 
-The `phoenix create <VM_ID>` command initiates a carefully orchestrated sequence of operations to provision and configure a new Virtual Machine. The workflow is designed for resilience, ensuring dependencies like `nfs-common` are installed and storage is mounted before feature scripts are executed.
+The `phoenix-cli create <VM_ID>` command initiates a carefully orchestrated sequence of operations to provision and configure a new Virtual Machine. The workflow is designed for resilience, ensuring dependencies like `nfs-common` are installed and storage is mounted before feature scripts are executed.
 
 ```mermaid
 graph TD
-    A[Start: phoenix create <VM_ID>] --> B{Read Config};
+    A[Start: phoenix-cli create <VM_ID>] --> B{Read Config};
     B --> C{Clone or Create VM};
     C --> D[Apply Hardware Config];
     D --> E[Start VM & Wait for Guest Agent];
@@ -109,8 +109,8 @@ graph TD
 
 ### 3.1. Workflow Steps Explained
 
-1.  **Initiation**: A user executes the `phoenix create <VM_ID>` command.
-2.  **Configuration Reading**: The `phoenix` CLI reads `phoenix_vm_configs.json` to get the VM definition.
+1.  **Initiation**: A user executes the `phoenix-cli create <VM_ID>` command.
+2.  **Configuration Reading**: The `phoenix-cli` CLI reads `phoenix-cli_vm_configs.json` to get the VM definition.
 3.  **Clone or Create**: The orchestrator either clones a template or creates a new VM from a cloud image.
 4.  **Hardware Configuration**: Hardware settings (CPU, memory, etc.) are applied via `qm` commands.
 5.  **Boot and Wait**: The VM is started, and the orchestrator waits for the QEMU Guest Agent to become responsive.
@@ -118,13 +118,13 @@ graph TD
 7.  **Hypervisor NFS Setup**: The `vm-manager.sh` script creates the VM-specific directory (e.g., `/quickOS/vm-persistent-data/8002`) on the hypervisor. This is the directory that will be exported to the VM.
 8.  **Guest NFS Mount**: The `vm-manager.sh` script executes commands inside the guest to install `nfs-common`, add the share to `/etc/fstab`, and mount it at `/persistent-storage`.
 9.  **Copy Scripts and Context**: The orchestrator copies the required feature scripts, common utilities, and the VM-specific `vm_context.json` file to the newly mounted NFS share.
-10. **Feature Script Execution**: The feature scripts are executed sequentially inside the VM from the `/persistent-storage/.phoenix_scripts` directory, performing tasks like installing Docker.
+10. **Feature Script Execution**: The feature scripts are executed sequentially inside the VM from the `/persistent-storage/.phoenix-cli_scripts` directory, performing tasks like installing Docker.
 
 ## 4. Practical Example: A Multi-VM Docker Environment
 
 This section provides a complete, practical example of how to define a multi-VM environment for a typical web application, with each VM having Docker installed. This setup is ideal for creating isolated development, testing, and production environments.
 
-### 4.1. The `phoenix_vm_configs.json` Configuration
+### 4.1. The `phoenix-cli_vm_configs.json` Configuration
 
 The following JSON configuration defines three VMs: `rumpledev`, `rumpletest`, and `rumpleprod`. Each VM will have Docker installed via the new NFS-based feature installation process.
 
@@ -177,9 +177,9 @@ The following JSON configuration defines three VMs: `rumpledev`, `rumpletest`, a
 To create these VMs, you would execute the following commands:
 
 ```bash
-phoenix create 1000
-phoenix create 1001
-phoenix create 1002
+phoenix-cli create 1000
+phoenix-cli create 1001
+phoenix-cli create 1002
 ```
 
-The `phoenix` CLI will process each of these commands, and in a few minutes, you will have three new, fully configured VMs, each with Docker installed and ready to use.
+The `phoenix-cli` CLI will process each of these commands, and in a few minutes, you will have three new, fully configured VMs, each with Docker installed and ready to use.

@@ -24,12 +24,12 @@ last_reviewed: "2025-09-30"
 
 The Phoenix Hypervisor project is a robust, declarative, and feature-based system for orchestrating the creation and configuration of LXC containers and Virtual Machines (VMs) on Proxmox. It is specifically tailored for AI and machine learning workloads.
 
-The core of the project is the `phoenix` CLI, an idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
+The core of the project is the `phoenix-cli` CLI, an idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
 
 ### 1.1. Key Architectural Concepts
 
--   **Unified Orchestration**: The `phoenix` CLI provides a single point of entry for managing the hypervisor, LXC containers, and QEMU/KVM VMs.
--   **Declarative Configuration:** All hypervisor, VM, and container specifications are defined in `phoenix_hypervisor_config.json`, `phoenix_vm_configs.json`, and `phoenix_lxc_configs.json`. This provides a clear, version-controllable definition of the desired system state.
+-   **Unified Orchestration**: The `phoenix-cli` CLI provides a single point of entry for managing the hypervisor, LXC containers, and QEMU/KVM VMs.
+-   **Declarative Configuration:** All hypervisor, VM, and container specifications are defined in `phoenix-cli_hypervisor_config.json`, `phoenix-cli_vm_configs.json`, and `phoenix-cli_lxc_configs.json`. This provides a clear, version-controllable definition of the desired system state.
 -   **Idempotent Orchestration:** The CLI is designed to be stateless and idempotent, ensuring that running it multiple times produces the same result, making deployments resilient and repeatable.
 -   **Hierarchical Templating:** The system uses a hierarchical, snapshot-based template structure to optimize the creation of both VMs and LXCs.
 -   **Modular Feature Installation:** Customization is handled through a series of modular, reusable "feature" scripts (e.g., for installing NVIDIA drivers, Docker, or vLLM).
@@ -66,13 +66,13 @@ graph TD
 ```
 ## 2. Orchestration Workflow
 
-The `phoenix` CLI is the single entry point for all provisioning tasks. It acts as a dispatcher, parsing the user's command and routing it to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, or `vm-manager.sh`).
+The `phoenix-cli` CLI is the single entry point for all provisioning tasks. It acts as a dispatcher, parsing the user's command and routing it to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, or `vm-manager.sh`).
 
 ### 2.1. Main Orchestration Flow
 
 ```mermaid
 graph TD
-    A[Start: phoenix <command> <ID>] --> B{Parse Command};
+    A[Start: phoenix-cli <command> <ID>] --> B{Parse Command};
     B -->|setup| C[hypervisor-manager.sh];
     B -->|create, delete, etc.| D{Resource Type?};
     D -->|LXC| E[lxc-manager.sh];
@@ -96,7 +96,7 @@ graph TD
 
 ### 2.3. Key VM Orchestration Steps (vm-manager.sh)
 
-1.  **Parse Configuration**: Reads the `phoenix_vm_configs.json` file and locates the specified VM definition.
+1.  **Parse Configuration**: Reads the `phoenix-cli_vm_configs.json` file and locates the specified VM definition.
 2.  **Apply Defaults**: Merges the `vm_defaults` with the specific VM configuration.
 3.  **Clone Template**: Clones the base template to create a new VM.
 4.  **Configure Hardware**: Applies the hardware settings, such as CPU cores, memory, and disk size.
@@ -109,15 +109,15 @@ graph TD
 
 The entire system is driven by three central JSON configuration files.
 
-### 3.1. `phoenix_hypervisor_config.json`
+### 3.1. `phoenix-cli_hypervisor_config.json`
 
 This file contains global settings for the hypervisor environment, including storage, networking, users, and shared resources.
 
-### 3.2. `phoenix_vm_configs.json`
+### 3.2. `phoenix-cli_vm_configs.json`
 
 This file contains the declarative definitions for all Virtual Machines. For a comprehensive guide to all the available options, please refer to the **[Comprehensive Guide to VM Creation](vm_creation_guide.md)**.
 
-### 3.3. `phoenix_lxc_configs.json`
+### 3.3. `phoenix-cli_lxc_configs.json`
 
 This file contains the specific definitions for each LXC container, keyed by its Container ID (CTID).
 

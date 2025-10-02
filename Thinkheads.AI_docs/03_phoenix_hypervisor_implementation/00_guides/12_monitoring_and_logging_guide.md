@@ -20,19 +20,19 @@ This guide provides an overview of the monitoring and logging capabilities of th
 
 ## 1. Centralized Logging
 
-All scripts within the Phoenix Hypervisor framework, including the main `phoenix` CLI and all manager and feature scripts, log their output to a central log file:
+All scripts within the Phoenix Hypervisor framework, including the main `phoenix-cli` CLI and all manager and feature scripts, log their output to a central log file:
 
-*   **Log File Location:** `/var/log/phoenix_hypervisor.log`
+*   **Log File Location:** `/var/log/phoenix-cli_hypervisor.log`
 
 This centralized approach allows for easy monitoring and troubleshooting of the entire system. You can monitor the log in real-time using the `tail -f` command:
 
 ```bash
-tail -f /var/log/phoenix_hypervisor.log
+tail -f /var/log/phoenix-cli_hypervisor.log
 ```
 
 ### Log Levels
 
-The logging functions in `phoenix_hypervisor_common_utils.sh` support the following log levels:
+The logging functions in `phoenix-cli_hypervisor_common_utils.sh` support the following log levels:
 
 *   **DEBUG:** Detailed information for debugging purposes. Enabled by setting the `PHOENIX_DEBUG` environment variable to `true`.
 *   **INFO:** General information about the script's execution.
@@ -45,9 +45,9 @@ The logging functions in `phoenix_hypervisor_common_utils.sh` support the follow
 
 The Phoenix Hypervisor includes a framework for running automated health checks and post-deployment validation tests.
 
-*   **Test Runner:** The `/usr/local/phoenix_hypervisor/bin/tests/test_runner.sh` script is the entry point for all automated testing.
+*   **Test Runner:** The `/usr/local/phoenix-cli_hypervisor/bin/tests/test_runner.sh` script is the entry point for all automated testing.
 *   **Integration:** The testing framework is integrated into the `lxc-manager.sh` script and is run automatically after a container is created.
-*   **Configuration:** The tests to be run for each container are defined in the `tests` section of the container's configuration in `phoenix_lxc_configs.json`.
+*   **Configuration:** The tests to be run for each container are defined in the `tests` section of the container's configuration in `phoenix-cli_lxc_configs.json`.
 
 ## 3. Integration with External Monitoring Tools
 
