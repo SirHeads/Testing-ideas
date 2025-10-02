@@ -158,21 +158,29 @@ graph TD
 
 #### 3.3.3. VM Construction
 
-Similar to the LXC workflow, this is triggered by commands like `phoenix create <ID>` and is managed by `vm-manager.sh`. It uses a state machine and `qm` commands, with a key step being the dynamic generation of Cloud-Init files.
+Triggered by `phoenix create <ID>`, this workflow is managed by `vm-manager.sh`. The process has been re-architected to use a persistent NFS share for feature script delivery, replacing the previous ISO-based method.
 
 ```mermaid
 graph TD
-    A[CLI receives `phoenix create <ID>`] --> B[Dispatcher invokes `vm-manager.sh`];
-    subgraph "vm-manager.sh"
-        C[validate_inputs];
-        D[ensure_vm_defined];
-        E[apply_vm_configurations];
-        F[generate_cloud_init];
-        G[start_vm];
-        H[wait_for_guest_agent];
+    subgraph "Orchestration"
+        A[phoenix create vm-id] -- reads --> B[phoenix_vm_configs.json];
     end
-    B --> C --> D --> E --> F --> G --> H;
-    H --> I[End];
+
+    subgraph "Hypervisor Host"
+        B -- triggers --> C{vm-manager.sh};
+        C -- creates --> D[VM Guest];
+        C -- creates --> E[NFS Directory for VM];
+        C -- copies feature scripts to --> E;
+    end
+
+    subgraph "VM Guest"
+        D -- on boot --> G(cloud-init);
+        G -- runs --> H(base_setup feature);
+        H -- installs --> I[nfs-common];
+        H -- mounts --> J([NFS Share]);
+        J -- provides access to --> F[Feature Scripts];
+        D -- executes --> F;
+    end
 ```
 
 ### 3.4. Inter-Script Communication
@@ -189,7 +197,11 @@ LXC containers are the primary virtualization technology used for hosting AI/ML 
 
 ### 4.2. VM Management
 
-Virtual Machines are used for development environments that require a full OS, such as interactive ML desktops with GPU passthrough. The `vm-manager.sh` script manages their lifecycle, using a Cloud-Init-based approach for configuration and customization, driven by `phoenix_vm_configs.json`.
+Virtual Machines are used for development environments that require a full OS. The `vm-manager.sh` script manages their lifecycle, driven by `phoenix_vm_configs.json`.
+
+The feature installation process now leverages a persistent NFS share for each VM. This provides a stable and reliable channel for script delivery and data persistence. The `phoenix_vm_configs.json` schema has been extended to support a `volumes` array, allowing for the declarative mounting of storage, including the dedicated NFS share for feature scripts.
+
+A new `base_setup` feature has been introduced to handle prerequisite installations (like `nfs-common`) and the mounting of this persistent storage inside the guest. This new architecture simplifies the `vm-manager.sh` script by removing all ISO creation and management logic.
 
 ### 4.3. Templating Strategy
 

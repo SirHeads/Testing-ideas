@@ -10,8 +10,8 @@
 # Dependencies:
 #   - An Ubuntu-based VM environment.
 #   - Access to the internet for downloading packages.
-#   - The phoenix_hypervisor_common_utils.sh script, which is expected to be available at /tmp/phoenix_feature_run/.
-#   - A context file (phoenix_vm_configs.json) at /tmp/phoenix_feature_run/ containing VM-specific details.
+#   - The phoenix_hypervisor_common_utils.sh script, which is expected to be available at /persistent-storage/.phoenix_scripts/.
+#   - A context file (vm_context.json) at /persistent-storage/.phoenix_scripts/ containing VM-specific details.
 #
 # Inputs:
 #   - $1: The VMID of the target virtual machine. This is used to retrieve configuration details from the context file.
@@ -32,50 +32,88 @@ exec &> >(tee -a "$LOG_FILE")
 echo "--- Starting Docker Installation ---"
 
 # Source common utilities provided by the orchestrator. This script contains helper functions for tasks like reading configuration.
-source "/tmp/phoenix_feature_run/phoenix_hypervisor_common_utils.sh"
+if [ -f "$(dirname "$0")/phoenix_hypervisor_common_utils.sh" ]; then
+    source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
+else
+    echo "Error: Common utilities script not found at $(dirname "$0")/phoenix_hypervisor_common_utils.sh." >&2
+    exit 1
+fi
 
-# Set the context file path. This JSON file contains the configuration for all VMs managed by the Phoenix Hypervisor.
-CONTEXT_FILE="/tmp/phoenix_feature_run/phoenix_vm_configs.json"
+# Set the context file path. This JSON file contains the configuration for the VM.
+CONTEXT_FILE="$(dirname "$0")/vm_context.json"
+if [ ! -f "$CONTEXT_FILE" ]; then
+    log_fatal "VM context file not found at $CONTEXT_FILE. Cannot proceed with Docker installation."
+fi
 
-# Get the VMID from the script's first argument, passed by the orchestrator during the feature application step.
-VMID="$1"
+# Idempotency Check: Check if Docker is already installed and running.
+log_info "Checking for existing Docker installation..."
+if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
+    log_info "Docker is already installed and running. Skipping installation."
+    exit 0
+fi
+log_info "No existing Docker installation found. Proceeding with installation."
 
 # Get the primary username from the context file to grant Docker permissions.
-# This makes the VM user-friendly by avoiding the need for 'sudo' for every Docker command.
-USERNAME=$(get_vm_config "$VMID" ".user_config.username")
+log_info "Retrieving primary username from VM context..."
+USERNAME=$(jq -r '.user_config.username // ""' "$CONTEXT_FILE")
+if [ -z "$USERNAME" ] || [ "$USERNAME" == "null" ]; then
+    log_fatal "Could not find a valid 'username' in the VM context file. This is required to configure Docker permissions."
+fi
+log_info "Primary username is '$USERNAME'."
 
 # 1. Update Package Manager
-# Ensures the local package index is up-to-date before installing new software.
-apt-get update
+log_info "Step 1: Updating package manager..."
+if ! apt-get update; then
+    log_fatal "Failed to update package manager. Please check network connectivity and repository configuration."
+fi
+log_info "Package manager updated successfully."
 
 # 2. Install Dependencies
-# Installs packages required to add and manage APT repositories over HTTPS.
-apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+log_info "Step 2: Installing dependencies for Docker..."
+if ! apt-get install -y apt-transport-https ca-certificates curl software-properties-common; then
+    log_fatal "Failed to install Docker dependencies."
+fi
+log_info "Dependencies installed successfully."
 
 # 3. Add Docker's Official GPG Key
-# This key is used to verify the authenticity of the Docker packages.
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+log_info "Step 3: Adding Docker's official GPG key..."
+if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg; then
+    log_fatal "Failed to add Docker's GPG key."
+fi
+log_info "Docker GPG key added successfully."
 
 # 4. Add Docker Repository
-# Adds the official Docker repository to the system's APT sources, ensuring access to the latest stable releases.
-echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+log_info "Step 4: Adding Docker repository..."
+if ! echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null; then
+    log_fatal "Failed to add Docker repository."
+fi
+log_info "Docker repository added successfully."
 
 # 5. Install Docker Engine
-# Updates the package index again to include the new Docker repository, then installs the Docker packages.
-apt-get update
-apt-get install -y docker-ce docker-ce-cli containerd.io
+log_info "Step 5: Installing Docker Engine..."
+if ! apt-get update || ! apt-get install -y docker-ce docker-ce-cli containerd.io; then
+    log_fatal "Failed to install Docker Engine."
+fi
+log_info "Docker Engine installed successfully."
 
 # 6. Enable and Start Docker Service
-# Configures Docker to start on boot and starts the service immediately.
-systemctl enable docker
-systemctl start docker
+log_info "Step 6: Enabling and starting Docker service..."
+if ! systemctl enable docker || ! systemctl start docker; then
+    log_fatal "Failed to enable or start Docker service."
+fi
+log_info "Docker service enabled and started successfully."
 
 # 7. Add User to Docker Group
-# If a username was successfully retrieved, this step adds the user to the 'docker' group.
-# This is a crucial post-installation step for security and usability, as it allows the user to run Docker commands without sudo.
-if [ -n "$USERNAME" ]; then
-    usermod -aG docker "$USERNAME"
-    echo "User $USERNAME added to the docker group."
+log_info "Step 7: Adding user '$USERNAME' to the docker group..."
+if ! getent group docker >/dev/null; then
+    log_info "Docker group does not exist. Creating it..."
+    if ! groupadd docker; then
+        log_fatal "Failed to create docker group."
+    fi
 fi
+if ! usermod -aG docker "$USERNAME"; then
+    log_fatal "Failed to add user '$USERNAME' to the docker group."
+fi
+log_info "User '$USERNAME' added to the docker group successfully."
 
 echo "--- Docker Installation Complete ---"

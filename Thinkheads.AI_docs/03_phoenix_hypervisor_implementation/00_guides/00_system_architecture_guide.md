@@ -96,13 +96,14 @@ graph TD
 
 ### 2.3. Key VM Orchestration Steps (vm-manager.sh)
 
-1.  **`ensure_vm_defined`**: Checks if the VM exists. If not, it clones it from a master template or creates it from a cloud image.
-2.  **`apply_vm_configurations`**: Sets the VM's core resources and generates dynamic Cloud-Init configurations for networking and user setup.
-3.  **`start_vm`**: Starts the VM.
-4.  **`wait_for_guest_agent`**: Waits for the QEMU Guest Agent to become responsive.
-5.  **`apply_vm_features`**: Applies features via Cloud-Init on the first boot.
-6.  **`create_vm_snapshot`**: If the VM is a template, it creates a snapshot.
-7.  **Template Finalization**: If the VM is a template, it is cleaned, finalized, and converted to a Proxmox template.
+1.  **Parse Configuration**: Reads the `phoenix_vm_configs.json` file and locates the specified VM definition.
+2.  **Apply Defaults**: Merges the `vm_defaults` with the specific VM configuration.
+3.  **Clone Template**: Clones the base template to create a new VM.
+4.  **Configure Hardware**: Applies the hardware settings, such as CPU cores, memory, and disk size.
+5.  **Create NFS Directory**: Creates a dedicated directory for the VM on an NFS share.
+6.  **Copy Feature Scripts**: Copies the feature scripts to the VM's NFS directory.
+7.  **Boot VM**: Starts the VM for the first time. The `base_setup` feature, executed by `cloud-init`, installs `nfs-common` and mounts the NFS share.
+8.  **Execute Feature Scripts**: Executes any specified feature scripts from the mounted NFS share to install software and apply configurations.
 
 ## 3. Configuration Reference
 
@@ -114,18 +115,7 @@ This file contains global settings for the hypervisor environment, including sto
 
 ### 3.2. `phoenix_vm_configs.json`
 
-This file contains the specific definitions for each QEMU/KVM Virtual Machine, keyed by its `vmid`.
-
-| Key | Type | Description |
-| --- | --- | --- |
-| `vmid` | Number | The unique ID of the VM. |
-| `name` | String | The hostname of the VM. |
-| `clone_from_vmid` | Number | The VMID of the master template to clone from. |
-| `template_image` | String | The cloud image to use for creating a new template. |
-| `cores` / `memory_mb` | Number | CPU and RAM allocation. |
-| `network_config` | Object | Defines the VM's network interface, including IP address and gateway. |
-| `user_config` | Object | Defines the default user, password hash, and SSH key. |
-| `features` | Array | A list of feature scripts to be embedded in the Cloud-Init configuration. |
+This file contains the declarative definitions for all Virtual Machines. For a comprehensive guide to all the available options, please refer to the **[Comprehensive Guide to VM Creation](vm_creation_guide.md)**.
 
 ### 3.3. `phoenix_lxc_configs.json`
 

@@ -105,6 +105,17 @@ NFS and Samba provide network access to the ZFS datasets.
 
 ---
 
+### c. NFS for VM Feature Installation
+
+A key architectural change is the use of NFS for delivering feature scripts to VMs, replacing the old ISO-based method.
+
+- **Implementation:** The `vm-manager.sh` script now creates a dedicated directory for each VM on a designated NFS share (e.g., `/path/to/nfs/vm-features/<vmid>`). It then copies all the necessary feature scripts into this directory.
+- **Guest-Side Mounting:** Inside the VM, a `base_setup` feature, executed by `cloud-init` on first boot, is responsible for:
+    1. Installing the `nfs-common` package.
+    2. Creating a mount point (e.g., `/mnt/nfs/features`).
+    3. Mounting the NFS share from the hypervisor.
+- **Benefits:** This approach is more robust, flexible, and aligns with the declarative model. It simplifies the `vm-manager.sh` script by removing all ISO management logic and provides a persistent channel for data exchange between the hypervisor and the guest.
+
 ## 4. Strengths, Concerns, and Recommendations
 
 ### Strengths
@@ -120,14 +131,12 @@ NFS and Samba provide network access to the ZFS datasets.
 1.  **Password Management:** The Samba password is hardcoded in the `hypervisor_feature_setup_samba.sh` script. This is a significant security risk.
 2.  **Complexity:** The multi-layered approach has a learning curve.
 3.  **Error Handling:** Complex, multi-stage failures in the `setup` process might leave the system in an inconsistent state.
-4.  **VM Storage Configuration:** The VM storage configuration is less detailed than the LXC configuration, lacking the ability to easily attach multiple, specifically configured ZFS volumes to a single VM.
 
 ### Recommendations
 
 1.  **Implement Secret Management:** The hardcoded Samba password should be removed. Integrate a secrets management tool to store sensitive information.
-2.  **Enhance VM Storage Capabilities:** Extend the `phoenix_vm_configs.json` schema and the `vm-manager.sh` script to support a `volumes` array for VMs, similar to the LXC configuration.
-3.  **Develop a Rollback Strategy:** For the `hypervisor-manager.sh` setup process, consider adding more robust transactional logic, such as using ZFS snapshots for rollback.
-4.  **Improve Documentation and Diagrams:** Continue to enhance the documentation with detailed diagrams and explanations.
+2.  **Develop a Rollback Strategy:** For the `hypervisor-manager.sh` setup process, consider adding more robust transactional logic, such as using ZFS snapshots for rollback.
+3.  **Improve Documentation and Diagrams:** Continue to enhance the documentation with detailed diagrams and explanations.
 
 ---
 
@@ -157,5 +166,4 @@ This pool is designed for high performance and large capacity, suitable for data
 | **`fastData-shared-test-data`** | `fastData/shared-test-data` | **Test Data:** A functional copy of `quickOS/shared-prod-data` for testing purposes. | `zfspool` | Samba |
 | **`fastData-shared-test-data-sync`** | `fastData/shared-test-data-sync` | **Sync-Write Test Data:** A functional copy of `quickOS/shared-prod-data-sync` for database testing. | `zfspool` | Not Shared |
 | **`fastData-shared-backups`** | `fastData/shared-backups` | **Backups:** Dedicated storage for Proxmox backups. Optimized for large files with a `1M` record size and `zstd` compression. | `dir` | Not Shared |
-| **`fastData-shared-iso`** | `fastData/shared-iso` | **ISOs & Templates:** Stores ISO images and container templates. | `dir` | Not Shared |
 | **`fastData-shared-bulk-data`** | `fastData/shared-bulk-data` | **Bulk Data:** General-purpose "dumping ground" for shared or persistent data that is not production-critical. | `zfspool` | NFS & Samba |

@@ -73,6 +73,18 @@
                     "no_subtree_check",
                     "no_root_squash"
                 ]
+            },
+            {
+                "path": "/quickOS/vm-persistent-data",
+                "clients": [
+                    "10.0.0.0/24"
+                ],
+                "options": [
+                    "rw",
+                    "sync",
+                    "no_subtree_check",
+                    "no_root_squash"
+                ]
             }
         ]
     },
@@ -210,6 +222,13 @@
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
                 "proxmox_storage_type": "dir",
                 "proxmox_content_type": "iso,vztmpl"
+            },
+            {
+                "name": "vm-persistent-data",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images,rootdir"
             }
         ]
     },

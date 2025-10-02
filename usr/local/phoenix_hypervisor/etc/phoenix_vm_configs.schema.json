@@ -69,11 +69,133 @@
                     "network_bridge": {
                         "type": "string"
                     },
+                    "start_at_boot": {
+                        "type": "boolean",
+                        "description": "Specifies whether the VM should start automatically at boot."
+                    },
+                    "boot_order": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "The boot order priority for the VM."
+                    },
+                    "boot_delay": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "The delay in seconds before starting the next VM in the boot order."
+                    },
                     "features": {
                         "type": "array",
+                        "description": "An array of feature scripts to apply to the VM.",
                         "items": {
                             "type": "string"
                         }
+                    },
+                    "snapshots": {
+                        "type": "object",
+                        "description": "Defines lifecycle snapshots to be taken.",
+                        "properties": {
+                            "pre_features": {
+                                "type": "string"
+                            },
+                            "post_features": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "The number of VMs to create from this definition."
+                    },
+                    "qm_options": {
+                        "type": "array",
+                        "description": "An array of arbitrary 'qm set' options to apply to the VM.",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "volumes": {
+                        "type": "array",
+                        "description": "A list of dedicated volumes to be created and attached to the VM.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "pool": {
+                                    "type": "string"
+                                },
+                                "size_gb": {
+                                    "type": "integer",
+                                    "minimum": 1
+                                },
+                                "mount_point": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "name",
+                                "pool",
+                                "size_gb",
+                                "mount_point"
+                            ]
+                        }
+                    },
+                    "firewall": {
+                        "type": "object",
+                        "description": "Firewall configuration for the VM.",
+                        "properties": {
+                            "enabled": {
+                                "type": "boolean"
+                            },
+                            "rules": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {
+                                            "type": "string",
+                                            "enum": [
+                                                "in",
+                                                "out"
+                                            ]
+                                        },
+                                        "action": {
+                                            "type": "string",
+                                            "enum": [
+                                                "ACCEPT",
+                                                "DROP",
+                                                "REJECT"
+                                            ]
+                                        },
+                                        "source": {
+                                            "type": "string"
+                                        },
+                                        "dest": {
+                                            "type": "string"
+                                        },
+                                        "proto": {
+                                            "type": "string",
+                                            "enum": [
+                                                "tcp",
+                                                "udp"
+                                            ]
+                                        },
+                                        "port": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "type",
+                                        "action"
+                                    ]
+                                }
+                            }
+                        },
+                        "required": [
+                            "enabled"
+                        ]
                     },
                     "network_config": {
                         "type": "object",
