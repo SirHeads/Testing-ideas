@@ -76,89 +76,6 @@ parse_arguments() {
 # Description: Modifies the LXC container's configuration file on the Proxmox host to
 #              bind-mount the necessary NVIDIA devices.
 # =====================================================================================
-# =====================================================================================
-# Function: configure_host_gpu_passthrough
-# Description: This function performs the host-side operations required for GPU passthrough.
-#              It reads the container's GPU assignment from the configuration and dynamically
-#              adds the necessary `lxc.cgroup2.devices.allow` and `lxc.mount.entry` lines
-#              to the container's `.conf` file. These lines grant the container permission
-#              to access the GPU device nodes and then bind-mount them into the container's
-#              filesystem. If any changes are made, the container is restarted to apply them.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   - None. Exits if the GPU assignment is missing or the config file is not found.
-#   - Triggers a container restart if configuration changes are made.
-# =====================================================================================
-configure_host_gpu_passthrough() {
-    log_info "Phase 1: Configuring host-side GPU passthrough for CTID: $CTID"
-    local lxc_conf_file="/etc/pve/lxc/${CTID}.conf"
-    local gpu_assignment
-    local changes_made=false
-
-    # Retrieve the GPU assignment (e.g., "0" or "0,1") from the main JSON configuration.
-    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment")
-    if [ -z "$gpu_assignment" ] || [ "$gpu_assignment" == "none" ]; then
-        log_info "No GPU assignment found for CTID $CTID in configuration. Skipping NVIDIA feature."
-        exit_script 0
-    fi
-
-    if [ ! -f "$lxc_conf_file" ]; then
-        log_fatal "LXC config file not found at $lxc_conf_file. Cannot configure GPU passthrough."
-    fi
-
-    # These entries grant the container access to the NVIDIA character devices.
-    # Major number 195 is for NVIDIA devices, 243 for NVIDIA UVM.
-    local cgroup_entries=(
-        "lxc.cgroup2.devices.allow: c 195:* rwm"
-        "lxc.cgroup2.devices.allow: c 243:* rwm"
-    )
-    local mount_entries=()
-
-    # These are the standard control devices required for the NVIDIA driver to function.
-    # We will add them unconditionally, as requested.
-    local standard_devices=("/dev/nvidiactl" "/dev/nvidia-uvm" "/dev/nvidia-uvm-tools")
-    for device in "${standard_devices[@]}"; do
-        mount_entries+=("lxc.mount.entry: $device ${device#/} none bind,optional,create=file")
-    done
-
-    # Process the specific GPU devices assigned to this container, adding them unconditionally.
-    IFS=',' read -ra gpus <<< "$gpu_assignment"
-    for gpu_idx in "${gpus[@]}"; do
-        # Trim whitespace from gpu_idx
-        gpu_idx=$(echo "$gpu_idx" | xargs)
-        local nvidia_device="/dev/nvidia${gpu_idx}"
-        mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
-    done
-
-    # Idempotently add the required configuration lines to the container's config file.
-    for entry in "${mount_entries[@]}" "${cgroup_entries[@]}"; do
-        if ! grep -qF "$entry" "$lxc_conf_file"; then
-            log_info "Adding entry to $lxc_conf_file: $entry"
-            echo "$entry" >> "$lxc_conf_file"
-            changes_made=true
-        else
-            log_info "Entry already exists, skipping: $entry"
-        fi
-    done
-
-    log_info "Host GPU passthrough configuration complete for CTID $CTID."
-    # A container restart is mandatory for changes to the .conf file to take effect.
-    if [ "$changes_made" = true ]; then
-        log_info "Restarting container CTID $CTID to apply new hardware passthrough settings..."
-        run_pct_command stop "$CTID"
-        run_pct_command start "$CTID"
-        log_info "Container CTID $CTID restarted. Waiting for device to appear..."
-        wait_for_nvidia_device "$CTID"
-        return $? # Propagate the return code of the wait function
-    else
-        log_info "No changes made to container configuration. Ensuring container is running."
-        run_pct_command start "$CTID" # Ensure the container is running for the next phase.
-    fi
-    return 0 # Return success if no changes were made
-}
-
-# =====================================================================================
 # Function: wait_for_nvidia_device
 # Description: Waits for the NVIDIA device node to appear in the container.
 # =====================================================================================
@@ -301,12 +218,11 @@ get_os_version_from_config() {
 main() {
     parse_arguments "$@"
 
-    # This function handles all operations that need to be performed on the Proxmox host itself,
-    # primarily editing the container's configuration file and restarting it.
-    # We wrap the call in a subshell and use `|| true` to ensure that this script
-    # always exits with a code of 0, even if the passthrough configuration times out.
-    # This prevents the main orchestrator from halting on a transient error.
-    (configure_host_gpu_passthrough) || log_warn "GPU passthrough configuration returned a non-zero exit code. This is likely due to a device wait timeout and is being ignored."
+    # Wait for the GPU devices to be available inside the container before proceeding.
+    # This is crucial because the lxc-manager now handles the passthrough configuration,
+    # and we need to ensure the container has fully started with the new hardware
+    # before we attempt to install the user-space drivers.
+    wait_for_nvidia_device "$CTID"
 
     # This function handles all operations performed inside the container, namely the installation
     # of the user-space drivers and the CUDA toolkit.

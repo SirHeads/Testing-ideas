@@ -325,6 +325,39 @@ apply_configurations() {
 
     # Apply network configuration
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+
+    # --- Apply GPU Passthrough Configuration ---
+    # This is a critical step for containers that require GPU access.
+    # By applying this configuration here, we ensure that the container is created
+    # with the correct hardware access from the very beginning, avoiding the need
+    # for a restart later in the provisioning process.
+    local gpu_assignment
+    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment" || echo "none")
+    if [ -n "$gpu_assignment" ] && [ "$gpu_assignment" != "none" ]; then
+        log_info "Applying GPU passthrough configuration for CTID: $CTID"
+        local cgroup_entries=(
+            "lxc.cgroup2.devices.allow: c 195:* rwm"
+            "lxc.cgroup2.devices.allow: c 243:* rwm"
+        )
+        local mount_entries=(
+            "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
+            "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
+            "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
+        )
+        IFS=',' read -ra gpus <<< "$gpu_assignment"
+        for gpu_idx in "${gpus[@]}"; do
+            gpu_idx=$(echo "$gpu_idx" | xargs)
+            local nvidia_device="/dev/nvidia${gpu_idx}"
+            mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
+        done
+
+        for entry in "${mount_entries[@]}" "${cgroup_entries[@]}"; do
+            if ! grep -qF "$entry" "$conf_file"; then
+                echo "$entry" >> "$conf_file" || log_fatal "Failed to add GPU passthrough entry to $conf_file: $entry"
+            fi
+        done
+    fi
+
     log_info "Configurations applied successfully for CTID $CTID."
 }
 
@@ -1036,10 +1069,15 @@ main_lxc_orchestrator() {
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
             if ensure_container_defined "$ctid"; then
+                # Ensure the container is stopped before applying configurations that require a restart
+                run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
+                
                 apply_configurations "$ctid"
                 apply_zfs_volumes "$ctid"
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
+                
+                # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
 
                 local enable_lifecycle_snapshots

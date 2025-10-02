@@ -144,20 +144,21 @@ deploy_and_start_service() {
     # 1. Write the generated content directly to the container's filesystem.
     #    This is executed from within the container, so we can write directly.
     log_info "Writing systemd service file directly to $container_service_path..."
-    if ! echo "$service_content" | pct exec "$CTID" -- tee "$container_service_path" > /dev/null; then
+    # The script is already running inside the container, so we can write directly.
+    if ! echo "$service_content" > "$container_service_path"; then
         log_fatal "Failed to write systemd service file to $container_service_path in CTID $CTID."
     fi
 
     # 2. Reload systemd, enable, and start the service inside the container.
     log_info "Reloading systemd daemon and starting the service..."
-    pct_exec "$CTID" -- systemctl daemon-reload
-    pct_exec "$CTID" -- systemctl enable --now "$SERVICE_NAME"
+    systemctl daemon-reload
+    systemctl enable --now "$SERVICE_NAME"
 
     # 3. Verify the service started correctly.
     sleep 5 # Give the service a moment to start.
-    if ! pct_exec "$CTID" -- systemctl is-active --quiet "$SERVICE_NAME"; then
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
         log_error "$SERVICE_NAME service failed to start. Retrieving recent logs..."
-        pct_exec "$CTID" -- journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
+        journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
         log_fatal "Failed to start $SERVICE_NAME service in CTID $CTID."
     fi
 

@@ -183,10 +183,9 @@ This section outlines the new snapshot and boot order features that have been ad
 
 #### 7.3.1. Snapshotting
 
-*   **"pre-configured" Snapshot:** A snapshot named `pre-configured` is now automatically created for every container immediately before its application script is executed.
-*   **"final form" Snapshot:** A snapshot named `final-form` is now automatically created for every container at the end of its orchestration process.
+*   **`final-form` Snapshot:** A snapshot named `final-form` is now automatically created for every container at the end of its orchestration process. This snapshot represents the fully provisioned state of the container and is used for cloning new containers from templates.
 
-A new `reconfigure` command has been added to the `phoenix` CLI to allow restoring a container to its "pre-configured" state.
+A new `reconfigure` command has been added to the `phoenix` CLI to allow restoring a container to its `final-form` state.
 
 #### 7.3.2. Boot Order
 

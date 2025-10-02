@@ -199,10 +199,9 @@ The system uses a hierarchical, snapshot-based template structure to optimize th
 
 To enhance idempotency and provide well-defined restore points, the orchestration engine creates two standardized snapshots during the `create` workflow for containers with `enable_lifecycle_snapshots` set to `true`:
 
-*   **`pre-configured`**: This snapshot is taken after the container has been created and started, but *before* any feature or application scripts have been run. It represents a clean, baseline state.
 *   **`final-form`**: This snapshot is taken after all provisioning steps are complete, including feature installation, application scripts, and health checks. It represents the fully provisioned and validated state of the container.
 
-These lifecycle snapshots are complemented by the `template_snapshot_name` property, which is used to create a persistent, named snapshot for containers that are intended to be used as cloneable templates.
+The `template_snapshot_name` property is used to create a persistent, named snapshot for containers that are intended to be used as cloneable templates. By convention, this is set to `final-form` to ensure that cloned containers inherit a fully provisioned state.
 
 ```mermaid
 graph TD
