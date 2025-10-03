@@ -9,7 +9,6 @@ upstream portainer_backend {
     # The IP address and port of the Portainer service.
     server 10.0.0.99:9443;
     # Enables active health checks for the upstream server.
-    health_check;
 }
 
 # Server block to redirect HTTP traffic to HTTPS.

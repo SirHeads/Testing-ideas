@@ -312,7 +312,7 @@
             }
         },
         "802": {
-            "name": "vllm-granite-3.3-8b-fp8",
+            "name": "granite-3.3-8b-fp8",
             "memory_mb": 72000,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -344,7 +344,7 @@
                 },
                 "CacheConfig": {
                     "quantization": "fp8",
-                    "gpu_memory_utilization": 0.9
+                    "gpu_memory_utilization": 0.85
                 },
                 "ParallelConfig": {
                     "tensor_parallel_size": 1
@@ -388,7 +388,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:67:89:B0",
-            "gpu_assignment": "0",
+            "gpu_assignment": "1",
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "910",
@@ -672,6 +672,10 @@
             "pct_options": [
                 "nesting=1"
             ],
+            "lxc_options": [
+                "lxc.mount.auto:sys:rw",
+                "lxc.apparmor.profile=unconfined"
+            ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
             "firewall": {
                 "enabled": true
@@ -680,12 +684,9 @@
             "boot_order": 1,
             "boot_delay": 5,
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ]
+            "apparmor_manages_nesting": true
         },
-        "803": {
+        "914": {
             "name": "ollama-gpu0",
             "memory_mb": 32768,
             "cores": 6,
@@ -723,7 +724,7 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "804": {
+        "917": {
             "name": "llamacpp-gpu0",
             "memory_mb": 32768,
             "cores": 6,

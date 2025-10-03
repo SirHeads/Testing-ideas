@@ -1,99 +1,221 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_lxc_101.sh
-# Description: This script configures and launches the Nginx API Gateway and reverse proxy within LXC container 101.
-#              It serves as the final application-specific step in the orchestration process for this container.
-#              The script installs Nginx, deploys a static gateway configuration, generates self-signed SSL
-#              certificates for various local services, and ensures the Nginx service is running and enabled.
-#              This gateway acts as a central, secure entry point for all backend AI and management services.
-#
-# Dependencies: - A Debian-based LXC container environment.
-#               - The main `phoenix_orchestrator.sh` script, which prepares and calls this script.
-#               - A pre-staged Nginx configuration file at `/tmp/phoenix_run/vllm_gateway`.
-#
-# Inputs: - CTID (Container ID): Implicitly 101.
-#         - Nginx site configuration file (`vllm_gateway`) provided by the orchestrator.
-#
-# Outputs: - A running and enabled Nginx service (`systemd`).
-#          - A configured Nginx reverse proxy routing traffic to backend services.
-#          - Self-signed SSL certificates for `n8n.phoenix.local`, `portainer.phoenix.local`, and `ollama.phoenix.local`.
+# Description: Self-contained setup for Nginx API Gateway in LXC 101. Copies configs from /tmp/phoenix_run/, generates certs if needed, and starts the service with NJS module support.
 
-# Exit immediately if a command exits with a non-zero status.
 set -e
 
 # --- Package Installation ---
-# Update the package lists to ensure access to the latest versions and install the Nginx web server.
-echo "Updating package lists and installing Nginx..."
+echo "Updating package lists and installing Nginx and the NJS module..."
 apt-get update
-apt-get install -y nginx
+apt-get install -y nginx libnginx-mod-http-js
 
-# --- Nginx Configuration ---
-# Copy the static Nginx site configuration file from a temporary location on the host.
-# This file defines the reverse proxy rules, upstreams, and server blocks for the gateway.
-echo "Copying Nginx gateway configuration..."
-cp /tmp/phoenix_run/vllm_gateway /etc/nginx/sites-available/vllm_gateway
+# The libnginx-mod-http-js package automatically creates a symlink in
+# /etc/nginx/modules-enabled/ to load the module.
 
-# Enable the new vLLM gateway configuration by creating a symbolic link.
-# This is the standard practice for managing sites in Nginx.
-echo "Enabling the vLLM gateway site..."
-rm -f /etc/nginx/sites-enabled/vllm_gateway
-ln -s /etc/nginx/sites-available/vllm_gateway /etc/nginx/sites-enabled/vllm_gateway
+# --- Config Extraction from Tarball ---
+TMP_DIR="/tmp/phoenix_run"
+CONFIG_TARBALL="${TMP_DIR}/nginx_configs.tar.gz"
 
-# Remove the default Nginx site to prevent conflicts with the custom gateway configuration.
-echo "Removing default Nginx site..."
-rm -f /etc/nginx/sites-enabled/default
+echo "Extracting Nginx configurations from tarball..."
+tar -xzf "$CONFIG_TARBALL" -C "$TMP_DIR" || { echo "Failed to extract Nginx config tarball." >&2; exit 1; }
 
-# --- SSL Certificate Generation ---
-# Define the directory where SSL certificates will be stored.
+# --- Config Copying from Temp Dir ---
+SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
+SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
+SCRIPTS_DIR="/etc/nginx/scripts"
 SSL_DIR="/etc/nginx/ssl"
-CERT_FILE="$SSL_DIR/portainer.phoenix.local.crt"
 
-# Create the SSL directory if it doesn't already exist.
-mkdir -p "$SSL_DIR"
+# Create directories
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SSL_DIR
 
-# Check if certificates already exist to make the script idempotent.
-# If they don't exist, generate self-signed certificates for local development and testing purposes.
-# These certificates enable HTTPS for various internal services proxied by Nginx.
-if [ ! -f "$CERT_FILE" ]; then
-    echo "Generating self-signed SSL certificates for local services..."
-    
-    # Generate certificate for n8n service
+# Copy files (assume pushed by lxc-manager.sh)
+cp $TMP_DIR/sites-available/* $SITES_AVAILABLE_DIR/ || { echo "Config files missing in $TMP_DIR." >&2; exit 1; }
+cp $TMP_DIR/scripts/* $SCRIPTS_DIR/ || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
+
+# Link enabled sites
+ln -sf $SITES_AVAILABLE_DIR/vllm_gateway $SITES_ENABLED_DIR/vllm_gateway
+ln -sf $SITES_AVAILABLE_DIR/n8n_proxy $SITES_ENABLED_DIR/n8n_proxy
+ln -sf $SITES_AVAILABLE_DIR/ollama_proxy $SITES_ENABLED_DIR/ollama_proxy
+ln -sf $SITES_AVAILABLE_DIR/portainer_proxy $SITES_ENABLED_DIR/portainer_proxy
+
+# Remove default site
+rm -f $SITES_ENABLED_DIR/default
+
+# Generate self-signed certs if missing
+if [ ! -f "$SSL_DIR/portainer.phoenix.local.crt" ]; then
+    echo "Generating self-signed certificates..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$SSL_DIR/n8n.phoenix.local.key" \
         -out "$SSL_DIR/n8n.phoenix.local.crt" \
         -subj "/C=US/ST=New York/L=New York/O=Phoenix/CN=n8n.phoenix.local"
 
-    # Generate certificate for Portainer service
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$SSL_DIR/portainer.phoenix.local.key" \
         -out "$SSL_DIR/portainer.phoenix.local.crt" \
         -subj "/C=US/ST=New York/L=New York/O=Phoenix/CN=portainer.phoenix.local"
 
-    # Generate certificate for Ollama service
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$SSL_DIR/ollama.phoenix.local.key" \
         -out "$SSL_DIR/ollama.phoenix.local.crt" \
         -subj "/C=US/ST=New York/L=New York/O=Phoenix/CN=ollama.phoenix.local"
 else
-    echo "SSL certificates already exist. Skipping generation."
+    echo "Certificates already exist. Skipping generation."
 fi
 
+# Remove invalid js_include from nginx.conf if present
+sed -i '/js_include/d' /etc/nginx/nginx.conf
+
+# Add NJS module configuration
+echo "Adding NJS module configuration..."
+cat > /etc/nginx/conf.d/njs.conf << 'EOF'
+js_import http from /etc/nginx/scripts/http.js;
+EOF
+
+# Overwrite vllm_gateway to ensure JS module usage
+cat > /etc/nginx/sites-available/vllm_gateway << 'EOF'
+# Nginx API Gateway configuration for various backend AI and management services.
+
+upstream embedding_service { server 10.0.0.151:8000; }
+upstream qwen_service { server 10.0.0.150:8000; }
+upstream qdrant_service { server 10.0.0.152:6333; }
+upstream n8n_service { server 10.0.0.154:5678; }
+upstream open_webui_service { server 10.0.0.156:8080; }
+upstream ollama_service { server 10.0.0.155:11434; }
+upstream llamacpp_service { server 10.0.0.157:8081; }
+upstream portainer_service { server 10.0.0.99:9443; }
+
+server {
+    listen 80;
+    server_name api.yourdomain.com 10.0.0.153;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Use JS module to process requests for /v1/chat/completions
+    location /v1/chat/completions {
+        js_content http.get_model;  # Invoke the get_model function from http.js
+        proxy_pass http://qwen_service;
+    }
+
+    location /v1/completions {
+        proxy_pass http://qwen_service;
+    }
+
+    location /v1/embeddings {
+        proxy_pass http://embedding_service;
+    }
+
+    location /qdrant/ {
+        proxy_pass http://qdrant_service/;
+    }
+
+    location /n8n/ {
+        rewrite ^/n8n/?(.*)$ /$1 break;
+        proxy_pass http://n8n_service;
+    }
+
+    location /webui/ {
+        rewrite ^/webui/?(.*)$ /$1 break;
+        proxy_pass http://open_webui_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location /ollama/ {
+        rewrite ^/ollama/?(.*)$ /$1 break;
+        proxy_pass http://ollama_service;
+    }
+
+    location /llamacpp/ {
+        rewrite ^/llamacpp/?(.*)$ /$1 break;
+        proxy_pass http://llamacpp_service;
+    }
+
+    location /portainer/ {
+        rewrite ^/portainer/?(.*)$ /$1 break;
+        proxy_pass http://portainer_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 80;
+    server_name n8n.phoenix.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name n8n.phoenix.local;
+
+    ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
+    ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass http://n8n_service;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 80;
+    server_name portainer.phoenix.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name portainer.phoenix.local;
+
+    ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
+    ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass https://portainer_service;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+EOF
+
 # --- Service Management and Validation ---
-# Test the Nginx configuration syntax to ensure there are no errors before restarting the service.
 echo "Testing Nginx configuration..."
 nginx -t
 
-# Enable the Nginx service to start on boot and restart it to apply the new configuration.
 echo "Enabling and restarting Nginx service..."
 systemctl enable nginx
 systemctl restart nginx
 
-# Perform a final health check to verify that the Nginx service is active.
 echo "Performing health check on Nginx service..."
 if ! systemctl is-active --quiet nginx; then
     echo "Nginx service health check failed. The service is not running." >&2
     exit 1
 fi
 
-echo "Nginx API Gateway has been installed and configured successfully in LXC 101."
+echo "Nginx API Gateway has been configured successfully in LXC 101."
 exit 0

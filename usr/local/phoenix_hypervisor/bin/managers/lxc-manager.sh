@@ -493,6 +493,56 @@ apply_dedicated_volumes() {
 }
 
 # =====================================================================================
+# Function: apply_mount_points
+# Description: Mounts shared host directories into the container as defined in the
+#              container's specific configuration.
+# =====================================================================================
+apply_mount_points() {
+    local CTID="$1"
+    log_info "Applying host path mount points for CTID: $CTID..."
+
+    local mounts
+    mounts=$(jq_get_value "$CTID" ".mount_points // [] | .[]" || echo "")
+    if [ -z "$mounts" ]; then
+        log_info "No host path mount points to apply for CTID $CTID."
+        return 0
+    fi
+
+    local volume_index=0
+    # Find the next available mount point index
+    while pct config "$CTID" | grep -q "mp${volume_index}:"; do
+        volume_index=$((volume_index + 1))
+    done
+
+    for mount_config in $(echo "$mounts" | jq -c '.'); do
+        local host_path=$(echo "$mount_config" | jq -r '.host_path')
+        local container_path=$(echo "$mount_config" | jq -r '.container_path')
+        local mount_id="mp${volume_index}"
+        local mount_string="${host_path},mp=${container_path}"
+
+        # Idempotency Check
+        if ! pct config "$CTID" | grep -q "mp.*: ${mount_string}"; then
+            # --- BEGIN DIAGNOSTIC LOGGING ---
+            log_info "Verifying host path '$host_path' before applying mount..."
+            if [ ! -e "$host_path" ]; then
+                log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
+                # Optionally, you could make this a fatal error to stop the process immediately
+                # log_fatal "Host path '$host_path' does not exist."
+            else
+                log_info "Host path '$host_path' found."
+            fi
+            # --- END DIAGNOSTIC LOGGING ---
+
+            log_info "Applying mount: ${host_path} -> ${container_path}"
+            run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
+            volume_index=$((volume_index + 1))
+        else
+            log_info "Mount point ${host_path} -> ${container_path} already configured."
+        fi
+    done
+}
+
+# =====================================================================================
 # Function: ensure_container_disk_size
 # Description: Ensures that the container's root disk size matches the size specified in the
 #              configuration file. The `pct resize` command is idempotent, so this function
@@ -705,36 +755,35 @@ run_application_script() {
         log_fatal "Failed to copy application script to container $CTID."
     fi
 
+    # --- START OF MODIFICATIONS FOR NGINX CONFIG PUSH ---
+    # If the application script is for the Nginx gateway (101), push the necessary configs.
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
+        log_info "Nginx gateway script detected. Packaging and pushing configuration files..."
+        local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
+        local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
+
+        # Create a tarball of the nginx configs on the host
+        log_info "Creating tarball of Nginx configs at ${temp_tarball}"
+        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" sites-available scripts; then
+            log_fatal "Failed to create Nginx config tarball."
+        fi
+
+        # Push the single tarball to the container
+        if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
+            log_fatal "Failed to push Nginx config tarball to container $CTID."
+        fi
+
+        # Clean up the temporary tarball on the host
+        rm -f "$temp_tarball"
+    fi
+    # --- END OF MODIFICATIONS FOR NGINX CONFIG PUSH ---
+
     # 2. Copy common_utils.sh to the container
     log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
     if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
         log_fatal "Failed to copy common_utils.sh to container $CTID."
     fi
-
-    # 3b. Copy http.js if it exists and the app script is for nginx
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
-        local http_js_source_path="${PHOENIX_BASE_DIR}/etc/nginx/scripts/http.js"
-        local http_js_dest_path="${temp_dir_in_container}/http.js"
-        if [ -f "$http_js_source_path" ]; then
-            log_info "Copying http.js to $CTID:$http_js_dest_path..."
-            if ! pct push "$CTID" "$http_js_source_path" "$http_js_dest_path"; then
-                log_fatal "Failed to copy http.js to container $CTID."
-            fi
-        fi
-    fi
     
-    # 3c. Copy the vllm_gateway config file if it exists and the app script is for nginx
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
-        local vllm_gateway_source_path="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/vllm_gateway"
-        local vllm_gateway_dest_path="${temp_dir_in_container}/vllm_gateway"
-        if [ -f "$vllm_gateway_source_path" ]; then
-            log_info "Copying vllm_gateway to $CTID:$vllm_gateway_dest_path..."
-            if ! pct push "$CTID" "$vllm_gateway_source_path" "$vllm_gateway_dest_path"; then
-                log_fatal "Failed to copy vllm_gateway to container $CTID."
-            fi
-        fi
-    fi
-
     # 3d. Copy the LXC config file to the container's temp directory
     local lxc_config_dest_path="${temp_dir_in_container}/phoenix_lxc_configs.json"
     log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
@@ -1077,6 +1126,7 @@ main_lxc_orchestrator() {
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
+                apply_mount_points "$ctid"
                 # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
 

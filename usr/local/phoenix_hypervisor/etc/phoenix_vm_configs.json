@@ -9,7 +9,7 @@
     },
     "vms": [
         {
-            "vmid": 8000,
+            "vmid": 9000,
             "name": "ubuntu-2404-cloud-template",
             "is_template": true,
             "template_image": "noble-server-cloudimg-amd64.img",
@@ -22,9 +22,9 @@
             }
         },
         {
-            "vmid": 8001,
+            "vmid": 1001,
             "name": "Dr-Phoenix",
-            "clone_from_vmid": 8000,
+            "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 8192,
             "disk_size_gb": 100,

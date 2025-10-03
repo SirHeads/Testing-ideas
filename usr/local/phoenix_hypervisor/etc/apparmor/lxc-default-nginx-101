@@ -1,0 +1,107 @@
+# AppArmor Profile for LXC Container 101 (Nginx-Phoenix)
+# File: /etc/apparmor.d/lxc/lxc-default-nginx-101
+# Description: Permissive AppArmor profile for development of Nginx reverse proxy in unprivileged LXC container 101.
+#              Based on lxc-container-default-cgns with extended permissions for Nginx, SSL, logs, and network proxying.
+#              Uses 'complain' mode for development (logs violations without blocking). Switch to 'enforce' post-development.
+#              Load with: apparmor_parser -r /etc/apparmor.d/lxc/lxc-default-nginx-101
+#              In LXC config: lxc.apparmor.profile: lxc-default-nginx-101
+
+#include <tunables/global>
+
+# Base LXC profile inclusion
+#include <lxc/lxc-default-cgns>
+
+# Profile name and mode
+profile lxc-default-nginx-101 flags=(complain) {
+  # Basic LXC capabilities (permissive for development)
+  capability,
+  capability dac_override,
+  capability dac_read_search,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability setpcap,
+  capability linux_immutable,
+  capability net_bind_service,
+  capability net_broadcast,
+  capability net_admin,
+  capability net_raw,
+  capability ipc_lock,
+  capability ipc_owner,
+  capability sys_module,
+  capability sys_rawio,
+  capability sys_chroot,
+  capability sys_ptrace,
+  capability sys_pacct,
+  capability sys_admin,
+  capability sys_boot,
+  capability sys_nice,
+  capability sys_resource,
+  capability sys_time,
+  capability sys_tty_config,
+  capability mknod,
+  capability lease,
+  capability audit_write,
+  capability setfcap,
+
+  # Network permissions (full for reverse proxy)
+  network inet tcp,
+  network inet udp,
+  network inet6 tcp,
+  network inet6 udp,
+  network raw,
+  network packet,
+
+  # File system permissions (specific paths for Nginx)
+  /etc/nginx/{,**/} rwkixl,
+  /logs/nginx/{,**/} rwkixl,
+  /var/log/nginx/{,**/} rwkixl,
+  /var/www/{,**/} rwkixl,
+  /usr/share/nginx/{,**/} rwkixl,
+  /usr/lib/nginx/{,**/} rmix,
+  /usr/sbin/nginx ix,
+  /run/{nginx.pid,nginx.pid.lock} rwkl,
+  /var/run/{nginx.pid,nginx.pid.lock} rwkl,
+  /dev/urandom r,
+  /dev/zero r,
+  /usr/local/phoenix_hypervisor/etc/nginx/{,**/} rwkixl,
+  /mnt/pve/quickOS/shared-prod-data/{ssl/,logs/nginx/}{,**/} rwkixl,
+
+  # System and temporary files
+  /tmp/{,**/} rwkixl,
+  /var/tmp/{,**/} rwkixl,
+  /proc/ r,
+  /proc/sys/kernel/** rwk,
+  /proc/[0-9]*/{status,cmdline,fd/**} rwk,
+  /sys/devices/system/cpu/ r,
+
+  # Essential binaries for management and testing
+  /bin/{bash,sh} ix,
+  /usr/bin/{curl,wget,systemctl,journalctl} ix,
+  /usr/sbin/{ss,netstat} ix,
+
+  # Deny dangerous actions
+  deny /etc/{shadow,passwd,group} rw,
+  deny /bin/** x,
+  deny /sbin/** x,
+  deny /usr/bin/** x,
+  deny /usr/sbin/** x,
+
+  # Allow specific binary executions
+  allow /usr/sbin/nginx ix,
+  allow /bin/{bash,sh} ix,
+  allow /usr/bin/{curl,wget,systemctl,journalctl} ix,
+  allow /usr/sbin/{ss,netstat} ix,
+
+  # Mount and pivot root for LXC
+  mount,
+  pivot_root,
+
+  # Signal handling
+  signal (send,receive) peer=lxc-default-nginx-101,
+
+  # Audit logging
+  /var/log/audit/{,**/} rwlkix,
+}

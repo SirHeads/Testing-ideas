@@ -10,7 +10,6 @@ upstream n8n_backend {
     # set incorrectly to 5679 for testing purposes and should be 5678.
     server 10.0.0.154:5679;
     # Enables active health checks for the upstream server.
-    health_check;
 }
 
 # Server block to redirect HTTP traffic to HTTPS.

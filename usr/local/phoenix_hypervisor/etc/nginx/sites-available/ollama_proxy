@@ -8,7 +8,6 @@ upstream ollama_backend {
     # The IP address and port of the Ollama service in LXC container 955.
     server 10.0.0.155:11434;
     # Enables active health checks for the upstream server.
-    health_check;
 }
 
 # Main server block for handling HTTP traffic to the Ollama proxy.
