@@ -35,9 +35,6 @@ cp $TMP_DIR/scripts/* $SCRIPTS_DIR/ || { echo "JS script missing in $TMP_DIR." >
 
 # Link enabled sites
 ln -sf $SITES_AVAILABLE_DIR/vllm_gateway $SITES_ENABLED_DIR/vllm_gateway
-ln -sf $SITES_AVAILABLE_DIR/n8n_proxy $SITES_ENABLED_DIR/n8n_proxy
-ln -sf $SITES_AVAILABLE_DIR/ollama_proxy $SITES_ENABLED_DIR/ollama_proxy
-ln -sf $SITES_AVAILABLE_DIR/portainer_proxy $SITES_ENABLED_DIR/portainer_proxy
 
 # Remove default site
 rm -f $SITES_ENABLED_DIR/default
@@ -144,63 +141,6 @@ server {
     }
 }
 
-server {
-    listen 80;
-    server_name n8n.phoenix.local;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name n8n.phoenix.local;
-
-    ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
-    ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers off;
-
-    location / {
-        proxy_pass http://n8n_service;
-        proxy_ssl_verify off;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-
-server {
-    listen 80;
-    server_name portainer.phoenix.local;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name portainer.phoenix.local;
-
-    ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
-    ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers off;
-
-    location / {
-        proxy_pass https://portainer_service;
-        proxy_ssl_verify off;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
 EOF
 
 # --- Service Management and Validation ---
