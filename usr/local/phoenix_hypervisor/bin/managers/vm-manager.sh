@@ -319,6 +319,9 @@ clone_vm() {
             run_qm_command set "$VMID" --ciuser "$username"
         fi
     fi
+
+    log_info "Resizing disk for VM $VMID..."
+    run_qm_command resize "$VMID" scsi0 +10G || log_warn "Failed to resize disk for VM $VMID."
 }
 
 # =====================================================================================
@@ -523,6 +526,19 @@ apply_vm_features() {
         if [ -z "$persistent_volume_path" ]; then
             log_warn "No NFS volume found for VM $VMID. Skipping NFS script deployment."
         else
+            # If the feature is 'docker', copy the Portainer configuration to the persistent storage.
+            if [ "$feature" == "docker" ]; then
+                local portainer_source_path="${PHOENIX_BASE_DIR}/persistent-storage/portainer"
+                if [ -d "$portainer_source_path" ]; then
+                    log_info "Copying Portainer configuration from $portainer_source_path to $persistent_volume_path..."
+                    if ! cp -r "$portainer_source_path" "$persistent_volume_path/"; then
+                        log_fatal "Failed to copy Portainer configuration."
+                    fi
+                else
+                    log_warn "Portainer source directory not found at $portainer_source_path. Skipping copy."
+                fi
+            fi
+
             # The 'persistent_volume_path' is the absolute path on the hypervisor
             local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
             log_info "Creating script directory on hypervisor: $hypervisor_scripts_dir"

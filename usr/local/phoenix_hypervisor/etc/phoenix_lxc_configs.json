@@ -678,7 +678,16 @@
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
             "firewall": {
-                "enabled": true
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.101",
+                        "proto": "tcp",
+                        "port": "9443"
+                    }
+                ]
             },
             "start_at_boot": true,
             "boot_order": 1,

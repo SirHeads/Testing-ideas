@@ -116,4 +116,29 @@ if ! usermod -aG docker "$USERNAME"; then
 fi
 log_info "User '$USERNAME' added to the docker group successfully."
 
+# 8. Install Docker Compose
+log_info "Step 8: Installing Docker Compose..."
+if ! apt-get install -y docker-compose; then
+    log_fatal "Failed to install Docker Compose."
+fi
+log_info "Docker Compose installed successfully."
+
+# 9. Discover and Run Docker Compose files
+log_info "Step 9: Discovering and running Docker Compose files..."
+PERSISTENT_STORAGE="/persistent-storage"
+if [ -d "$PERSISTENT_STORAGE" ]; then
+    find "$PERSISTENT_STORAGE" -type f -name "docker-compose.yml" | while read -r compose_file; do
+        log_info "Found docker-compose.yml at $compose_file"
+        compose_dir=$(dirname "$compose_file")
+        log_info "Running 'docker-compose up -d' in $compose_dir"
+        if ! (cd "$compose_dir" && docker-compose up -d); then
+            log_error "Failed to run docker-compose for $compose_file"
+        else
+            log_info "Successfully started services from $compose_file"
+        fi
+    done
+else
+    log_info "No persistent storage directory found. Skipping Docker Compose discovery."
+fi
+
 echo "--- Docker Installation Complete ---"

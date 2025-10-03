@@ -7,7 +7,7 @@
 # Defines the upstream server for the Portainer backend.
 upstream portainer_backend {
     # The IP address and port of the Portainer service.
-    server 10.0.0.99:9443;
+    server 10.0.0.101:9443;
     # Enables active health checks for the upstream server.
 }
 

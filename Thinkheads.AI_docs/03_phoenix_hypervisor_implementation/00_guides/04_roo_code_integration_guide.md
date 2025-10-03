@@ -26,9 +26,9 @@ This document provides a comprehensive guide to integrating the Roo Code extensi
 
 The integration relies on three key LXC containers:
 
-*   **LXC 951 (vLLM Embedding Service):** Hosts the `ibm-granite/granite-embedding-english-r2` model. Its deployment is managed declaratively via a `vllm_engine_config` object, providing an OpenAI-compatible API endpoint for text vectorization.
+*   **LXC 801 (vLLM Embedding Service):** Hosts the `ibm-granite/granite-embedding-english-r2` model. Its deployment is managed declaratively via a `vllm_engine_config` object, providing an OpenAI-compatible API endpoint for text vectorization.
 *   **LXC 952 (Qdrant Vector Database):** Stores and indexes the vectorized embeddings, enabling efficient similarity searches.
-*   **LXC 953 (Nginx API Gateway):** Acts as a reverse proxy, providing a single, stable entry point for the vLLM service.
+*   **LXC 101 (Nginx API Gateway):** Acts as a reverse proxy, providing a single, stable entry point for the vLLM service.
 
 ```mermaid
 graph TD
@@ -37,8 +37,8 @@ graph TD
     end
 
     subgraph "Phoenix Hypervisor"
-        C[LXC 953: Nginx Gateway <br> 10.0.0.153]
-        B[LXC 951: vLLM Embedding Service <br> 10.0.0.151:8000]
+        C[LXC 101: Nginx Gateway <br> 10.0.0.153]
+        B[LXC 801: vLLM Embedding Service <br> 10.0.0.141:8000]
         D[LXC 952: Qdrant Vector DB <br> 10.0.0.152:6333]
     end
 

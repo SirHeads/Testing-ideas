@@ -73,14 +73,14 @@ EOF
 cat > /etc/nginx/sites-available/vllm_gateway << 'EOF'
 # Nginx API Gateway configuration for various backend AI and management services.
 
-upstream embedding_service { server 10.0.0.151:8000; }
+upstream embedding_service { server 10.0.0.141:8000; }
 upstream qwen_service { server 10.0.0.150:8000; }
 upstream qdrant_service { server 10.0.0.152:6333; }
 upstream n8n_service { server 10.0.0.154:5678; }
 upstream open_webui_service { server 10.0.0.156:8080; }
 upstream ollama_service { server 10.0.0.155:11434; }
 upstream llamacpp_service { server 10.0.0.157:8081; }
-upstream portainer_service { server 10.0.0.99:9443; }
+upstream portainer_service { server 10.0.0.101:9443; }
 
 server {
     listen 80;
@@ -135,6 +135,35 @@ server {
     location /portainer/ {
         rewrite ^/portainer/?(.*)$ /$1 break;
         proxy_pass http://portainer_service;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen 80;
+    server_name portainer.phoenix.local;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name portainer.phoenix.local;
+
+    ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
+    ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+    ssl_prefer_server_ciphers off;
+
+    location / {
+        proxy_pass https://portainer_service;
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

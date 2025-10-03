@@ -163,12 +163,12 @@ All four environments (Rumple + mirrors) are 100% Docker-based. Use Docker Compo
 - **Data Persistence**: Backups via provider snapshots or Docker volumes to S3 (add MinIO if needed: `minio/minio:latest`).
 
 ### 5. Portainer Management
-Portainer centralizes control in a dedicated LXC on Phoenix.
-- **LXC Setup**: Ubuntu 24.04; 1 vCPU, 1-2 GB RAM, 10 GB storage; install Docker.
+Portainer centralizes control in a dedicated VM on Phoenix.
+- **VM Setup**: Ubuntu 24.04; 2 vCPU, 4 GB RAM, 32 GB storage; install Docker.
 - **Installation**:
   ```bash
   docker volume create portainer_data
-  docker run -d -p 9000:9000 --name portainer --restart always \
+  docker run -d -p 9443:9443 --name portainer --restart=always \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v portainer_data:/data \
     portainer/portainer-ce:latest

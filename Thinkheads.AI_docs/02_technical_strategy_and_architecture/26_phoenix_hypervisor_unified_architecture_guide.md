@@ -234,6 +234,7 @@ graph TD
 
     subgraph "VM & Docker Services"
         VM[8001: docker-vm-01]
+        Docker["Docker"]
         Portainer["Portainer"]
         N8N["n8n"]
         OpenWebUI["OpenWebUI"]
@@ -247,10 +248,11 @@ graph TD
     T2 -- Cloned to create --> C2
     T3 -- Cloned to create --> C3
 
-    VM -- Hosts --> Portainer
-    VM -- Hosts --> N8N
-    VM -- Hosts --> OpenWebUI
-    VM -- Hosts --> Monitoring
+    VM -- Hosts --> Docker
+    Docker -- Hosts --> Portainer
+    Docker -- Hosts --> N8N
+    Docker -- Hosts --> OpenWebUI
+    Docker -- Hosts --> Monitoring
 ```
 
 ## 5. Networking
@@ -326,7 +328,7 @@ The `hypervisor_feature_setup_apparmor.sh` script is the single source of truth 
 
 ### 7.2. Docker Security
 
-The recommended approach for running Docker workloads is within a dedicated Virtual Machine (e.g., `docker-vm-01`). This provides a higher level of isolation and security compared to running Docker within an LXC container. While Docker-in-LXC is still possible, it should be reserved for specific use cases where the overhead of a full VM is not justified.
+The **only** supported and recommended approach for running Docker workloads is within a dedicated Virtual Machine (e.g., `docker-vm-01`). This provides the highest level of isolation and security. The Docker-in-LXC approach has been officially deprecated due to stability and security concerns.
 
 ### 7.3. User and Secret Management
 
@@ -358,7 +360,7 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 ### 8.4. Docker Integration
 
-Docker is now primarily integrated through a dedicated VM (`docker-vm-01`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature can still be applied to LXC containers, but the VM-based approach is the recommended standard.
+Docker is now exclusively integrated through a dedicated VM (`docker-vm-01`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature is a prerequisite for the VM, and the Portainer feature is then applied to manage the Docker environment within it.
 
 ## 9. Testing & QA
 

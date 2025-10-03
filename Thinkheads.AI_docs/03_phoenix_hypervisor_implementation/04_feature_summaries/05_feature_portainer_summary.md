@@ -14,7 +14,7 @@ review_cadence: "Annual"
 last_reviewed: "2025-09-30"
 ---
 
-The `portainer` feature automates the deployment of Portainer within a Docker-enabled LXC container. It provides a centralized web UI for managing Docker environments across the hypervisor.
+The `portainer` feature automates the deployment of Portainer within a Docker-enabled environment. It provides a centralized web UI for managing Docker environments across the hypervisor. While it can be deployed in an LXC container, the recommended and officially supported method is to deploy it within a dedicated Virtual Machine (e.g., `docker-vm-01`) for enhanced stability and security.
 
 ## Key Actions
 
@@ -35,6 +35,12 @@ The script's behavior is determined by the `portainer_role` defined in the conta
     *   Exposes port `9001`.
     *   Mounts the host's Docker socket and volumes directory.
     *   Configures the agent to connect to the Portainer server using the `AGENT_CLUSTER_ADDR` environment variable.
+
+## Architectural Shift: VM-Based Deployment
+
+Originally, Portainer was deployed inside an LXC container. Due to stability and security concerns related to running Docker in a nested, unprivileged container, the architecture has been updated. The standard practice is now to deploy all Docker-dependent services, including Portainer, into a dedicated VM.
+
+This change is documented in the [Docker-in-LXC Deprecation ADR](</workspace/Thinkheads.AI_docs/03_phoenix_hypervisor_implementation/00_guides/12_docker_lxc_issue_mitigation_plan.md).
 
 ## Idempotency
 

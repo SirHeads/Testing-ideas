@@ -7,7 +7,7 @@
 
 # Upstream definition for the embedding service.
 upstream embedding_service {
-    server 10.0.0.151:8000;
+    server 10.0.0.141:8000;
 }
 
 # Upstream definition for the Qwen LLM service.
@@ -42,7 +42,7 @@ upstream llamacpp_service {
 
 # Upstream definition for the Portainer container management UI.
 upstream portainer_service {
-    server 10.0.0.99:9443;
+    server 10.0.0.101:9443;
 }
 
 # Main API gateway server block for path-based routing.
