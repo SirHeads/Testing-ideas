@@ -38,12 +38,12 @@ graph TD
     end
 
     subgraph "Network Infrastructure"
-        API_Gateway[LXC 953: NGINX API Gateway]
+        API_Gateway[LXC 101: NGINX API Gateway]
     end
 
     subgraph "Core AI/ML Services"
         VLLM_Chat[LXC 950: vLLM Chat Service]
-        VLLM_Embed[LXC 951: vLLM Embedding Service]
+        VLLM_Embed[LXC 801: vLLM Embedding Service]
         Qdrant[LXC 952: Qdrant Vector DB]
         Ollama[LXC 955: Ollama Service]
         LlamaCPP[LXC 957: Llama.cpp Service]
@@ -75,6 +75,20 @@ graph TD
 ## 3. Container Implementations
 
 This section provides a detailed breakdown of each container's purpose, key software, resource allocation, and configuration details, sourced directly from `phoenix_lxc_configs.json`.
+
+### Container 801: Embedding Service (granite-embedding)
+
+*   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model.
+*   **Key Software**: vLLM
+*   **Resource Allocation**:
+    *   **CPU**: 6 cores
+    *   **Memory**: 72000 MB
+    *   **Storage**: 128 GB
+    *   **GPU**: Passthrough of GPU `0`
+*   **Configuration Details**:
+    *   **IP Address**: `10.0.0.141`
+    *   **Port**: `8000`
+    *   **Dependencies**: `101`
 
 ### Container 950: vLLM Chat Service (`vllm-qwen2.5-7b-awq`)
 
@@ -118,9 +132,9 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **Port**: `6333`
     *   **Data Persistence**: Data is stored in a dedicated 20GB volume mounted at `/qdrant/storage`.
 
-### Container 953: API Gateway (`Nginx-VscodeRag`)
+### Container 101: API Gateway (`Nginx-VscodeRag`)
 
-*   **Purpose**: Functions as a high-performance reverse proxy and API gateway, serving as the central, secure entry point for all backend services.
+*   **Purpose**: Functions as a high-performance reverse proxy and API gateway, serving as the central, secure entry point for all backend services, including routing to the vLLM service.
 *   **Key Software**: Nginx
 *   **Resource Allocation**:
     *   **CPU**: 4 cores
@@ -128,7 +142,10 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **Storage**: 32 GB
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.153`
-    *   **Functionality**: Routes requests to backend services based on hostname and request path. Manages SSL termination.
+    *   **Functionality**:
+        *   Routes requests to backend services based on hostname and request path.
+        *   Manages SSL termination.
+        *   Routes to the vLLM embedding service.
 
 ### Container 955: Ollama Service (`ollama-oWUI`)
 

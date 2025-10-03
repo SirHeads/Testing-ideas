@@ -6,7 +6,7 @@
 # The comments are optimized for RAG to improve discoverability and understanding.
 
 # Upstream definition for the embedding service.
-upstream embedding_service {
+upstream vllm_embedding_service {
     server 10.0.0.141:8000;
 }
 
@@ -68,7 +68,10 @@ server {
 
     # Route requests for embeddings to the embedding service.
     location /v1/embeddings {
-        proxy_pass http://embedding_service;
+        proxy_pass http://vllm_embedding_service;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
     # Route requests to the Qdrant vector database.

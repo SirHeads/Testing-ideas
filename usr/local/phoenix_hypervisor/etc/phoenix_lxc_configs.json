@@ -688,6 +688,7 @@
                     }
                 ]
             },
+            "dependencies": [],
             "start_at_boot": true,
             "boot_order": 1,
             "boot_delay": 5,

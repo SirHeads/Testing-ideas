@@ -233,7 +233,7 @@ graph TD
     end
 
     subgraph "VM & Docker Services"
-        VM[8001: docker-vm-01]
+        VM[1001: Dr-Phoenix]
         Docker["Docker"]
         Portainer["Portainer"]
         N8N["n8n"]
@@ -287,7 +287,7 @@ graph TD
         end
 
         subgraph "Backend VM Services"
-            VM[VM 8001: Docker Services]
+            VM[VM 1001: Dr-Phoenix]
         end
     end
 
@@ -328,7 +328,7 @@ The `hypervisor_feature_setup_apparmor.sh` script is the single source of truth 
 
 ### 7.2. Docker Security
 
-The **only** supported and recommended approach for running Docker workloads is within a dedicated Virtual Machine (e.g., `docker-vm-01`). This provides the highest level of isolation and security. The Docker-in-LXC approach has been officially deprecated due to stability and security concerns.
+The **only** supported and recommended approach for running Docker workloads is within a dedicated Virtual Machine, specifically VM 1001 (`Dr-Phoenix`). This provides the highest level of isolation and security. The Docker-in-LXC approach has been officially deprecated due to stability and security concerns.
 
 ### 7.3. User and Secret Management
 
@@ -360,7 +360,7 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 ### 8.4. Docker Integration
 
-Docker is now exclusively integrated through a dedicated VM (`docker-vm-01`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature is a prerequisite for the VM, and the Portainer feature is then applied to manage the Docker environment within it.
+Docker is now exclusively integrated through a dedicated VM, VM 1001 (`Dr-Phoenix`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature is a prerequisite for the VM, and the Portainer feature is then applied to manage the Docker environment within it.
 
 ## 9. Testing & QA
 
@@ -391,7 +391,7 @@ This section provides solutions to common issues that may arise when working wit
 ### 10.2. Common Issues and Resolutions
 
 *   **LXC Container Fails to Start:** Check the container's configuration, system logs for AppArmor denials, and try starting the container in debug mode.
-*   **Docker Issues:** With the migration to a dedicated VM, Docker-related issues are now isolated to that environment. Check the Docker daemon logs within the VM (`journalctl -u docker`) and the container logs (`docker logs <container_name>`).
+*   **Docker Issues:** With the migration to a dedicated VM (1001, `Dr-Phoenix`), Docker-related issues are now isolated to that environment. Check the Docker daemon logs within the VM (`journalctl -u docker`) and the container logs (`docker logs <container_name>`).
 *   **Network Issues:** Verify the container's IP address, gateway, and bridge configuration. Check the host's firewall rules and use `ping` and `traceroute` to diagnose connectivity.
 *   **VM Fails to Start:** Check the VM's configuration, review the Proxmox task logs, and access the VM's console to check for boot errors.
 *   **Cloud-Init Issues:** Check the generated Cloud-Init files and review the Cloud-Init logs inside the VM at `/var/log/cloud-init.log`.
