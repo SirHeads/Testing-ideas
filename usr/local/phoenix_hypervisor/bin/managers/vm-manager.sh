@@ -534,6 +534,8 @@ apply_vm_features() {
                     if ! cp -r "$portainer_source_path" "$persistent_volume_path/"; then
                         log_fatal "Failed to copy Portainer configuration."
                     fi
+                    # Ensure the data directory exists
+                    mkdir -p "${persistent_volume_path}/portainer/data"
                 else
                     log_warn "Portainer source directory not found at $portainer_source_path. Skipping copy."
                 fi

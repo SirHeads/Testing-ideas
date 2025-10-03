@@ -673,8 +673,7 @@
                 "nesting=1"
             ],
             "lxc_options": [
-                "lxc.mount.auto:sys:rw",
-                "lxc.apparmor.profile=unconfined"
+                "lxc.mount.auto:sys:rw"
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
             "firewall": {
@@ -693,7 +692,13 @@
             "boot_order": 1,
             "boot_delay": 5,
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "apparmor_manages_nesting": true,
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/shared-prod-data/logs/nginx",
+                    "container_path": "/logs/nginx"
+                }
+            ]
         },
         "914": {
             "name": "ollama-gpu0",

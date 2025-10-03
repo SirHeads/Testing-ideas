@@ -57,7 +57,10 @@
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
                 }
-            ]
+            ],
+            "portainer_config": {
+                "compose_file_path": "/usr/local/phoenix_hypervisor/persistent-storage/portainer/docker-compose.yml"
+            }
         }
     ]
 }

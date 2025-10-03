@@ -141,4 +141,14 @@ else
     log_info "No persistent storage directory found. Skipping Docker Compose discovery."
 fi
 
+# Call the Portainer installation script
+if [ -f "$(dirname "$0")/feature_install_portainer.sh" ]; then
+    log_info "Running Portainer installation script..."
+    if ! "$(dirname "$0")/feature_install_portainer.sh"; then
+        log_error "Portainer installation script failed."
+    fi
+else
+    log_warn "Portainer installation script not found. Skipping."
+fi
+
 echo "--- Docker Installation Complete ---"

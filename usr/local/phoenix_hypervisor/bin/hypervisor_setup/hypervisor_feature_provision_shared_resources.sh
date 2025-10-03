@@ -87,6 +87,12 @@ provision_shared_zfs_volumes() {
 # =====================================================================================
 main() {
     provision_shared_zfs_volumes
+
+    log_info "Creating shared directories..."
+    mkdir -p /mnt/pve/quickOS/shared-prod-data/ssl
+    mkdir -p /mnt/pve/quickOS/shared-prod-data/logs/nginx
+    log_info "Shared directories created successfully."
+
     exit_script 0
 }
 

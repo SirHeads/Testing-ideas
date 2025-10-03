@@ -1,4 +1,4 @@
-version: '3'
+version: '3.8'
 
 services:
   portainer:
@@ -9,10 +9,17 @@ services:
       - no-new-privileges:true
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./portainer_data:/data
+      - portainer_data:/data
+      - /persistent-storage/ssl:/certs:ro
     ports:
+      - "9000:9000"
       - "9443:9443"
-      - "9001:9001"
+    command: --admin-password '$$2y$$05$$igwiORH3W4VubCT7jFl7tOBNFYo8GTfM1vaBVDXpwSYDxwwH8kvbW'
 
 volumes:
   portainer_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /persistent-storage/portainer/data
