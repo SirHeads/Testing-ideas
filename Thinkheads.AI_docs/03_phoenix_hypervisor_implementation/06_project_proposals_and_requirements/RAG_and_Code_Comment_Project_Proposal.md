@@ -55,8 +55,6 @@ This project will cover all scripts and configuration files within the `usr/loca
 *   All files in `etc/cloud-init/`
 
 ### Group 5: Application-Specific Scripts
-*   `bin/phoenix-cli_hypervisor_lxc_952.sh`
-*   `bin/phoenix-cli_hypervisor_lxc_953.sh`
 *   `bin/phoenix-cli_hypervisor_lxc_954.sh`
 *   `bin/phoenix-cli_hypervisor_lxc_955.sh`
 *   `bin/phoenix-cli_hypervisor_lxc_956.sh`

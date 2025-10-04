@@ -17,7 +17,7 @@ upstream qwen_service {
 
 # Upstream definition for the Qdrant vector database.
 upstream qdrant_service {
-    server 10.0.0.152:6333;
+    server 10.0.0.102:6333;
 }
 
 # Upstream definition for the n8n automation service.
@@ -43,6 +43,10 @@ upstream llamacpp_service {
 # Upstream definition for the Portainer container management UI.
 upstream portainer_service {
     server 10.0.0.101:9443;
+}
+
+upstream portainer_agent_service {
+    server 10.0.0.102:9001;
 }
 
 # Main API gateway server block for path-based routing.
@@ -113,6 +117,13 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+    }
+
+    # Route requests to the Portainer agent.
+    location /agent/ {
+        proxy_pass https://portainer_agent_service;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
     }
 }
 

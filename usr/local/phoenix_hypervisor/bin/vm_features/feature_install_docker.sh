@@ -123,32 +123,40 @@ if ! apt-get install -y docker-compose; then
 fi
 log_info "Docker Compose installed successfully."
 
-# 9. Discover and Run Docker Compose files
-log_info "Step 9: Discovering and running Docker Compose files..."
-PERSISTENT_STORAGE="/persistent-storage"
-if [ -d "$PERSISTENT_STORAGE" ]; then
-    find "$PERSISTENT_STORAGE" -type f -name "docker-compose.yml" | while read -r compose_file; do
-        log_info "Found docker-compose.yml at $compose_file"
-        compose_dir=$(dirname "$compose_file")
-        log_info "Running 'docker-compose up -d' in $compose_dir"
-        if ! (cd "$compose_dir" && docker-compose up -d); then
-            log_error "Failed to run docker-compose for $compose_file"
-        else
-            log_info "Successfully started services from $compose_file"
-        fi
-    done
-else
-    log_info "No persistent storage directory found. Skipping Docker Compose discovery."
-fi
+# Step 9 is now obsolete and has been removed. The new role-based logic handles deployment.
 
-# Call the Portainer installation script
-if [ -f "$(dirname "$0")/feature_install_portainer.sh" ]; then
-    log_info "Running Portainer installation script..."
-    if ! "$(dirname "$0")/feature_install_portainer.sh"; then
-        log_error "Portainer installation script failed."
-    fi
-else
-    log_warn "Portainer installation script not found. Skipping."
-fi
+# 10. Deploy Portainer based on role
+log_info "Step 10: Deploying Portainer based on role..."
+PORTAINER_ROLE=$(jq -r '.portainer_role // "none"' "$CONTEXT_FILE")
+log_info "This VM's Portainer role is: $PORTAINER_ROLE"
+
+case "$PORTAINER_ROLE" in
+    primary)
+        log_info "Deploying Portainer server..."
+        if [ -f "$(dirname "$0")/portainer_api_setup.sh" ]; then
+            if ! "$(dirname "$0")/portainer_api_setup.sh"; then
+                log_error "Portainer server deployment script failed."
+            fi
+        else
+            log_warn "Portainer server deployment script not found. Skipping."
+        fi
+        ;;
+    agent)
+        log_info "Deploying Portainer agent..."
+        if [ -f "$(dirname "$0")/portainer_agent_setup.sh" ]; then
+            if ! "$(dirname "$0")/portainer_agent_setup.sh"; then
+                log_error "Portainer agent deployment script failed."
+            fi
+        else
+            log_warn "Portainer agent deployment script not found. Skipping."
+        fi
+        ;;
+    none)
+        log_info "No Portainer role specified for this VM. Skipping Portainer deployment."
+        ;;
+    *)
+        log_warn "Unknown Portainer role: '$PORTAINER_ROLE'. Skipping Portainer deployment."
+        ;;
+esac
 
 echo "--- Docker Installation Complete ---"

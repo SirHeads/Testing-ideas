@@ -23,22 +23,19 @@
         },
         {
             "vmid": 1001,
-            "name": "Dr-Phoenix",
+            "name": "Portainer",
             "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 8192,
-            "disk_size_gb": 100,
+            "disk_size_gb": 32,
             "start_at_boot": true,
             "boot_order": 1,
-            "boot_delay": 10,
+            "boot_delay": 2,
             "features": [
                 "base_setup",
                 "docker"
             ],
-            "snapshots": {
-                "pre_features": "snap_before_docker",
-                "post_features": "snap_after_docker"
-            },
+            "portainer_role": "primary",
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1"
@@ -46,9 +43,6 @@
             "user_config": {
                 "username": "phoenix_user"
             },
-            "qm_options": [
-                "--vga qxl"
-            ],
             "volumes": [
                 {
                     "type": "nfs",
@@ -58,9 +52,44 @@
                     "server": "10.0.0.13"
                 }
             ],
-            "portainer_config": {
-                "compose_file_path": "/usr/local/phoenix_hypervisor/persistent-storage/portainer/docker-compose.yml"
-            }
+            "docker_compose_files": [
+                {
+                    "source": "/usr/local/phoenix_hypervisor/persistent-storage/qdrant/docker-compose.yml",
+                    "destination": "qdrant/docker-compose.yml"
+                }
+            ]
+        },
+        {
+            "vmid": 1002,
+            "name": "Dr-Phoenix",
+            "clone_from_vmid": 9000,
+            "cores": 4,
+            "memory_mb": 4096,
+            "disk_size_gb": 64,
+            "start_at_boot": true,
+            "boot_order": 2,
+            "boot_delay": 2,
+            "features": [
+                "base_setup",
+                "docker"
+            ],
+            "portainer_role": "agent",
+            "network_config": {
+                "ip": "10.0.0.102/24",
+                "gw": "10.0.0.1"
+            },
+            "user_config": {
+                "username": "phoenix_user"
+            },
+            "volumes": [
+                {
+                    "type": "nfs",
+                    "name": "persistent-storage",
+                    "path": "/quickOS/vm-persistent-data/1000",
+                    "mount_point": "/persistent-storage",
+                    "server": "10.0.0.13"
+                }
+            ]
         }
     ]
 }

@@ -1,82 +1,135 @@
-# Final Implementation Plan: Correcting Container 101 Configuration
+# Final Implementation Plan: Centralized Declarative Provisioning
 
-This document provides the final, corrected implementation plan to align container 101 with the consultant's recommendations and resolve the startup failures.
+**Author:** Roo
+**Version:** 8.0
+**Date:** 2025-10-03
 
-## 1. Update `phoenix_lxc_configs.json`
+## 1. Executive Summary
 
-The following changes must be made to the configuration for container `101` in `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`.
+This document outlines the definitive, simplified architecture for managing Docker applications within the Phoenix Hypervisor. This "Centralized Declarative Provisioning" model establishes a clean separation of concerns:
+-   **`phoenix-cli`** is responsible for provisioning infrastructure, which includes ensuring Docker Compose files are present on the central management VM.
+-   **Portainer** is responsible for application deployment and lifecycle management, using the files provisioned by `phoenix-cli`.
 
-### 1.1. Re-enable Nesting and Update AppArmor Profile
+This architecture is simple, robust, and perfectly aligns with the vision of having `phoenix-cli` set the stage for web-based management tools like Portainer to take over.
 
--   **Re-enable Nesting**: Add `"nesting=1"` back to the `pct_options` array.
--   **Update AppArmor Profile**: Change the `apparmor_profile` from `"unconfined"` to `"lxc-container-default-cgns"`.
--   **Update lxc.apparmor.profile**: Change the `lxc.apparmor.profile` from `"unconfined"` to `"lxc-container-default-cgns"`.
+## 2. Target Architecture
 
-### 1.2. Add Additional Mount Points
+```mermaid
+graph TD
+    subgraph "User Interfaces"
+        CLI["phoenix-cli"]
+        WebUI["Web Browser"]
+    end
 
-Add the following new mount points to the `mount_points` array:
+    subgraph "Proxmox Hypervisor"
+        VM1001["VM 1001: Portainer<br/>- Portainer Server<br/>- Compose Files"]
+        VM1002["VM 1002: Dr-Phoenix<br/>- Portainer Agent<br/>- qdrant Container"]
+        LXC101["LXC 101: Gateway<br/>- Nginx"]
+    end
 
--   `/usr/local/phoenix_hypervisor/etc/nginx/sites-enabled` -> `/etc/nginx/sites-enabled`
--   `/usr/local/phoenix_hypervisor/etc/nginx/snippets` -> `/etc/nginx/snippets`
--   `/usr/local/phoenix_hypervisor/etc/nginx/conf` -> `/etc/nginx`
-
-## 2. Simplify `phoenix_hypervisor_lxc_101.sh`
-
-The application script for container `101` must be simplified to remove the redundant symbolic link creation, as the `sites-enabled` directory will now be mounted directly from the host.
-
-### Revised Script
-
-Replace the contents of `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_101.sh` with the following:
-
-```bash
-#!/bin/bash
-#
-# File: phoenix_hypervisor_lxc_101.sh
-# Description: This script configures and launches the Nginx API Gateway. It relies on
-#              all configurations being mounted from the host.
-#
-
-set -e
-
-# --- Package Installation ---
-echo "Updating package lists and installing Nginx..."
-apt-get update
-apt-get install -y nginx
-
-# --- Directory Verification ---
-# Verify that the necessary directories, mounted from the host, are not empty.
-SSL_DIR="/etc/nginx/ssl"
-SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
-
-if [ -z "$(ls -A $SSL_DIR)" ]; then
-   echo "SSL certificate directory is empty. Certificates should be mounted from the host." >&2
-   exit 1
-fi
-
-if [ -z "$(ls -A $SITES_ENABLED_DIR)" ]; then
-   echo "Nginx 'sites-enabled' directory is empty. Configurations should be mounted from the host." >&2
-   exit 1
-fi
-
-# --- Service Management and Validation ---
-echo "Testing Nginx configuration..."
-nginx -t
-
-echo "Enabling and restarting Nginx service..."
-systemctl enable nginx
-systemctl restart nginx
-
-echo "Performing health check on Nginx service..."
-if ! systemctl is-active --quiet nginx; then
-    echo "Nginx service health check failed. The service is not running." >&2
-    exit 1
-fi
-
-echo "Nginx API Gateway has been configured successfully in LXC 101 using mounted configurations."
-exit 0
+    CLI -- Manages Infrastructure --> Proxmox Hypervisor
+    WebUI -- Accesses --> VM1001
+    WebUI -- Accesses --> LXC101
+    VM1001 -- Controls Apps on --> VM1002
+    LXC101 -- Proxies to --> VM1002
 ```
 
-## 3. Final Todo List for `code` mode
+## 3. Detailed Implementation Plan
 
-- [ ] Apply the specified changes to the configuration for container `101` in `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`.
-- [ ] Replace the contents of `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_101.sh` with the revised script.
+### Phase 1: Declarative Configuration (`phoenix_vm_configs.json`)
+
+1.  **Define the New "Dr-Phoenix" Services VM (1002):**
+    Add a clean, Docker-ready VM definition to `usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json`.
+    ```json
+    {
+        "vmid": 1002,
+        "name": "Dr-Phoenix",
+        "clone_from_vmid": 9000,
+        "cores": 4,
+        "memory_mb": 4096,
+        "disk_size_gb": 64,
+        "start_at_boot": true,
+        "boot_order": 2,
+        "features": ["base_setup", "docker"],
+        "portainer_role": "agent",
+        "network_config": { "ip": "10.0.0.102/24", "gw": "10.0.0.1" },
+        "user_config": { "username": "phoenix_user" }
+    }
+    ```
+
+2.  **Update the "Portainer" Management VM (1001) Definition:**
+    Modify the definition for VM 1001 to rename it, reduce its disk size, and add the `docker_compose_files` array.
+    ```json
+    {
+        "vmid": 1001,
+        "name": "Portainer",
+        "clone_from_vmid": 9000,
+        "cores": 4,
+        "memory_mb": 8192,
+        "disk_size_gb": 32,
+        "start_at_boot": true,
+        "boot_order": 1,
+        "features": ["base_setup", "docker"],
+        "portainer_role": "primary",
+        "network_config": { "ip": "10.0.0.101/24", "gw": "10.0.0.1" },
+        "user_config": { "username": "phoenix_user" },
+        "volumes": [
+            {
+                "type": "nfs",
+                "name": "persistent-storage",
+                "path": "/quickOS/vm-persistent-data/1001",
+                "mount_point": "/persistent-storage"
+            }
+        ],
+        "docker_compose_files": [
+            {
+                "source": "/usr/local/phoenix_hypervisor/persistent-storage/qdrant/docker-compose.yml",
+                "destination": "qdrant/docker-compose.yml"
+            }
+        ]
+    }
+    ```
+
+### Phase 2: Orchestrator and File Preparation
+
+1.  **Create Qdrant Docker Compose File:**
+    Create the file at `/usr/local/phoenix_hypervisor/persistent-storage/qdrant/docker-compose.yml`.
+    ```yaml
+    version: '3.8'
+    services:
+      qdrant:
+        image: qdrant/qdrant:latest
+        restart: always
+        ports:
+          - "6333:6333"
+          - "6334:6334"
+        volumes:
+          - /var/lib/docker/volumes/qdrant_storage/_data:/qdrant/storage:z
+    ```
+
+2.  **Enhance `vm-manager.sh`:**
+    Implement the `provision_declarative_files()` function in `vm-manager.sh` to idempotently copy files listed in the `docker_compose_files` array.
+
+### Phase 3: Infrastructure Provisioning
+
+1.  **Provision the New Services VM:** Execute `phoenix create 1002`.
+2.  **Provision the Management VM:** Execute `phoenix create 1001`. This will place the `qdrant/docker-compose.yml` onto VM 1001's persistent storage.
+
+### Phase 4: Application Deployment and Cutover
+
+1.  **Deploy Qdrant via Portainer (Manual Step):**
+    a.  In the Portainer UI, add the new "Dr-Phoenix" VM (1002) as a Docker environment.
+    b.  Navigate to the "Dr-Phoenix" environment.
+    c.  Create a new stack. Select the option to use a compose file from the **Portainer server's filesystem**.
+    d.  Provide the path: `/persistent-storage/qdrant/docker-compose.yml` and deploy.
+
+2.  **Reconfigure Nginx Gateway:**
+    Update the Nginx configuration on LXC 101 to proxy qdrant requests to the new IP: `10.0.0.102:6333`.
+
+### Phase 5: Verification and Decommissioning
+
+1.  **Test Qdrant API Connection:**
+    Verify that the qdrant service is running on VM 1002 and is fully accessible through the Nginx gateway. Re-index the data as planned.
+
+2.  **Decommission Legacy Containers:**
+    Once validated, safely delete the legacy LXC containers (950, 951, 952, 953) using `phoenix delete <ctid>`.

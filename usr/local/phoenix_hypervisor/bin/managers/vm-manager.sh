@@ -146,6 +146,10 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
+        log_info "Step 6.5: Provisioning declarative files for VM $VMID..."
+        provision_declarative_files "$VMID"
+        log_info "Step 6.5: Completed."
+
         log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 7: Completed."
@@ -458,6 +462,74 @@ apply_volumes() {
 }
 
 # =====================================================================================
+# Function: provision_declarative_files
+# Description: Provisions declarative files, such as Docker Compose files, from the
+#              hypervisor to the VM's persistent storage. It reads the
+#              'docker_compose_files' array from the VM's configuration.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#
+# Returns:
+#   None.
+# =====================================================================================
+provision_declarative_files() {
+    local VMID="$1"
+    log_info "Provisioning declarative files for VMID: $VMID"
+
+    local persistent_volume_path
+    persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
+
+    if [ -z "$persistent_volume_path" ]; then
+        log_info "No NFS persistent volume found for VM $VMID. Skipping declarative file provisioning."
+        return 0
+    fi
+
+    local compose_files
+    compose_files=$(jq -c ".vms[] | select(.vmid == $VMID) | .docker_compose_files[]?" "$VM_CONFIG_FILE")
+
+    if [ -z "$compose_files" ]; then
+        log_info "No docker_compose_files to provision for VMID $VMID."
+        return 0
+    fi
+
+    echo "$compose_files" | while read -r file_entry; do
+        local source_path_from_config
+        source_path_from_config=$(echo "$file_entry" | jq -r '.source')
+        local destination_path
+        destination_path=$(echo "$file_entry" | jq -r '.destination')
+
+        if [ -z "$source_path_from_config" ] || [ -z "$destination_path" ]; then
+            log_warn "Invalid docker_compose_files entry: $file_entry. Missing source or destination. Skipping."
+            continue
+        fi
+
+        # The source path from config is the absolute path within the project structure.
+        local source_path="$source_path_from_config"
+
+        if [ ! -f "$source_path" ]; then
+            log_warn "Source file not found: $source_path. Skipping."
+            continue
+        fi
+
+        local full_destination_path="${persistent_volume_path}/${destination_path}"
+        local destination_dir
+        destination_dir=$(dirname "$full_destination_path")
+
+        log_info "Ensuring destination directory exists: $destination_dir"
+        if ! mkdir -p "$destination_dir"; then
+            log_error "Failed to create destination directory: $destination_dir"
+            continue
+        fi
+
+        log_info "Copying '$source_path' to '$full_destination_path'"
+        if ! cp "$source_path" "$full_destination_path"; then
+            log_error "Failed to copy file to $full_destination_path"
+        fi
+    done
+}
+
+# =====================================================================================
 # Function: start_vm
 # Description: Starts a VM if it is not already running.
 # Arguments:
@@ -528,16 +600,23 @@ apply_vm_features() {
         else
             # If the feature is 'docker', copy the Portainer configuration to the persistent storage.
             if [ "$feature" == "docker" ]; then
-                local portainer_source_path="${PHOENIX_BASE_DIR}/persistent-storage/portainer"
-                if [ -d "$portainer_source_path" ]; then
-                    log_info "Copying Portainer configuration from $portainer_source_path to $persistent_volume_path..."
-                    if ! cp -r "$portainer_source_path" "$persistent_volume_path/"; then
-                        log_fatal "Failed to copy Portainer configuration."
+                local portainer_role
+                portainer_role=$(jq -r ".vms[] | select(.vmid == $VMID) | .portainer_role // \"none\"" "$VM_CONFIG_FILE")
+
+                if [ "$portainer_role" == "primary" ]; then
+                    local portainer_source_path="${PHOENIX_BASE_DIR}/persistent-storage/portainer"
+                    if [ -d "$portainer_source_path" ]; then
+                        log_info "Copying Portainer configuration from $portainer_source_path to $persistent_volume_path..."
+                        if ! cp -r "$portainer_source_path" "$persistent_volume_path/"; then
+                            log_fatal "Failed to copy Portainer configuration."
+                        fi
+                        # Ensure the data directory exists
+                        mkdir -p "${persistent_volume_path}/portainer/data"
+                    else
+                        log_warn "Portainer source directory not found at $portainer_source_path. Skipping copy."
                     fi
-                    # Ensure the data directory exists
-                    mkdir -p "${persistent_volume_path}/portainer/data"
                 else
-                    log_warn "Portainer source directory not found at $portainer_source_path. Skipping copy."
+                    log_info "Skipping Portainer server configuration copy for role: $portainer_role"
                 fi
             fi
 
@@ -555,6 +634,10 @@ apply_vm_features() {
             log_info "Copying feature script and common utils to $hypervisor_scripts_dir"
             cp "$feature_script_path" "$hypervisor_scripts_dir/"
             cp "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh" "$hypervisor_scripts_dir/"
+
+            log_info "Copying Portainer setup scripts to $hypervisor_scripts_dir"
+            cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_api_setup.sh" "$hypervisor_scripts_dir/"
+            cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_agent_setup.sh" "$hypervisor_scripts_dir/"
             
             log_info "Copying VM context file to $hypervisor_scripts_dir"
             cp "$temp_context_file" "${hypervisor_scripts_dir}/vm_context.json"

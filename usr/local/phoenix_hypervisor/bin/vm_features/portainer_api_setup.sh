@@ -1,24 +1,30 @@
 #!/bin/bash
-#
 # File: portainer_api_setup.sh
-# Description: This script provides a placeholder for future Portainer API interactions.
-#
+# Description: This script automates the deployment of the Portainer server.
 
-# --- Shell Settings ---
 set -e
-set -o pipefail
 
-# --- Source common utilities ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
+LOG_FILE="/var/log/phoenix_feature_portainer_server.log"
+exec &> >(tee -a "$LOG_FILE")
 
-# =====================================================================================
-# Function: main
-# Description: Main entry point for the Portainer API setup script.
-# =====================================================================================
-main() {
-    log_info "This is a placeholder script for future Portainer API interactions."
-    log_info "You can add your API calls here to automate Portainer configuration."
-}
+echo "--- Starting Portainer Server Deployment ---"
 
-main "$@"
+PERSISTENT_STORAGE="/persistent-storage"
+COMPOSE_FILE_PATH="${PERSISTENT_STORAGE}/portainer/docker-compose.yml"
+
+if [ -f "$COMPOSE_FILE_PATH" ]; then
+    echo "Found docker-compose.yml at $COMPOSE_FILE_PATH"
+    compose_dir=$(dirname "$COMPOSE_FILE_PATH")
+    echo "Running 'docker-compose up -d' in $compose_dir"
+    if ! (cd "$compose_dir" && docker-compose up -d); then
+        echo "Error: Failed to run docker-compose for $COMPOSE_FILE_PATH" >&2
+        exit 1
+    else
+        echo "Successfully started Portainer server from $COMPOSE_FILE_PATH"
+    fi
+else
+    echo "Error: Portainer docker-compose.yml not found at $COMPOSE_FILE_PATH" >&2
+    exit 1
+fi
+
+echo "--- Portainer Server Deployment Complete ---"

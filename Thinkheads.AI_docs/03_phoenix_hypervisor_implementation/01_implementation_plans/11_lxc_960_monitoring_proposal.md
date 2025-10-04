@@ -114,7 +114,7 @@ Create an unprivileged LXC container (CTID 960) cloned from "Template-Docker" (C
 }
 ```
 
-**Schema Update**: Modify `phoenix_lxc_configs.schema.json` to include CTID 960 in the pattern (`"patternProperties": { "^(90[0-4]|910|920|950|95[1-7]|960)$"`). Validate new fields like `"monitoring"` in the features array.
+**Schema Update**: Modify `phoenix_lxc_configs.schema.json` to include CTID 960 in the pattern (`"patternProperties": { "^(90[0-4]|910|920|95[5-7]|960)$"`). Validate new fields like `"monitoring"` in the features array.
 
 ### Deployment via Docker Compose
 
@@ -179,13 +179,7 @@ scrape_configs:
       - targets: ['10.0.0.13:9400']
   - job_name: 'vllm'
     static_configs:
-      - targets: ['10.0.0.150:8000/metrics']
-  - job_name: 'qdrant'
-    static_configs:
-      - targets: ['10.0.0.152:6333/metrics']
-  - job_name: 'cadvisor'
-    static_configs:
-      - targets: ['10.0.0.152:8080/metrics', '10.0.0.154:8080/metrics', '10.0.0.156:8080/metrics']
+      - targets: ['10.0.0.102:6333/metrics']
 ```
 
 **Alerting Rules** (e.g., `/etc/prometheus/rules/alerts.yml`):
@@ -249,7 +243,7 @@ Run as a systemd service on port 9221. Metrics include node status, VM/LXC uptim
 
 ### NVIDIA DCGM Exporter
 
-Install DCGM on the host or GPU containers (e.g., CTID 950):
+Install DCGM on the host or GPU containers:
 
 ```bash
 apt install -y datacenter-gpu-manager
@@ -270,15 +264,15 @@ Metrics: GPU utilization, VRAM usage, temperature, power draw, ECC errors.
 
 ### vLLM Metrics
 
-vLLM containers (e.g., CTID 950, 951) expose a Prometheus-compatible `/metrics` endpoint. This can be scraped to monitor request latency, throughput, queue size, and token generation rate, providing critical insights into inference performance.
+vLLM containers expose a Prometheus-compatible `/metrics` endpoint. This can be scraped to monitor request latency, throughput, queue size, and token generation rate, providing critical insights into inference performance.
 
 ### Qdrant Metrics
 
-Qdrant (CTID 952) exposes `/metrics` for collection sizes, query latency, storage usage. Integrate with official Grafana dashboard for RAG performance insights.
+Qdrant (now on VM 1002) exposes `/metrics` for collection sizes, query latency, storage usage. Integrate with official Grafana dashboard for RAG performance insights.
 
 ### Other Application Metrics
 
-- **n8n (CTID 954)**: Use cAdvisor for CPU/memory; consider `process-exporter` for workflow metrics.
+- **n8n**: Use cAdvisor for CPU/memory; consider `process-exporter` for workflow metrics.
 - **Ollama (CTID 955)**: No native exporter; monitor via cAdvisor or custom API wrapper.
 - **llama.cpp (CTID 957)**: Similar to Ollama; integrate DCGM for GPU metrics.
 - **Node Exporter**: Install on host (`apt install prometheus-node-exporter`) for system metrics (CPU, memory, disk, network).
@@ -301,7 +295,7 @@ Extend `phoenix_lxc_configs.schema.json`:
 }
 ```
 
-Update CTID pattern: `"^(90[0-4]|910|920|950|95[1-7]|960)$"`.
+Update CTID pattern: `"^(90[0-4]|910|920|95[5-7]|960)$"`.
 
 ### Feature Scripts
 
@@ -341,7 +335,7 @@ Add to `phoenix_hypervisor_config.json` under `"shared_volumes"`:
 }
 ```
 
-Dependency: CTID 953 (NGINX) for proxying Grafana/Prometheus (e.g., `/grafana` to `10.0.0.160:3000`).
+Dependency: CTID 101 (NGINX) for proxying Grafana/Prometheus (e.g., `/grafana` to `10.0.0.160:3000`).
 
 ---
 

@@ -201,23 +201,6 @@ The following parameters have been added to the `phoenix_lxc_configs.json` file 
 
 This section provides detailed implementation plans for specific LXC containers within the Phoenix Hypervisor ecosystem.
 
-#### 7.4.1. LXC 951: vllm-granite-embed
-
-This plan outlines the deployment, refactoring, and enhancement of LXC container 951, which is dedicated to serving the `ibm-granite/granite-embedding-english-r2` model.
-
-**Deployment and Refactoring:**
-
-*   **Declarative Configuration:** The deployment process has been refactored to use the new `vllm_engine_config` object, and the `phoenix_hypervisor_lxc_vllm.sh` script now dynamically generates the systemd service.
-
-**Enhancement Plan: Microservices Architecture**
-
-To enhance responsiveness and context-checking, the single-container architecture will be evolved into a microservices-based approach with the following components:
-
-*   **API Gateway:** A single entry point for all incoming requests.
-*   **Load Balancer:** Distributes traffic across multiple service instances.
-*   **Request Queue:** Manages traffic bursts and decouples request ingestion from processing.
-*   **Context Validation Service:** A new microservice to validate the semantic relevance of input data.
-*   **Auto-scaling Group of vLLM Instances:** A pool of `lxc 951` containers that can be automatically scaled.
 
 #### 7.4.2. LXC 101: api-gateway-lxc
 

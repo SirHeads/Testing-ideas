@@ -226,33 +226,21 @@ graph TD
         T3[901: Template-GPU]
     end
 
-    subgraph "Provisioned LXC Containers"
-        C1[950: vllm-qwen2.5-7b-awq]
-        C2[953: Nginx-VscodeRag]
-        C3[955: ollama-oWUI]
-    end
-
     subgraph "VM & Docker Services"
-        VM[1001: Dr-Phoenix]
-        Docker["Docker"]
-        Portainer["Portainer"]
-        N8N["n8n"]
-        OpenWebUI["OpenWebUI"]
-        Monitoring["Monitoring"]
+        VM1001["VM 1001: Portainer"]
+        VM1002["VM 1002: Dr-Phoenix"]
+        Docker["Docker Engine"]
+        Qdrant["qdrant"]
+        Portainer["Portainer Agent"]
     end
 
     T1 -- Creates --> T2
     T2 -- Cloned to create --> T3
 
-    T3 -- Cloned to create --> C1
-    T2 -- Cloned to create --> C2
-    T3 -- Cloned to create --> C3
-
-    VM -- Hosts --> Docker
+    VM1001 -- Manages --> VM1002
+    VM1002 -- Hosts --> Docker
+    Docker -- Hosts --> Qdrant
     Docker -- Hosts --> Portainer
-    Docker -- Hosts --> N8N
-    Docker -- Hosts --> OpenWebUI
-    Docker -- Hosts --> Monitoring
 ```
 
 ## 5. Networking
@@ -278,26 +266,15 @@ graph TD
             B[Nginx Reverse Proxy]
         end
 
-        subgraph "Backend LXC Services"
-            C[Embedding Service]
-            D[Qwen Service]
-            E[Qdrant Service]
-            H[Ollama Service]
-            I[Llamacpp Service]
-        end
-
-        subgraph "Backend VM Services"
-            VM[VM 1001: Dr-Phoenix]
+        subgraph "Backend Services"
+            VM1001["VM 1001: Portainer"]
+            VM1002["VM 1002: Dr-Phoenix"]
         end
     end
 
     A --> B
-    B --> C
-    B --> D
-    B --> E
-    B --> H
-    B --> I
-    B --> VM
+    B --> VM1001
+    B --> VM1002
 ```
 
 ### 5.3. Firewall Management
@@ -328,7 +305,7 @@ The `hypervisor_feature_setup_apparmor.sh` script is the single source of truth 
 
 ### 7.2. Docker Security
 
-The **only** supported and recommended approach for running Docker workloads is within a dedicated Virtual Machine, specifically VM 1001 (`Dr-Phoenix`). This provides the highest level of isolation and security. The Docker-in-LXC approach has been officially deprecated due to stability and security concerns.
+The **only** supported and recommended approach for running Docker workloads is within dedicated Virtual Machines. The new architecture utilizes two VMs: `VM 1001 (Portainer)` for management and `VM 1002 (Dr-Phoenix)` for hosting Dockerized services. This provides the highest level of isolation and security. The Docker-in-LXC approach has been officially deprecated due to stability and security concerns.
 
 ### 7.3. User and Secret Management
 
@@ -360,7 +337,7 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 ### 8.4. Docker Integration
 
-Docker is now exclusively integrated through a dedicated VM, VM 1001 (`Dr-Phoenix`), which hosts all Docker-based services. This approach centralizes Docker management and improves security and isolation. The `docker` feature is a prerequisite for the VM, and the Portainer feature is then applied to manage the Docker environment within it.
+Docker is now exclusively integrated through dedicated VMs. `VM 1002 (Dr-Phoenix)` hosts all Docker-based services, while `VM 1001 (Portainer)` provides a centralized management interface. This approach improves security, isolation, and manageability. The `docker` feature is a prerequisite for both VMs, and the Portainer feature is then applied to manage the Docker environment.
 
 ## 9. Testing & QA
 

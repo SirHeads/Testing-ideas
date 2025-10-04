@@ -105,7 +105,7 @@ phoenix-cli test
 To run tests for a specific LXC container or VM, provide the guest ID:
 
 ```bash
-phoenix-cli test 950
+phoenix-cli test 1002
 ```
 
 ### 3.3. Interpreting Results
@@ -136,6 +136,4 @@ For services that do not have automated health checks, the following manual veri
 
 | Container | Service | Verification Method |
 | :--- | :--- | :--- |
-| 950, 951 | vLLM API Server | `curl http://localhost:8000/v1/models` |
-| 953 | Nginx | `systemctl is-active --quiet nginx` |
-| 952 | Qdrant | `curl http://localhost:6333` |
+| 1002 | Dr-Phoenix (qdrant) | `curl http://10.0.0.102:6333` |

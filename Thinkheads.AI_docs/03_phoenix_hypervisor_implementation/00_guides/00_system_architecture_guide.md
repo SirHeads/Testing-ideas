@@ -49,20 +49,13 @@ graph TD
         T920[920: Template-VLLM]
     end
 
-    subgraph "Application VMs & Containers"
-        VM8001[8001: Docker VM]
-        C950[950: vllm-qwen]
-        C952[952: qdrant]
-        C955[955: ollama]
+    subgraph "Application VMs"
+        VM1001["VM 1001: Portainer"]
+        VM1002["VM 1002: Dr-Phoenix"]
     end
 
-    T8000 -- Cloned to --> VM8001
-    T900 -- Cloned to --> T901
-    T900 -- Cloned to --> T902
-    T901 -- Cloned to --> T920
-    T901 -- Cloned to --> C955
-    T902 -- Cloned to --> C952
-    T920 -- Cloned to --> C950
+    T8000 -- Cloned to --> VM1001
+    T8000 -- Cloned to --> VM1002
 ```
 ## 2. Orchestration Workflow
 

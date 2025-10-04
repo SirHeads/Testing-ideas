@@ -41,33 +41,14 @@ graph TD
         API_Gateway[LXC 101: NGINX API Gateway]
     end
 
-    subgraph "Core AI/ML Services"
-        VLLM_Chat[LXC 950: vLLM Chat Service]
-        VLLM_Embed[LXC 801: vLLM Embedding Service]
-        Qdrant[LXC 952: Qdrant Vector DB]
-        Ollama[LXC 955: Ollama Service]
-        LlamaCPP[LXC 957: Llama.cpp Service]
-    end
-
-    subgraph "Supporting Services"
-        DockerVM["VM 8001: Docker Services"]
+    subgraph "Core Services"
+        VM1001["VM 1001: Portainer"]
+        VM1002["VM 1002: Dr-Phoenix"]
     end
 
     User -- HTTPS --> API_Gateway
-    API_Gateway -- Routes to --> VLLM_Chat
-    API_Gateway -- Routes to --> VLLM_Embed
-    API_Gateway -- Routes to --> Qdrant
-    API_Gateway -- Routes to --> Ollama
-    API_Gateway -- Routes to --> LlamaCPP
-    API_Gateway -- Routes to --> DockerVM
-
-    DockerVM -- Hosts --> N8N[n8n]
-    DockerVM -- Hosts --> WebUI[Open WebUI]
-    DockerVM -- Hosts --> Portainer[Portainer]
-    DockerVM -- Hosts --> Monitoring[Monitoring]
-
-    WebUI -- Interacts with --> Ollama
-    VLLM_Embed -- Stores embeddings in --> Qdrant
+    API_Gateway -- Routes to --> VM1001
+    API_Gateway -- Routes to --> VM1002
 ```
 
 ---
@@ -90,47 +71,18 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **Port**: `8000`
     *   **Dependencies**: `101`
 
-### Container 950: vLLM Chat Service (`vllm-qwen2.5-7b-awq`)
+### VM 1002: Dr-Phoenix
 
-*   **Purpose**: Hosts a vLLM instance serving the `Qwen/Qwen2.5-7B-Instruct-AWQ` model for high-performance chat completions.
-*   **Key Software**: vLLM
+*   **Purpose**: Hosts all Dockerized services, including the qdrant vector database.
+*   **Key Software**: Docker, qdrant
 *   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 72000 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
+    *   **CPU**: 4 cores
+    *   **Memory**: 4096 MB
+    *   **Storage**: 64 GB
 *   **Configuration Details**:
-    *   **IP Address**: `10.0.0.150`
-    *   **Port**: `8000`
-    *   **Model**: `Qwen/Qwen2.5-7B-Instruct-AWQ`
-    *   **Configuration**: Managed by a `vllm_engine_config` object in `phoenix_lxc_configs.json`.
-
-### Container 951: Embedding Service (`vllm-granite-embed-r2`)
-
-*   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model for generating text embeddings.
-*   **Key Software**: vLLM
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 72000 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.151`
-    *   **Port**: `8000`
-    *   **Configuration**: Managed by a `vllm_engine_config` object in `phoenix_lxc_configs.json`.
-
-### Container 952: Vector Database (`qdrant-VSCodeRag`)
-
-*   **Purpose**: Provides a high-performance, scalable vector database for storing and searching text embeddings.
-*   **Key Software**: Qdrant (via Docker)
-*   **Resource Allocation**:
-    *   **CPU**: 2 cores
-    *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.152`
-    *   **Port**: `6333`
-    *   **Data Persistence**: Data is stored in a dedicated 20GB volume mounted at `/qdrant/storage`.
+    *   **IP Address**: `10.0.0.102`
+    *   **Port**: `6333` (for qdrant)
+    *   **Data Persistence**: Data is managed by Docker volumes.
 
 ### Container 101: API Gateway (`Nginx-VscodeRag`)
 

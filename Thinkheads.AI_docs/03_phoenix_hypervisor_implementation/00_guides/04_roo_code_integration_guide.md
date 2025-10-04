@@ -26,9 +26,8 @@ This document provides a comprehensive guide to integrating the Roo Code extensi
 
 The integration relies on three key LXC containers:
 
-*   **LXC 801 (vLLM Embedding Service):** Hosts the `ibm-granite/granite-embedding-english-r2` model. Its deployment is managed declaratively via a `vllm_engine_config` object, providing an OpenAI-compatible API endpoint for text vectorization.
-*   **LXC 952 (Qdrant Vector Database):** Stores and indexes the vectorized embeddings, enabling efficient similarity searches.
-*   **LXC 101 (Nginx API Gateway):** Acts as a reverse proxy, providing a single, stable entry point for the vLLM service.
+*   **VM 1002 (Dr-Phoenix):** Hosts the qdrant vector database and other Dockerized services.
+*   **LXC 101 (Nginx API Gateway):** Acts as a reverse proxy, providing a single, stable entry point for all services.
 
 ```mermaid
 graph TD
@@ -38,13 +37,11 @@ graph TD
 
     subgraph "Phoenix Hypervisor"
         C[LXC 101: Nginx Gateway <br> 10.0.0.153]
-        B[LXC 801: vLLM Embedding Service <br> 10.0.0.141:8000]
-        D[LXC 952: Qdrant Vector DB <br> 10.0.0.152:6333]
+        D["VM 1002: Dr-Phoenix <br> 10.0.0.102:6333"]
     end
 
     A -- "API Request (http://10.0.0.153/v1)" --> C
-    C -- "Proxy Pass" --> B
-    A -- "Vector Search/Storage (http://10.0.0.152:6333)" --> D
+    A -- "Vector Search/Storage (http://10.0.0.102:6333)" --> D
 ```
 
 ## 2. Step-by-Step Configuration Guide
@@ -67,7 +64,7 @@ graph TD
 
 4.  **Configure the Vector Store (Qdrant) Settings:**
     *   Find the **RooCode: Vector Store** section.
-    *   Set the **Url** to your Qdrant instance URL: `http://10.0.0.152:6333`.
+    *   Set the **Url** to your Qdrant instance URL: `http://10.0.0.102:6333`.
     *   Leave the **Api Key** field **blank**.
 
 5.  **Save and Reload:**
@@ -83,7 +80,7 @@ graph TD
 | **Model Dimension**      | `RooCode: Embedder` | `768`                                           |
 | **Model Name**           | `RooCode: Embedder` | `ibm-granite/granite-embedding-english-r2`      |
 | **Api Key**              | `RooCode: Vector Store` | *(Leave this field blank)*                      |
-| **Url**                  | `RooCode: Vector Store` | `http://10.0.0.152:6333`                        |
+| **Url**                  | `RooCode: Vector Store` | `http://10.0.0.102:6333`                        |
 
 ## 4. Advanced Configuration
 

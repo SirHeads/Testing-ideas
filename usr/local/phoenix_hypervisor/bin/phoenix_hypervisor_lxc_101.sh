@@ -75,12 +75,13 @@ cat > /etc/nginx/sites-available/vllm_gateway << 'EOF'
 
 upstream embedding_service { server 10.0.0.141:8000; }
 upstream qwen_service { server 10.0.0.150:8000; }
-upstream qdrant_service { server 10.0.0.152:6333; }
+upstream qdrant_service { server 10.0.0.102:6333; }
 upstream n8n_service { server 10.0.0.154:5678; }
 upstream open_webui_service { server 10.0.0.156:8080; }
 upstream ollama_service { server 10.0.0.155:11434; }
 upstream llamacpp_service { server 10.0.0.157:8081; }
 upstream portainer_service { server 10.0.0.101:9443; }
+upstream portainer_agent_service { server 10.0.0.102:9001; }
 
 server {
     listen 80;
@@ -138,6 +139,12 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+    }
+
+    location /agent/ {
+        proxy_pass https://portainer_agent_service;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
     }
 }
 
