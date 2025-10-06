@@ -425,6 +425,10 @@
                 {
                     "host_path": "/mnt/pve/quickOS/shared-prod-data/logs/nginx",
                     "container_path": "/logs/nginx"
+                },
+                {
+                    "host_path": "/usr/local/phoenix_hypervisor/persistent-storage/ssl",
+                    "container_path": "/etc/nginx/ssl"
                 }
             ]
         },

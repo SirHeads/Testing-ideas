@@ -1,36 +1,33 @@
 #!/bin/bash
 #
 # File: check_qdrant.sh
-#
-# Description: This script performs a health check on the Qdrant vector database
-#              service. It verifies that the Qdrant API is responsive by querying
-#              its health check endpoint (`/healthz`) through the Nginx reverse proxy.
-#              This validation is crucial for ensuring the embedding and retrieval
-#              capabilities of the AI services are functional.
-#
-# Dependencies: - The Qdrant service must be running.
-#               - The Nginx reverse proxy must be configured to route to Qdrant.
-#               - `curl` command must be available.
-#
-# Inputs: None.
-#
-# Outputs:
-#   - Exits with status 0 if the Qdrant service is healthy.
-#   - Exits with status 1 and prints an error message if the API health check fails.
-#   - Console output indicates success or failure.
-#
+# Description: This script checks the health of the Qdrant service.
 
-# --- Health Check Logic ---
+set -e
 
-# Perform an API health check by querying the /qdrant/healthz endpoint via the Nginx gateway.
-# A successful response (HTTP 200) indicates that both Nginx and the backend Qdrant
-# service are operational. The --fail flag ensures curl exits with an error on
-# non-200 responses.
-if ! curl --fail --silent http://10.0.0.153/qdrant/healthz > /dev/null; then
-    echo "Error: The Qdrant API is not responding via the Nginx gateway. Check both Nginx and Qdrant services."
-    exit 1
-fi
+LOG_FILE="/var/log/phoenix_health_check_qdrant.log"
+exec &> >(tee -a "$LOG_FILE")
 
-# If the check passes, report that the service is healthy.
-echo "Success: Qdrant is healthy."
-exit 0
+echo "--- Starting Qdrant Health Check ---"
+
+QDRANT_URL="http://localhost:6333"
+
+echo "Waiting for Qdrant to become available at $QDRANT_URL..."
+attempts=0
+max_attempts=12 # 2 minutes
+interval=10
+
+while [ $attempts -lt $max_attempts ]; do
+    if curl -s -f "$QDRANT_URL/healthz" > /dev/null; then
+        echo "Qdrant is responsive."
+        echo "--- Qdrant Health Check Succeeded ---"
+        exit 0
+    fi
+    echo "Qdrant not yet responsive. Retrying in $interval seconds... (Attempt $((attempts + 1))/$max_attempts)"
+    sleep $interval
+    attempts=$((attempts + 1))
+done
+
+echo "Error: Qdrant did not become responsive." >&2
+echo "--- Qdrant Health Check Failed ---"
+exit 1

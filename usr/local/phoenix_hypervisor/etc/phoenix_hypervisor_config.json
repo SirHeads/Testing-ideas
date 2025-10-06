@@ -20,7 +20,7 @@
     "timezone": "America/New_York",
     "network": {
         "external_registry_url": "docker.io/SirHeads",
-        "portainer_server_ip": "10.0.0.99",
+        "portainer_server_ip": "10.0.0.101",
         "portainer_server_port": 9443,
         "portainer_agent_port": 9001,
         "interfaces": {
@@ -322,5 +322,9 @@
             "default_input_policy": "DROP",
             "default_output_policy": "ACCEPT"
         }
+    },
+    "portainer_api": {
+        "admin_user": "admin",
+        "admin_password": "your_secure_password_here"
     }
 }

@@ -323,6 +323,18 @@ main() {
         exit 1
     fi
 
+    # --- ENSURE SSL CERTIFICATES EXIST ---
+    # Before any operation, run the idempotent script to ensure SSL certs are available.
+    log_info "Ensuring SSL certificates are present..."
+    local cert_script_path="$SCRIPT_DIR/generate_ssl_certs.sh"
+    if [ -f "$cert_script_path" ]; then
+        if ! "$cert_script_path"; then
+            log_fatal "Failed to generate or verify SSL certificates."
+        fi
+    else
+        log_fatal "Certificate generation script not found at $cert_script_path."
+    fi
+
     # --- TARGET RESOLUTION AND ROUTING ---
     # Handle cases with no targets first.
     if [ "${#TARGETS[@]}" -eq 0 ]; then

@@ -36,6 +36,8 @@
                 "docker"
             ],
             "portainer_role": "primary",
+            "portainer_admin_user": "admin",
+            "portainer_admin_password": "Kick@$$2025",
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1"
@@ -51,17 +53,11 @@
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
                 }
-            ],
-            "docker_compose_files": [
-                {
-                    "source": "/usr/local/phoenix_hypervisor/persistent-storage/qdrant/docker-compose.yml",
-                    "destination": "qdrant/docker-compose.yml"
-                }
             ]
         },
         {
             "vmid": 1002,
-            "name": "Dr-Phoenix",
+            "name": "drphoenix",
             "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 4096,
@@ -89,6 +85,9 @@
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
                 }
+            ],
+            "docker_stacks": [
+                "qdrant_service"
             ]
         }
     ]

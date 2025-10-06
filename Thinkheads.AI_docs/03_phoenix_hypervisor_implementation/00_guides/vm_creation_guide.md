@@ -5,13 +5,13 @@ This document provides a comprehensive, up-to-date guide to creating and managin
 
 The VM management system is a core component of the Phoenix Hypervisor, designed to provide a seamless, declarative, and idempotent experience. The architecture is centered around a few key principles and components:
 
--   **Declarative Configuration:** The desired state of all VMs is defined in the `phoenix-cli_vm_configs.json` file. This serves as the single source of truth, allowing for version-controlled and auditable infrastructure.
+-   **Declarative Configuration:** The desired state of all VMs is defined in `phoenix_vm_configs.json`, `phoenix_stacks_config.json`, and `phoenix_hypervisor_config.json`. These files provide a comprehensive, version-controlled definition of the entire VM and Docker stack ecosystem.
 -   **Dispatcher-Manager Architecture:** The `phoenix-cli` CLI acts as a dispatcher, parsing user commands and routing them to the appropriate manager script. For all VM-related operations, it invokes the `vm-manager.sh` script.
 -   **Idempotent State Machine:** The `vm-manager.sh` script functions as a state machine. It reads the desired state from the configuration file and compares it to the current state of the system, only taking the actions necessary to bring the system into alignment. This ensures that the orchestrator can be run multiple times without causing unintended side effects.
 -   **Unified User Experience:** From the user's perspective, creating and managing a VM is identical to managing an LXC container. The `phoenix-cli orchestrate <ID>` command works for both, and the dispatcher handles the routing to the correct backend manager.
 ## 2. Configuration
 
-All VM definitions are stored in `/usr/local/phoenix-cli_hypervisor/etc/phoenix-cli_vm_configs.json`. This file is the single source of truth for the VM orchestrator.
+All VM definitions are stored in `/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json`. This file, in conjunction with `phoenix_stacks_config.json` and `phoenix_hypervisor_config.json`, is the single source of truth for the VM orchestrator.
 
 ### 2.1. Main Sections
 
@@ -38,6 +38,7 @@ Each VM object in the `vms` array can have the following properties:
 | `storage_pool`           | String  | The Proxmox storage pool for the root disk.                                                             | No       |
 | `network_bridge`         | String  | The network bridge to connect the VM to (e.g., `vmbr0`).                                                | No       |
 | `features`               | Array   | A list of feature scripts to apply to the VM.                                                           | No       |
+| `docker_stacks`          | Array   | A list of Docker stack names (from `phoenix_stacks_config.json`) to deploy to the VM.                     | No       |
 | `network_config`         | Object  | An object containing the network configuration for the VM.                                              | No       |
 | `user_config`            | Object  | An object containing the user account configuration for the VM.                                         | No       |
 
@@ -73,6 +74,10 @@ Each VM object in the `vms` array can have the following properties:
             "features": [
                 "docker"
             ],
+            "docker_stacks": [
+                "portainer",
+                "qdrant"
+            ],
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1"
@@ -86,36 +91,38 @@ Each VM object in the `vms` array can have the following properties:
 ```
 ## 3. Orchestration Workflow
 
-The `vm-manager.sh` script follows a well-defined state machine to ensure that VMs are provisioned in a consistent and idempotent manner. The following diagram illustrates the end-to-end workflow:
+The `vm-manager.sh` script follows a well-defined state machine to ensure that VMs are provisioned and Docker stacks are deployed in a consistent and idempotent manner.
 
 ```mermaid
 graph TD
-    A[Start: phoenix-cli orchestrate <VMID>] --> B{VM Exists?};
-    B -- Yes --> G[Apply Configurations];
-    B -- No --> C{Clone or Create?};
-    C -- Clone --> D[Clone from existing VM];
-    C -- Create --> E[Create from Cloud Image];
-    D --> F[VM Created];
-    E --> F;
+    A[Start: phoenix-cli orchestrate <VMID>] --> B{Read Configs};
+    B --> C{VM Exists?};
+    C -- Yes --> G[Apply Configurations];
+    C -- No --> D{Clone or Create?};
+    D -- Clone --> E[Clone from existing VM];
+    D -- Create --> F[Create from Cloud Image];
+    E --> G;
     F --> G;
     G --> H{Start VM};
     H --> I{Wait for Guest Agent};
     I --> J[Apply Feature Scripts];
-    J --> K{Is Template?};
-    K -- Yes --> L[Finalize Template];
-    K -- No --> M[End];
-    L --> M;
+    J --> K[Deploy Docker Stacks];
+    K --> L{Is Template?};
+    L -- Yes --> M[Finalize Template];
+    L -- No --> N[End];
+    M --> N;
 ```
 
 ### 3.1. Workflow Steps Explained
 
-1.  **VM Existence Check:** The orchestrator first checks if a VM with the specified `vmid` already exists. If it does, it skips the creation steps and proceeds to apply configurations, ensuring idempotency.
-2.  **Creation Method:** If the VM does not exist, the orchestrator determines whether to create it from a cloud image (`template_image`) or to clone it from an existing VM (`clone_from_vmid`).
-3.  **Apply Configurations:** The script applies all the configurations from the `phoenix-cli_vm_configs.json` file, including CPU, memory, and network settings. This is also where the dynamic Cloud-Init configuration is generated and applied.
-4.  **Start VM:** The VM is started.
-5.  **Wait for Guest Agent:** The orchestrator waits for the QEMU Guest Agent to become responsive. This is a critical step to ensure that the VM is ready to accept commands before proceeding.
-6.  **Apply Features:** If any `features` are defined for the VM, the corresponding scripts are executed inside the VM using the QEMU Guest Agent.
-7.  **Template Finalization:** If the VM is marked as `is_template: true`, a finalization process is run, which includes cleaning the cloud-init state and converting the VM into a Proxmox template.
+1.  **Read Configs:** The orchestrator reads the `phoenix_vm_configs.json`, `phoenix_stacks_config.json`, and `phoenix_hypervisor_config.json` files.
+2.  **VM Existence Check:** It checks if a VM with the specified `vmid` already exists.
+3.  **Creation Method:** If the VM does not exist, it is created from a cloud image or cloned from an existing VM.
+4.  **Apply Configurations:** The script applies all the configurations from the `phoenix_vm_configs.json` file.
+5.  **Start VM and Wait for Guest Agent:** The VM is started, and the orchestrator waits for the QEMU Guest Agent to become responsive.
+6.  **Apply Features:** The feature scripts are executed inside the VM. This includes the `docker` feature, which is a prerequisite for stack deployment.
+7.  **Deploy Docker Stacks:** The `vm-manager.sh` script invokes the `portainer_api_setup.sh` utility to deploy the Docker stacks specified in the `docker_stacks` array.
+8.  **Template Finalization:** If the VM is marked as `is_template: true`, it is converted into a Proxmox template.
 ## 4. Key Features
 
 The VM management system includes several advanced features designed to enhance automation, flexibility, and scalability.
@@ -143,52 +150,62 @@ The feature script framework allows for the modular and reusable application of 
 -   **Script Location:** Feature scripts are stored in `/usr/local/phoenix-cli_hypervisor/bin/vm_features/`.
 -   **Execution:** The `vm-manager.sh` script uses the QEMU Guest Agent (`qm guest exec`) to run the feature scripts inside the VM.
 -   **Idempotency:** Feature scripts are designed to be idempotent, meaning they can be run multiple times without causing unintended side effects.
-## 5. Usage Guide
+## 5. Declarative Stack Management
+
+The most significant enhancement to the VM management system is the introduction of declarative stack management.
+
+-   **`phoenix_stacks_config.json`**: This file serves as a centralized catalog for all our Docker stacks. Each stack is defined by a name, a Git repository, and an optional list of environment variables.
+-   **`phoenix_vm_configs.json`**: The `docker_stacks` array in this file links a VM to the stacks it should run.
+-   **`portainer_api_setup.sh`**: This script is the engine that drives the stack deployment process. It interacts with the Portainer API to create endpoints and deploy stacks from their Git repositories.
+
+This new architecture provides a powerful, version-controlled, and highly automated system for managing our Dockerized services.
+
+## 6. Usage Guide
 
 All VM lifecycle operations are managed through the `phoenix-cli` CLI.
 
-### 5.1. Create or Update a VM
+### 6.1. Create or Update a VM
 
 To create a new VM or update an existing one to match the configuration, use the `orchestrate` command:
 
 ```bash
-/usr/local/phoenix-cli_hypervisor/bin/phoenix-cli orchestrate <VMID>
+/usr/local/phoenix_hypervisor/bin/phoenix-cli orchestrate <VMID>
 ```
 
-### 5.2. Start a VM
+### 6.2. Start a VM
 
 To start a VM, use the `start` command:
 
 ```bash
-/usr/local/phoenix-cli_hypervisor/bin/phoenix-cli start <VMID>
+/usr/local/phoenix_hypervisor/bin/phoenix-cli start <VMID>
 ```
 
-### 5.3. Stop a VM
+### 6.3. Stop a VM
 
 To stop a VM, use the `stop` command:
 
 ```bash
-/usr/local/phoenix-cli_hypervisor/bin/phoenix-cli stop <VMID>
+/usr/local/phoenix_hypervisor/bin/phoenix-cli stop <VMID>
 ```
 
-### 5.4. Restart a VM
+### 6.4. Restart a VM
 
 To restart a VM, use the `restart` command:
 
 ```bash
-/usr/local/phoenix-cli_hypervisor/bin/phoenix-cli restart <VMID>
+/usr/local/phoenix_hypervisor/bin/phoenix-cli restart <VMID>
 ```
 
-### 5.5. Delete a VM
+### 6.5. Delete a VM
 
 To permanently delete a VM, use the `delete` command:
 
 ```bash
-/usr/local/phoenix-cli_hypervisor/bin/phoenix-cli delete <VMID>
+/usr/local/phoenix_hypervisor/bin/phoenix-cli delete <VMID>
 ```
-## 6. Known Issues
+## 7. Known Issues
 
-### 6.1. QEMU Guest Agent Initialization
+### 7.1. QEMU Guest Agent Initialization
 
 -   **Issue:** The QEMU guest agent does not always start automatically on the first boot of a newly created VM. This can cause the `vm-manager.sh` script to time out while waiting for the agent to become responsive.
 -   **Workaround:** If the orchestration process fails, manually log in to the VM and start the agent using `sudo systemctl start qemu-guest-agent`. Then, re-run the `phoenix-cli orchestrate <VMID>` command. The second run should succeed.

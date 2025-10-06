@@ -1,0 +1,9 @@
+{
+    "$schema": "usr/local/phoenix_hypervisor/etc/phoenix_stacks_config.schema.json",
+    "docker_stacks": {
+        "qdrant_service": {
+            "name": "qdrant",
+            "compose_file_path": "persistent-storage/qdrant/docker-compose.yml"
+        }
+    }
+}

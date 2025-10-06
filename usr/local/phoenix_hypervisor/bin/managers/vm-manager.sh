@@ -10,6 +10,9 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 # --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
+# --- Load external configurations ---
+STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
+
 # =====================================================================================
 # Function: run_qm_command
 # Description: A robust wrapper for executing `qm` (Proxmox QEMU/KVM) commands. It handles
@@ -37,6 +40,8 @@ run_qm_command() {
     if [ $exit_code -ne 0 ]; then
         log_error "Command failed: $cmd_description (Exit Code: $exit_code)"
         log_error "Output:\n$output"
+    else
+        echo "$output"
     fi
     return $exit_code
 }
@@ -146,10 +151,6 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
-        log_info "Step 6.5: Provisioning declarative files for VM $VMID..."
-        provision_declarative_files "$VMID"
-        log_info "Step 6.5: Completed."
-
         log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 7: Completed."
@@ -158,9 +159,18 @@ orchestrate_vm() {
         apply_vm_features "$VMID"
         log_info "Step 8: Completed."
 
+        log_info "Step 8.5: Provisioning declarative files for VM $VMID..."
+        provision_declarative_files "$VMID"
+        log_info "Step 8.5: Completed."
+
         log_info "Step 9: Managing post-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "post-features"
         log_info "Step 9: Completed."
+
+        # --- New Step 10: Deploy Declarative Stacks to Agent ---
+        local portainer_role
+        portainer_role=$(jq -r ".vms[] | select(.vmid == $VMID) | .portainer_role" "$VM_CONFIG_FILE")
+        # Step 10 has been moved to the portainer_api_setup.sh script to resolve a race condition.
     fi
 
     log_info "Available storage pools after VM creation:"
@@ -463,9 +473,10 @@ apply_volumes() {
 
 # =====================================================================================
 # Function: provision_declarative_files
-# Description: Provisions declarative files, such as Docker Compose files, from the
-#              hypervisor to the VM's persistent storage. It reads the
-#              'docker_compose_files' array from the VM's configuration.
+# Description: Provisions declarative Docker stack files from the hypervisor to the VM's
+#              persistent storage. It reads the 'docker_stacks' array from the VM's
+#              configuration, looks up the stack definition in 'phoenix_stacks_config.json',
+#              and copies the compose file to a dedicated 'stacks' subdirectory.
 #
 # Arguments:
 #   $1 - The VMID of the VM.
@@ -475,7 +486,7 @@ apply_volumes() {
 # =====================================================================================
 provision_declarative_files() {
     local VMID="$1"
-    log_info "Provisioning declarative files for VMID: $VMID"
+    log_info "Provisioning declarative stack files for VMID: $VMID"
 
     local persistent_volume_path
     persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
@@ -485,36 +496,43 @@ provision_declarative_files() {
         return 0
     fi
 
-    local compose_files
-    compose_files=$(jq -c ".vms[] | select(.vmid == $VMID) | .docker_compose_files[]?" "$VM_CONFIG_FILE")
+    local docker_stacks
+    docker_stacks=$(jq -c ".vms[] | select(.vmid == $VMID) | .docker_stacks[]?" "$VM_CONFIG_FILE")
 
-    if [ -z "$compose_files" ]; then
-        log_info "No docker_compose_files to provision for VMID $VMID."
+    if [ -z "$docker_stacks" ]; then
+        log_info "No docker_stacks to provision for VMID $VMID."
         return 0
     fi
 
-    echo "$compose_files" | while read -r file_entry; do
-        local source_path_from_config
-        source_path_from_config=$(echo "$file_entry" | jq -r '.source')
-        local destination_path
-        destination_path=$(echo "$file_entry" | jq -r '.destination')
+    echo "$docker_stacks" | while read -r stack_name_json; do
+        local stack_name
+        stack_name=$(echo "$stack_name_json" | jq -r '.')
+        
+        log_info "Processing stack: $stack_name"
 
-        if [ -z "$source_path_from_config" ] || [ -z "$destination_path" ]; then
-            log_warn "Invalid docker_compose_files entry: $file_entry. Missing source or destination. Skipping."
+        local stack_config
+        stack_config=$(jq -r ".docker_stacks.\"$stack_name\"" "$STACKS_CONFIG_FILE")
+
+        if [ -z "$stack_config" ] || [ "$stack_config" == "null" ]; then
+            log_warn "Stack '$stack_name' not found in $STACKS_CONFIG_FILE. Skipping."
             continue
         fi
 
-        # The source path from config is the absolute path within the project structure.
-        local source_path="$source_path_from_config"
+        local compose_file_path
+        compose_file_path=$(echo "$stack_config" | jq -r '.compose_file_path')
+        local stack_dir_name
+        stack_dir_name=$(echo "$stack_config" | jq -r '.name')
 
-        if [ ! -f "$source_path" ]; then
-            log_warn "Source file not found: $source_path. Skipping."
+        local config_dir
+        local absolute_compose_path="${PHOENIX_BASE_DIR}/${compose_file_path}"
+
+        if [ ! -f "$absolute_compose_path" ]; then
+            log_warn "Compose file not found for stack '$stack_name' at path: $absolute_compose_path. Skipping."
             continue
         fi
 
-        local full_destination_path="${persistent_volume_path}/${destination_path}"
-        local destination_dir
-        destination_dir=$(dirname "$full_destination_path")
+        local destination_dir="${persistent_volume_path}/stacks/${stack_dir_name}"
+        local full_destination_path="${destination_dir}/docker-compose.yml"
 
         log_info "Ensuring destination directory exists: $destination_dir"
         if ! mkdir -p "$destination_dir"; then
@@ -522,9 +540,9 @@ provision_declarative_files() {
             continue
         fi
 
-        log_info "Copying '$source_path' to '$full_destination_path'"
-        if ! cp "$source_path" "$full_destination_path"; then
-            log_error "Failed to copy file to $full_destination_path"
+        log_info "Copying '$absolute_compose_path' to '$full_destination_path'"
+        if ! cp "$absolute_compose_path" "$full_destination_path"; then
+            log_error "Failed to copy compose file to $full_destination_path"
         fi
     done
 }
@@ -563,9 +581,8 @@ stop_vm() {
 
 # =====================================================================================
 # Function: apply_vm_features
-# Description: Executes feature installation scripts inside the VM. This function handles
-#              the secure transfer of scripts and configurations into the VM, executes them,
-#              and cleans up afterward.
+# Description: Asynchronously executes feature installation scripts inside the VM,
+#              providing real-time log streaming and robust completion detection.
 #
 # Arguments:
 #   $1 - The VMID of the VM.
@@ -585,92 +602,117 @@ apply_vm_features() {
         return 0
     fi
 
-    # Create a temporary JSON context file for the VM
     local temp_context_file="/tmp/vm_${VMID}_context.json"
     jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > "$temp_context_file"
 
     for feature in $features; do
-        # --- NFS-based Script Deployment ---
-        # Read the volumes array to find the persistent storage path
         local persistent_volume_path
         persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
 
         if [ -z "$persistent_volume_path" ]; then
-            log_warn "No NFS volume found for VM $VMID. Skipping NFS script deployment."
-        else
-            # If the feature is 'docker', copy the Portainer configuration to the persistent storage.
-            if [ "$feature" == "docker" ]; then
-                local portainer_role
-                portainer_role=$(jq -r ".vms[] | select(.vmid == $VMID) | .portainer_role // \"none\"" "$VM_CONFIG_FILE")
+            log_fatal "No NFS volume found for VM $VMID. Cannot apply features."
+        fi
 
-                if [ "$portainer_role" == "primary" ]; then
-                    local portainer_source_path="${PHOENIX_BASE_DIR}/persistent-storage/portainer"
-                    if [ -d "$portainer_source_path" ]; then
-                        log_info "Copying Portainer configuration from $portainer_source_path to $persistent_volume_path..."
-                        if ! cp -r "$portainer_source_path" "$persistent_volume_path/"; then
-                            log_fatal "Failed to copy Portainer configuration."
-                        fi
-                        # Ensure the data directory exists
-                        mkdir -p "${persistent_volume_path}/portainer/data"
-                    else
-                        log_warn "Portainer source directory not found at $portainer_source_path. Skipping copy."
-                    fi
+        # Prepare scripts on the hypervisor's NFS share
+        local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
+        rm -rf "$hypervisor_scripts_dir"
+        mkdir -p "$hypervisor_scripts_dir"
+        
+        local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
+        if [ ! -f "$feature_script_path" ]; then
+            log_fatal "Feature script not found: $feature_script_path"
+        fi
+
+        cp "$feature_script_path" "$hypervisor_scripts_dir/"
+        cp "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh" "$hypervisor_scripts_dir/"
+        cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_api_setup.sh" "$hypervisor_scripts_dir/"
+        cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_agent_setup.sh" "$hypervisor_scripts_dir/"
+        cp "$temp_context_file" "${hypervisor_scripts_dir}/vm_context.json"
+        
+        # --- Definitive Fix: Copy all required configs ---
+        log_info "Copying core configuration files to VM's persistent storage..."
+        cp "$VM_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_vm_configs.json"
+        cp "$STACKS_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_stacks_config.json"
+        cp "$HYPERVISOR_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_hypervisor_config.json"
+
+        # --- Verification Step ---
+        if [ ! -f "${hypervisor_scripts_dir}/phoenix_hypervisor_config.json" ]; then
+            log_fatal "Verification failed: phoenix_hypervisor_config.json not found in ${hypervisor_scripts_dir}"
+        fi
+        log_info "Successfully copied and verified phoenix_hypervisor_config.json."
+
+        # --- Definitive Fix: Copy Portainer compose file ---
+        log_info "Copying Portainer docker-compose.yml to VM's persistent storage..."
+        local portainer_compose_dest_dir="${persistent_volume_path}/portainer"
+        mkdir -p "$portainer_compose_dest_dir"
+        cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "$portainer_compose_dest_dir/"
+
+        # --- Definitive Fix: Copy Portainer config.json ---
+        log_info "Copying Portainer config.json to VM's persistent storage..."
+        cp "${PHOENIX_BASE_DIR}/etc/portainer/config.json" "${hypervisor_scripts_dir}/portainer_config.json"
+
+        local persistent_mount_point
+        persistent_mount_point=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .mount_point" "$VM_CONFIG_FILE" | head -n 1)
+        local vm_script_dir="${persistent_mount_point}/.phoenix_scripts"
+        local vm_script_path="${vm_script_dir}/feature_install_${feature}.sh"
+        local log_file_in_vm="/var/log/phoenix_feature_${feature}.log"
+
+        # Make scripts executable
+        run_qm_command guest exec "$VMID" -- /bin/chmod -R +x "$vm_script_dir"
+
+        # Execute the script asynchronously
+        log_info "Executing feature script '$feature' asynchronously in VM $VMID..."
+        local pid_json
+        local exit_code_file_in_vm="/tmp/phoenix_feature_${feature}_exit_code"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f $exit_code_file_in_vm"
+        
+        local exec_command="nohup /bin/bash -c '$vm_script_path; echo \$? > $exit_code_file_in_vm' > $log_file_in_vm 2>&1 &"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "$exec_command"
+
+        log_info "Feature script '$feature' started. Tailing log file: $log_file_in_vm"
+
+        # Monitor the process and stream the log
+        local timeout=1800 # 30 minutes timeout
+        local start_time=$SECONDS
+        local last_log_line=0
+
+        while true; do
+            # Stream new log content
+            local new_log_output
+            new_log_output=$(qm guest exec "$VMID" -- /bin/bash -c "tail -n +$((last_log_line + 1)) $log_file_in_vm" 2>/dev/null)
+            local new_log_content
+            new_log_content=$(echo "$new_log_output" | jq -r '."out-data" // ""')
+            if [ -n "$new_log_content" ]; then
+                echo -e "$new_log_content"
+                new_lines_count=$(echo "$new_log_content" | wc -l | tr -d '[:space:]')
+                last_log_line=$((last_log_line + new_lines_count))
+            fi
+
+            # Check if the exit code file exists
+            local exit_code_output
+            exit_code_output=$(qm guest exec "$VMID" -- /bin/bash -c "cat $exit_code_file_in_vm" 2>/dev/null)
+            local exit_code
+            exit_code=$(echo "$exit_code_output" | jq -r '."out-data" // ""' | tr -d '[:space:]')
+
+            if [ -n "$exit_code" ]; then
+                if [ "$exit_code" -eq 0 ]; then
+                    log_success "Feature script '$feature' completed successfully."
+                    break
                 else
-                    log_info "Skipping Portainer server configuration copy for role: $portainer_role"
+                    log_fatal "Feature script '$feature' failed with exit code $exit_code."
                 fi
             fi
 
-            # The 'persistent_volume_path' is the absolute path on the hypervisor
-            local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
-            log_info "Creating script directory on hypervisor: $hypervisor_scripts_dir"
-            mkdir -p "$hypervisor_scripts_dir"
-            chmod 777 "$hypervisor_scripts_dir"
-
-            local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
-            if [ ! -f "$feature_script_path" ]; then
-                log_fatal "Feature script not found at $feature_script_path. Cannot apply feature '$feature'."
+            # Check for timeout
+            if (( SECONDS - start_time > timeout )); then
+                log_fatal "Timeout reached while waiting for feature script '$feature' to complete."
             fi
 
-            log_info "Copying feature script and common utils to $hypervisor_scripts_dir"
-            cp "$feature_script_path" "$hypervisor_scripts_dir/"
-            cp "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh" "$hypervisor_scripts_dir/"
-
-            log_info "Copying Portainer setup scripts to $hypervisor_scripts_dir"
-            cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_api_setup.sh" "$hypervisor_scripts_dir/"
-            cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_agent_setup.sh" "$hypervisor_scripts_dir/"
-            
-            log_info "Copying VM context file to $hypervisor_scripts_dir"
-            cp "$temp_context_file" "${hypervisor_scripts_dir}/vm_context.json"
-        fi
-        
-        local persistent_mount_point
-        persistent_mount_point=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .mount_point" "$VM_CONFIG_FILE" | head -n 1)
-        
-        if [ -z "$persistent_mount_point" ]; then
-            log_fatal "No NFS volume with a mount_point found for VM $VMID. Cannot execute feature scripts."
-        fi
-
-        local vm_script_dir="${persistent_mount_point}/.phoenix_scripts"
-        local vm_script_path="${vm_script_dir}/feature_install_${feature}.sh"
-
-        log_info "Making feature script executable in VM $VMID at $vm_script_path..."
-        run_qm_command guest exec "$VMID" -- /bin/chmod +x "$vm_script_path"
-
-        log_info "Executing feature script '$feature' in VM $VMID from NFS share..."
-        if ! run_qm_command guest exec "$VMID" -- "$vm_script_path"; then
-            log_fatal "Execution of feature script '$feature' failed for VMID $VMID. Check the feature log inside the VM for details."
-        fi
-        log_info "Feature script '$feature' executed successfully."
-
-        log_info "Cleaning up script files from hypervisor NFS share..."
-        # The 'persistent_volume_path' is the absolute path on the hypervisor
-        local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
-        rm -rf "$hypervisor_scripts_dir"
+            sleep 5
+        done
     done
 
-    # Clean up the local temporary context file
     rm -f "$temp_context_file"
-
     log_info "All features applied successfully for VMID $VMID."
 }
 
@@ -730,6 +772,29 @@ main_vm_orchestrator() {
         create)
             log_info "Starting 'create' workflow for VMID $vmid..."
             orchestrate_vm "$vmid"
+            log_info "Triggering Portainer reconciliation to sync endpoints and stacks..."
+            if ! "${PHOENIX_BASE_DIR}/bin/reconcile_portainer.sh"; then
+                log_warn "Portainer reconciliation script failed. The Portainer environment may be out of sync."
+            fi
+
+            # Run health check for Qdrant if it's one of the stacks
+            local docker_stacks
+            docker_stacks=$(jq -c ".vms[] | select(.vmid == $vmid) | .docker_stacks[]?" "$VM_CONFIG_FILE")
+            if echo "$docker_stacks" | grep -q "qdrant_service"; then
+                log_info "Running Qdrant health check for VMID $vmid..."
+                local health_check_script_path_in_vm="/persistent-storage/.phoenix_scripts/check_qdrant.sh"
+                # First, copy the health check script to the VM's persistent storage
+                cp "${PHOENIX_BASE_DIR}/bin/health_checks/check_qdrant.sh" "${persistent_volume_path}/.phoenix_scripts/"
+                if ! qm guest exec "$vmid" -- /bin/bash "$health_check_script_path_in_vm"; then
+                    log_fatal "Qdrant health check failed for VMID $vmid."
+                fi
+            fi
+
+            log_info "Running Portainer health check..."
+            local portainer_health_check_script_path="${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer.sh"
+            if ! "$portainer_health_check_script_path"; then
+                log_fatal "Portainer health check failed."
+            fi
             log_info "'create' workflow completed for VMID $vmid."
             ;;
         start)

@@ -32,3 +32,69 @@ To get started with the Phoenix Hypervisor, please refer to the following docume
 *   **`02_technical_strategy_and_architecture/01_architectural_principles.md`:** The architectural principles that guide the project.
 *   **`02_technical_strategy_and_architecture/02_technology_stack.md`:** A detailed breakdown of the technology stack.
 *   **`03_phoenix_hypervisor_implementation/00_guides/00_getting_started.md`:** A guide to getting started with the Phoenix Hypervisor.
+# Declarative Stack Management Plan
+
+This document outlines the refactored workflow for deploying Docker stacks in a declarative and idempotent manner using the Phoenix Hypervisor system.
+
+## Architecture Diagram
+
+The following Mermaid diagram illustrates the improved orchestration flow, ensuring robust and reliable stack deployment.
+
+```mermaid
+graph TD
+    subgraph User Interaction
+        A[User executes: phoenix create 1002]
+    end
+
+    subgraph Phoenix CLI Orchestration
+        A --> B{phoenix-cli};
+        B --> C{Is 1002 a VM?};
+        C -->|Yes| D[Route to vm-manager.sh];
+    end
+
+    subgraph VM Manager Workflow [vm-manager.sh]
+        D --> E[orchestrate_vm for 1002];
+        E --> F[ensure_vm_defined: Clone from template 9000];
+        F --> G[apply_core_configurations: CPU, RAM];
+        G --> H[apply_network_configurations: Set static IP];
+        H --> I[start_vm];
+        I --> J[wait_for_guest_agent];
+        J --> K[apply_volumes: Mount NFS storage];
+        K --> L[provision_declarative_files: Copy qdrant compose file to NFS];
+        L --> M[apply_vm_features: Run docker & portainer_agent_setup.sh];
+    end
+
+    subgraph Portainer Agent Setup [portainer_agent_setup.sh on VM 1002]
+        M --> N[Installs Docker];
+        N --> O[Starts Portainer Agent container];
+    end
+
+    subgraph Centralized Reconciliation
+        P[vm-manager.sh completes orchestration for 1002];
+        P --> Q[Call reconcile_portainer.sh];
+        Q --> R[Script identifies Primary Portainer VM 1001];
+        R --> S[Executes portainer_api_setup.sh inside VM 1001];
+    end
+
+    subgraph Portainer API Setup [portainer_api_setup.sh on VM 1001]
+        S --> T[Wait for Portainer API to be ready];
+        T --> U[Get JWT Token];
+        U --> V[For each agent VM e.g., 1002];
+        V --> W[Wait for Agent to be responsive via HTTP ping];
+        W --> X[ensure_agent_endpoint_exists: Create/Verify Portainer endpoint over HTTP];
+        X --> Y[deploy_stack: Create/Update Qdrant stack via Portainer API type 2];
+    end
+
+    subgraph Result
+        Y --> Z[Qdrant stack is running on drphoenix VM 1002];
+        Z --> AA[Nginx on 101 can now proxy to Qdrant];
+    end
+```
+
+## Key Improvements
+
+1.  **Centralized Reconciliation**: The `reconcile_portainer.sh` script is now called as the final step in the `vm-manager.sh`'s `create` workflow. This prevents race conditions by ensuring that the Portainer primary server only attempts to configure agents and stacks *after* they have been fully provisioned.
+2.  **Robust API Interaction**: The `portainer_api_setup.sh` script now includes wait/retry loops to confirm that both the Portainer server API (via `localhost`) and the remote agent endpoints (via HTTP ping) are responsive before attempting to communicate with them.
+3.  **Corrected Agent Communication**: The system now correctly uses HTTP to communicate with the Portainer agent, resolving the TLS mismatch that was causing endpoint creation to fail.
+4.  **Idempotent Operations**: The logic for creating and updating Portainer endpoints and stacks has been improved to be fully idempotent, allowing the `phoenix converge` command to work reliably.
+4.  **Clear Separation of Concerns**: The workflow maintains a clear separation of responsibilities, with each script handling a specific part of the process, making the system easier to maintain and debug.

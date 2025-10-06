@@ -42,7 +42,7 @@ upstream llamacpp_service {
 
 # Upstream definition for the Portainer container management UI.
 upstream portainer_service {
-    server 10.0.0.101:9443;
+    server 10.0.0.101:9000;
 }
 
 upstream portainer_agent_service {
@@ -181,8 +181,7 @@ server {
 
     # Proxy all requests to the Portainer backend, with WebSocket support.
     location / {
-        proxy_pass https://portainer_service;
-        proxy_ssl_verify off;
+        proxy_pass http://portainer_service;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

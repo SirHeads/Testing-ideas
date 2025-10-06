@@ -64,61 +64,40 @@ The Phoenix Orchestrator, as detailed in `phoenix_orchestrator_v1_product_report
 
 ## Proposed Architecture
 
-### Container Configuration
+### VM Configuration
 
-Create an unprivileged LXC container (CTID 960) cloned from "Template-Docker" (CTID 902) to inherit Docker support and nesting features. Allocate moderate resources to handle Prometheus and Grafana workloads efficiently.
+Create a dedicated VM to host the monitoring stack. This aligns with the new architecture of running all Docker workloads in VMs for better isolation and security.
 
-**Configuration in `phoenix_lxc_configs.json` (under `"lxc_configs"`)**:
+**Configuration in `phoenix_vm_configs.json`**:
 
 ```json
-"960": {
-    "name": "Monitoring-Prometheus-Grafana",
-    "memory_mb": 4096,
-    "cores": 4,
-    "storage_pool": "quickOS-lxc-disks",
-    "storage_size_gb": 32,
-    "network_config": {
-        "name": "eth0",
-        "bridge": "vmbr0",
-        "ip": "10.0.0.160/24",
-        "gw": "10.0.0.1"
-    },
-    "mac_address": "52:54:00:67:89:C0",
-    "gpu_assignment": "none",
-    "portainer_role": "none",
-    "unprivileged": true,
-    "clone_from_ctid": "902",
-    "features": ["docker", "monitoring"],
-    "application_script": "phoenix_hypervisor_lxc_960.sh",
-    "ports": ["9090:9090", "3000:3000"],
-    "firewall": {
-        "enabled": true,
-        "rules": [
-            {
-                "type": "in",
-                "action": "ACCEPT",
-                "source": "10.0.0.153",
-                "proto": "tcp",
-                "port": "3000"
-            },
-            {
-                "type": "in",
-                "action": "ACCEPT",
-                "source": "10.0.0.153",
-                "proto": "tcp",
-                "port": "9090"
-            }
-        ]
-    },
-    "dependencies": ["101"]
+{
+    "vm_id": 1003,
+    "vm_name": "monitoring",
+    "description": "Monitoring Stack (Prometheus and Grafana)",
+    "tags": ["monitoring"],
+    "features": ["base_setup", "docker"],
+    "docker_stacks": ["monitoring"]
 }
 ```
 
-**Schema Update**: Modify `phoenix_lxc_configs.schema.json` to include CTID 960 in the pattern (`"patternProperties": { "^(90[0-4]|910|920|95[5-7]|960)$"`). Validate new fields like `"monitoring"` in the features array.
+**Configuration in `phoenix_stacks_config.json`**:
 
-### Deployment via Docker Compose
+```json
+{
+    "name": "monitoring",
+    "git_repo": "https://github.com/your-org/monitoring-stack.git",
+    "env": [
+        { "name": "GRAFANA_ADMIN_PASSWORD", "value": "your-secret-password" }
+    ]
+}
+```
 
-Deploy Prometheus and Grafana using Docker Compose inside CTID 960 for manageability and portability. Create `/opt/monitoring/docker-compose.yml`:
+### Declarative Stack Deployment
+
+The monitoring stack will be deployed using the new declarative stack management system. The `docker-compose.yml` file will be stored in a dedicated Git repository and deployed by the `vm-manager.sh` script via the Portainer API.
+
+**`docker-compose.yml` in the Git Repository**:
 
 ```yaml
 version: '3.8'
@@ -127,7 +106,7 @@ services:
     image: prom/prometheus:latest
     container_name: prometheus
     volumes:
-      - /opt/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -147,8 +126,6 @@ volumes:
   prometheus-data:
   grafana-data:
 ```
-
-Start with `docker compose up -d` in the application script (`phoenix_hypervisor_lxc_960.sh`). Use environment variables for secrets, with future integration of HashiCorp Vault.
 
 ### Prometheus Configuration
 
@@ -297,32 +274,6 @@ Extend `phoenix_lxc_configs.schema.json`:
 
 Update CTID pattern: `"^(90[0-4]|910|920|95[5-7]|960)$"`.
 
-### Feature Scripts
-
-Create `install_monitoring.sh`:
-
-```bash
-#!/bin/bash
-# Install Docker Compose, setup monitoring stack
-apt update && apt install -y docker-compose
-mkdir -p /opt/monitoring
-cat > /opt/monitoring/docker-compose.yml << 'EOF'
-[Insert Docker Compose from above]
-EOF
-cat > /opt/monitoring/prometheus.yml << 'EOF'
-[Insert Prometheus config]
-EOF
-docker compose -f /opt/monitoring/docker-compose.yml up -d
-# Idempotency: Check if services are running
-if docker ps | grep -q prometheus; then
-    echo "Prometheus already running"
-else
-    echo "Starting Prometheus"
-    docker compose -f /opt/monitoring/docker-compose.yml up -d prometheus
-fi
-```
-
-Add to `phoenix_hypervisor_lxc_960.sh` for post-setup tasks.
 
 ### Shared Volumes and Dependencies
 
@@ -363,16 +314,16 @@ Dependency: CTID 101 (NGINX) for proxying Grafana/Prometheus (e.g., `/grafana` t
 
 ## Implementation Steps
 
-1. Update `phoenix_lxc_configs.json` and schema.
-2. Run orchestrator to provision CTID 960.
-3. Install exporters: `node-exporter`, `pve-exporter` on host; `dcgm-exporter` as needed.
-4. Deploy Docker Compose in CTID 960.
-5. Configure NGINX (CTID 101) for proxying.
-6. Import Grafana dashboards (Proxmox ID 10471, DCGM ID 12238).
-7. Set up alerts and validate scraping.
-8. Test end-to-end functionality.
+1.  Create a new Git repository for the monitoring stack, containing the `docker-compose.yml` and `prometheus.yml` files.
+2.  Update `phoenix_stacks_config.json` to define the new `monitoring` stack.
+3.  Update `phoenix_vm_configs.json` to define the new `monitoring` VM (ID 1003) and assign the `monitoring` stack to it.
+4.  Run `phoenix-cli create 1003` to provision the VM and deploy the stack.
+5.  Install the necessary exporters on the Proxmox host and other relevant machines.
+6.  Configure NGINX (CTID 101) to proxy Grafana and Prometheus.
+7.  Import the Grafana dashboards.
+8.  Set up and validate alerting.
 
-**Timeline**: 1-2 weeks for development and testing.
+**Timeline**: 1 week for development and testing.
 
 ---
 

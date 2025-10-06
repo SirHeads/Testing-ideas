@@ -45,6 +45,17 @@ if [ ! -f "$CONTEXT_FILE" ]; then
     log_fatal "VM context file not found at $CONTEXT_FILE. Cannot proceed with Docker installation."
 fi
 
+# =====================================================================================
+# Function: wait_for_apt_lock
+# Description: Waits for the apt lock to be released.
+# =====================================================================================
+wait_for_apt_lock() {
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do
+        log_warn "Waiting for other package manager operations to complete..."
+        sleep 5
+    done
+}
+
 # Idempotency Check: Check if Docker is already installed and running.
 log_info "Checking for existing Docker installation..."
 if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
@@ -63,6 +74,7 @@ log_info "Primary username is '$USERNAME'."
 
 # 1. Update Package Manager
 log_info "Step 1: Updating package manager..."
+wait_for_apt_lock
 if ! apt-get update; then
     log_fatal "Failed to update package manager. Please check network connectivity and repository configuration."
 fi
@@ -70,6 +82,7 @@ log_info "Package manager updated successfully."
 
 # 2. Install Dependencies
 log_info "Step 2: Installing dependencies for Docker..."
+wait_for_apt_lock
 if ! apt-get install -y apt-transport-https ca-certificates curl software-properties-common; then
     log_fatal "Failed to install Docker dependencies."
 fi
@@ -91,7 +104,8 @@ log_info "Docker repository added successfully."
 
 # 5. Install Docker Engine
 log_info "Step 5: Installing Docker Engine..."
-if ! apt-get update || ! apt-get install -y docker-ce docker-ce-cli containerd.io; then
+wait_for_apt_lock
+if ! apt-get update || ! apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
     log_fatal "Failed to install Docker Engine."
 fi
 log_info "Docker Engine installed successfully."
@@ -116,12 +130,8 @@ if ! usermod -aG docker "$USERNAME"; then
 fi
 log_info "User '$USERNAME' added to the docker group successfully."
 
-# 8. Install Docker Compose
-log_info "Step 8: Installing Docker Compose..."
-if ! apt-get install -y docker-compose; then
-    log_fatal "Failed to install Docker Compose."
-fi
-log_info "Docker Compose installed successfully."
+# Step 8 is now obsolete as docker-compose-plugin is installed with the main packages.
+log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 
 # Step 9 is now obsolete and has been removed. The new role-based logic handles deployment.
 
@@ -133,13 +143,34 @@ log_info "This VM's Portainer role is: $PORTAINER_ROLE"
 case "$PORTAINER_ROLE" in
     primary)
         log_info "Deploying Portainer server..."
-        if [ -f "$(dirname "$0")/portainer_api_setup.sh" ]; then
-            if ! "$(dirname "$0")/portainer_api_setup.sh"; then
-                log_error "Portainer server deployment script failed."
+        
+        # Copy the declarative config from the hypervisor's NFS share to the Portainer volume
+        log_info "Copying declarative Portainer config..."
+        if [ -f "/persistent-storage/.phoenix_scripts/portainer_config.json" ]; then
+            cp /persistent-storage/.phoenix_scripts/portainer_config.json /persistent-storage/portainer/config.json
+        else
+            log_warn "Portainer config.json not found in .phoenix_scripts. The declarative endpoint may not be created."
+        fi
+
+        # The compose file is expected to be in /persistent-storage/portainer/docker-compose.yml
+        if [ -f "/persistent-storage/portainer/docker-compose.yml" ]; then
+            compose_file="/persistent-storage/portainer/docker-compose.yml"
+            if [ -f "$compose_file" ]; then
+                log_info "Found docker-compose.yml. Deploying Portainer server..."
+                (cd "$(dirname "$compose_file")" && docker compose up -d)
+                log_info "Portainer server deployment initiated. Waiting for container to start..."
+                sleep 15
+                log_info "--- Portainer Container Logs ---"
+                docker logs portainer || log_warn "Could not retrieve Portainer logs."
+                log_info "---------------------------------"
+            else
+                log_error "Portainer docker-compose.yml not found at $compose_file"
             fi
         else
-            log_warn "Portainer server deployment script not found. Skipping."
+            log_error "Portainer docker-compose.yml not found at /persistent-storage/portainer/docker-compose.yml"
         fi
+
+        log_info "Portainer server deployment complete. Reconciliation will be triggered by the hypervisor."
         ;;
     agent)
         log_info "Deploying Portainer agent..."

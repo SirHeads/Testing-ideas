@@ -63,12 +63,14 @@ graph TD
         C1[/etc/phoenix-cli_hypervisor_config.json]
         C2[/etc/phoenix-cli_lxc_configs.json]
         C3[/etc/phoenix-cli_vm_configs.json]
+        C4[/etc/phoenix_stacks_config.json]
     end
 
     A -- Manages --> B
     B -- Reads --> C1
     B -- Reads --> C2
     B -- Reads --> C3
+    B -- Reads --> C4
     B -- Provisions/Manages --> D
     B -- Provisions/Manages --> E
     B -- Manages --> F
@@ -84,11 +86,12 @@ This declarative approach ensures that our infrastructure is reproducible, versi
 
 ### 2.2. Configuration File Overview
 
-The entire system's state is defined across three core JSON files:
+The entire system's state is defined across four core JSON files:
 
-*   **`phoenix-cli_hypervisor_config.json`**: Defines global settings for the Proxmox environment, including networking, storage (ZFS), users, shared volumes, and hypervisor-level features.
-*   **`phoenix-cli_lxc_configs.json`**: Provides detailed configurations for each LXC container, specifying resources, features (e.g., Docker, NVIDIA, vLLM, Ollama), application-specific scripts, and security policies.
-*   **`phoenix-cli_vm_configs.json`**: Defines the configurations for virtual machines, including their source templates, resources, and features.
+*   **`phoenix_hypervisor_config.json`**: Defines global settings for the Proxmox environment, including networking, storage (ZFS), users, shared volumes, and hypervisor-level features. It now also includes a `portainer_api` object for managing Portainer credentials and connection details.
+*   **`phoenix_lxc_configs.json`**: Provides detailed configurations for each LXC container, specifying resources, features (e.g., Docker, NVIDIA, vLLM, Ollama), application-specific scripts, and security policies.
+*   **`phoenix_vm_configs.json`**: Defines the configurations for virtual machines. This file has been updated to replace the `docker_compose_files` array with a `docker_stacks` array, which references predefined stacks from `phoenix_stacks_config.json`.
+*   **`phoenix_stacks_config.json`**: This new file defines reusable, declarative Docker stacks. Each stack has a name, a path to its Git repository, and an optional list of environment variables. This allows for the centralized management of Docker deployments.
 
 ### 2.3. Configuration Data Dictionary
 
@@ -158,29 +161,38 @@ graph TD
 
 #### 3.3.3. VM Construction
 
-Triggered by `phoenix-cli create <ID>`, this workflow is managed by `vm-manager.sh`. The process has been re-architected to use a persistent NFS share for feature script delivery, replacing the previous ISO-based method.
+Triggered by `phoenix-cli create <ID>`, this workflow is managed by `vm-manager.sh`. The process has been significantly enhanced to support declarative stack management via the Portainer API.
 
 ```mermaid
 graph TD
     subgraph "Orchestration"
-        A[phoenix-cli create vm-id] -- reads --> B[phoenix-cli_vm_configs.json];
+        A[phoenix-cli create vm-id] -- reads --> B[phoenix_vm_configs.json];
+        A -- reads --> B2[phoenix_stacks_config.json];
+        A -- reads --> B3[phoenix_hypervisor_config.json];
     end
 
     subgraph "Hypervisor Host"
         B -- triggers --> C{vm-manager.sh};
         C -- creates --> D[VM Guest];
-        C -- creates --> E[NFS Directory for VM];
-        C -- copies feature scripts to --> E;
+        C -- executes --> P[portainer_api_setup.sh];
+    end
+    
+    subgraph "Portainer"
+        P -- interacts with --> PA[Portainer API];
     end
 
     subgraph "VM Guest"
         D -- on boot --> G(cloud-init);
         G -- runs --> H(base_setup feature);
-        H -- installs --> I[nfs-common];
-        H -- mounts --> J([NFS Share]);
-        J -- provides access to --> F[Feature Scripts];
-        D -- executes --> F;
+        H -- installs --> I[docker];
     end
+
+    subgraph "Git Repository"
+        GR[Git Repo with Docker Compose]
+    end
+
+    PA -- deploys stack to --> D;
+    GR -- is source for --> PA;
 ```
 
 ### 3.4. Inter-Script Communication
@@ -335,9 +347,16 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 *   **New FP8 Template**: A new template, `Template-VLLM-FP8` (CTID 921), has been introduced for FP8 quantization. It is cloned from the base GPU template (901) to ensure a clean environment, free from legacy configurations. This new, streamlined process serves as the blueprint for all future vLLM deployments.
 
-### 8.4. Docker Integration
+### 8.4. Declarative Stack Management
 
-Docker is now exclusively integrated through dedicated VMs. `VM 1002 (Dr-Phoenix)` hosts all Docker-based services, while `VM 1001 (Portainer)` provides a centralized management interface. This approach improves security, isolation, and manageability. The `docker` feature is a prerequisite for both VMs, and the Portainer feature is then applied to manage the Docker environment.
+The Docker integration has evolved into a fully declarative stack management system, orchestrated by `vm-manager.sh` and powered by the Portainer API.
+
+*   **Centralized Stack Definitions**: Docker compositions are now defined as reusable "stacks" in `phoenix_stacks_config.json`. Each stack points to a Git repository containing the `docker-compose.yml` file.
+*   **Declarative VM Configuration**: The `phoenix_vm_configs.json` file no longer contains inline Docker Compose files. Instead, a VM is assigned one or more stacks using the `docker_stacks` array.
+*   **Automated Deployment**: The `vm-manager.sh` script now uses the `portainer_api_setup.sh` utility to interact with the Portainer API. It reads the stack definitions, connects to the appropriate Git repository, and deploys the stack to the target VM.
+*   **Portainer as the Engine**: Portainer is no longer just a management interface; it is now the engine that drives our declarative stack deployments. The `portainer_api` object in `phoenix_hypervisor_config.json` securely stores the necessary credentials for this integration.
+
+This new architecture provides a robust, version-controlled, and highly automated system for managing our Dockerized services, significantly improving the reliability and scalability of our platform.
 
 ## 9. Testing & QA
 

@@ -540,6 +540,26 @@ apply_mount_points() {
             log_info "Mount point ${host_path} -> ${container_path} already configured."
         fi
     done
+
+    # --- Special Handling for Nginx Gateway SSL Certificates ---
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Applying special mount for Nginx gateway (CTID 101) SSL certificates..."
+        local ssl_host_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl"
+        local ssl_container_path="/etc/nginx/ssl"
+        local ssl_mount_id="mp${volume_index}"
+        local ssl_mount_string="${ssl_host_path},mp=${ssl_container_path}"
+
+        if [ ! -d "$ssl_host_path" ]; then
+            log_warn "Central SSL directory not found at $ssl_host_path. Nginx may fail if certs are expected."
+        fi
+
+        if ! pct config "$CTID" | grep -q "mp.*: ${ssl_mount_string}"; then
+            log_info "Applying Nginx SSL mount: ${ssl_host_path} -> ${ssl_container_path}"
+            run_pct_command set "$CTID" --"${ssl_mount_id}" "$ssl_mount_string" || log_fatal "Failed to apply Nginx SSL mount."
+        else
+            log_info "Nginx SSL mount point already configured."
+        fi
+    fi
 }
 
 # =====================================================================================

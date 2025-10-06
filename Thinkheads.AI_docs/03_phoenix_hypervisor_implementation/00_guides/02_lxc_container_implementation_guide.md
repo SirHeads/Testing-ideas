@@ -43,7 +43,7 @@ graph TD
 
     subgraph "Core Services"
         VM1001["VM 1001: Portainer"]
-        VM1002["VM 1002: Dr-Phoenix"]
+        VM1002["VM 1002: Dr-Phoenix (Docker Stacks)"]
     end
 
     User -- HTTPS --> API_Gateway
@@ -57,74 +57,18 @@ graph TD
 
 This section provides a detailed breakdown of each container's purpose, key software, resource allocation, and configuration details, sourced directly from `phoenix_lxc_configs.json`.
 
-### Container 801: Embedding Service (granite-embedding)
-
-*   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model.
-*   **Key Software**: vLLM
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 72000 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.141`
-    *   **Port**: `8000`
-    *   **Dependencies**: `101`
-
 ### VM 1002: Dr-Phoenix
 
-*   **Purpose**: Hosts all Dockerized services, including the qdrant vector database.
-*   **Key Software**: Docker, qdrant
+*   **Purpose**: Hosts all Dockerized services, which are now managed as declarative stacks.
+*   **Key Software**: Docker
+*   **Declarative Stacks**: This VM is configured to run a variety of Docker stacks, as defined in `phoenix_vm_configs.json` and `phoenix_stacks_config.json`. These stacks include services such as Qdrant, vLLM, Ollama, and n8n.
 *   **Resource Allocation**:
     *   **CPU**: 4 cores
     *   **Memory**: 4096 MB
     *   **Storage**: 64 GB
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.102`
-    *   **Port**: `6333` (for qdrant)
-    *   **Data Persistence**: Data is managed by Docker volumes.
-
-### Container 101: API Gateway (`Nginx-VscodeRag`)
-
-*   **Purpose**: Functions as a high-performance reverse proxy and API gateway, serving as the central, secure entry point for all backend services, including routing to the vLLM service.
-*   **Key Software**: Nginx
-*   **Resource Allocation**:
-    *   **CPU**: 4 cores
-    *   **Memory**: 4096 MB
-    *   **Storage**: 32 GB
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.153`
-    *   **Functionality**:
-        *   Routes requests to backend services based on hostname and request path.
-        *   Manages SSL termination.
-        *   Routes to the vLLM embedding service.
-
-### Container 955: Ollama Service (`ollama-oWUI`)
-
-*   **Purpose**: Provides a standardized, GPU-accelerated base for running Ollama models.
-*   **Key Software**: Ollama
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 32768 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.155`
-    *   **Port**: `11434`
-
-### Container 957: Llama.cpp Service (`llamacpp`)
-
-*   **Purpose**: Provides a GPU-accelerated environment for compiling and running models with `llama.cpp`.
-*   **Key Software**: `llama.cpp`
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 32768 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `1`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.157`
-    *   **Port**: `8081` (if server is run)
-    *   **Compilation**: Compiled with cuBLAS support for NVIDIA GPUs.
+    *   **Data Persistence**: Data is managed by Docker volumes within the stacks.
 
 ---
 

@@ -1,43 +1,33 @@
 #!/bin/bash
 #
 # File: check_portainer.sh
-#
-# Description: This script performs a health check on the Portainer service. It
-#              verifies that the service is listening on its HTTPS port (9443) and
-#              that its web interface is responsive. This check is vital for
-#              ensuring the Docker management UI is available.
-#
-# Dependencies: - The Portainer service must be running.
-#               - `lsof` and `curl` commands must be available.
-#
-# Inputs: None.
-#
-# Outputs:
-#   - Exits with status 0 if the Portainer service is healthy.
-#   - Exits with status 1 and prints an error message if the service is not
-#     listening on the port or if the API is unresponsive.
-#   - Console output indicates success or the specific nature of the failure.
-#
+# Description: This script checks the health of the Portainer service via the Nginx gateway.
 
-# --- Health Check Logic ---
+set -e
 
-# Verify that a process is actively listening on the standard Portainer HTTPS port (9443).
-# This confirms that the Portainer server process has started and bound to the correct port.
-if ! lsof -i:9443 -sTCP:LISTEN -t >/dev/null; then
-    echo "Error: No process is listening on port 9443. The Portainer service may be down or misconfigured."
-    exit 1
-fi
+LOG_FILE="/var/log/phoenix_health_check_portainer.log"
+exec &> >(tee -a "$LOG_FILE")
 
-# Check if the Portainer web interface is responsive.
-# A successful response confirms that the web server is running.
-# The -k flag is used to allow insecure connections, as Portainer often uses
-# a self-signed SSL certificate by default.
-# The --fail flag ensures curl exits with an error on non-200 responses.
-if ! curl --fail --silent -k https://localhost:9443/ > /dev/null; then
-    echo "Error: The Portainer API is not responding. The service may be unhealthy or stuck."
-    exit 1
-fi
+echo "--- Starting Portainer Health Check ---"
 
-# If both checks pass, the service is considered healthy.
-echo "Success: Portainer is healthy."
-exit 0
+PORTAINER_URL="https://portainer.phoenix.local/api/status"
+
+echo "Waiting for Portainer to become available at $PORTAINER_URL..."
+attempts=0
+max_attempts=12 # 2 minutes
+interval=10
+
+while [ $attempts -lt $max_attempts ]; do
+    if curl -s -k --insecure --head "$PORTAINER_URL" | head -n 1 | grep " 200" > /dev/null; then
+        echo "Portainer is responsive."
+        echo "--- Portainer Health Check Succeeded ---"
+        exit 0
+    fi
+    echo "Portainer not yet responsive. Retrying in $interval seconds... (Attempt $((attempts + 1))/$max_attempts)"
+    sleep $interval
+    attempts=$((attempts + 1))
+done
+
+echo "Error: Portainer did not become responsive." >&2
+echo "--- Portainer Health Check Failed ---"
+exit 1

@@ -10,11 +10,16 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
-      - /persistent-storage/ssl:/certs:ro
+      - /persistent-storage/portainer/config.json:/data/config.json:ro
     ports:
       - "9000:9000"
-      - "9443:9443"
-    command: --admin-password '$$2y$$05$$PruC3Lk32COh3PrpIDsQGuOAHIfd4tecoXSHLXrz51TT66QHwq.ZC'
+    command: >
+      --admin-password 'Kick@$$2025'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 volumes:
   portainer_data:
