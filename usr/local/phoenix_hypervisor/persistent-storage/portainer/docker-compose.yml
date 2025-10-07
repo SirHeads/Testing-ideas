@@ -1,5 +1,4 @@
 version: '3.8'
-
 services:
   portainer:
     image: portainer/portainer-ce:latest
@@ -8,18 +7,22 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer_data:/data
-      - /persistent-storage/portainer/config.json:/data/config.json:ro
+      - /usr/local/phoenix_hypervisor/persistent-storage/ssl/portainer.phoenix.local.crt:/certs/portainer.phoenix.local.crt:ro
+      - /usr/local/phoenix_hypervisor/persistent-storage/ssl/portainer.phoenix.local.key:/certs/portainer.phoenix.local.key:ro
     ports:
-      - "9000:9000"
-    command: >
-      --admin-password 'Kick@$$2025'
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/api/status"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - "9443:9443"
+      - "8000:8000"
+    environment:
+      - TZ=America/New_York
+      - HASHED_PASSWORD=$2y$05$OyT3kN36L3531Avk3Hx2k.W7ePNHy/moGUsWHp1KCXw6A22QwuM3.
+      - TLS_CERT_FILE=/certs/portainer.phoenix.local.crt
+      - TLS_KEY_FILE=/certs/portainer.phoenix.local.key
+    networks:
+      - portainer_network
 
 volumes:
   portainer_data:
@@ -28,3 +31,7 @@ volumes:
       type: none
       o: bind
       device: /persistent-storage/portainer/data
+
+networks:
+  portainer_network:
+    driver: bridge

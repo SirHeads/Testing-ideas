@@ -35,11 +35,37 @@ run_qm_command() {
 
     local output
     local exit_code=0
+    local is_guest_exec=false
+
+    # Check if the command is 'qm guest exec'
+    if [[ "$1" == "guest" && "$2" == "exec" ]]; then
+        is_guest_exec=true
+    fi
+
     output=$(qm "$@" 2>&1) || exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
         log_error "Command failed: $cmd_description (Exit Code: $exit_code)"
         log_error "Output:\n$output"
+    elif [ "$is_guest_exec" = true ]; then
+        # Parse JSON output for qm guest exec
+        local out_data
+        out_data=$(echo "$output" | jq -r '."out-data" // ""')
+        local guest_exitcode
+        guest_exitcode=$(echo "$output" | jq -r '.exitcode // 0')
+        local exited_status
+        exited_status=$(echo "$output" | jq -r '.exited // 0')
+
+        if [ -n "$out_data" ]; then
+            echo -e "$out_data"
+        fi
+
+        # If the guest command explicitly exited with a non-zero status, reflect that.
+        # Proxmox's qm guest exec itself might return 0 even if the guest command failed.
+        if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
+            log_error "Guest command exited with non-zero status: $guest_exitcode"
+            return "$guest_exitcode"
+        fi
     else
         echo "$output"
     fi
@@ -74,10 +100,11 @@ orchestrate_vm() {
     log_info "Starting orchestration for VMID: $VMID"
 
     # --- VMID Validation ---
+    log_info "Step 0: Validating VMID $VMID against configuration file..."
     if ! jq -e ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > /dev/null; then
         log_fatal "VMID $VMID not found in configuration file: $VM_CONFIG_FILE. Please add a valid VM definition."
     fi
-    log_info "VMID $VMID found in configuration file. Proceeding with orchestration."
+    log_info "Step 0: VMID $VMID found in configuration. Proceeding with orchestration."
 
     log_info "Available storage pools before VM creation:"
     pvesm status
@@ -98,33 +125,46 @@ orchestrate_vm() {
         apply_network_configurations "$VMID"
         log_info "Step 3: Completed."
 
-        log_info "Finalizing template for VM $VMID..."
+        log_info "Step 4: Starting VM template $VMID..."
         start_vm "$VMID"
+        log_info "Step 4: Completed."
+
+        log_info "Step 5: Waiting for guest agent on VM template $VMID..."
         wait_for_guest_agent "$VMID"
+        log_info "Step 5: Completed."
 
-        log_info "Waiting for cloud-init to complete before proceeding..."
+        log_info "Step 6: Waiting for cloud-init to complete before proceeding in VM template $VMID..."
         run_qm_command guest exec "$VMID" -- /bin/bash -c "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 5; done"
+        log_info "Step 6: Cloud-init completed in VM template $VMID."
 
-        log_info "Installing nfs-common in template..."
+        log_info "Step 7: Installing nfs-common in VM template $VMID..."
         if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "apt-get update && apt-get install -y nfs-common"; then
             log_fatal "Failed to install nfs-common in template."
         fi
+        log_info "Step 7: nfs-common installed in VM template $VMID."
 
-        log_info "Applying features to VM template $VMID..."
+        log_info "Step 8: Applying features to VM template $VMID..."
         apply_vm_features "$VMID"
-        log_info "Features applied to VM template."
+        log_info "Step 8: Features applied to VM template $VMID."
 
-        log_info "Cleaning cloud-init state for template..."
+        log_info "Step 9: Cleaning cloud-init state for VM template $VMID..."
         run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "touch /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "systemctl stop cloud-init"
+        log_info "Step 9: Cloud-init state cleaned for VM template $VMID."
+
+        log_info "Step 10: Stopping VM template $VMID..."
         stop_vm "$VMID"
-        log_info "Creating final template snapshot..."
+        log_info "Step 10: Completed."
+
+        log_info "Step 11: Creating final template snapshot for VM $VMID..."
         manage_snapshots "$VMID" "post-features"
-        log_info "Converting VM to template..."
+        log_info "Step 11: Completed."
+
+        log_info "Step 12: Converting VM $VMID to template..."
         run_qm_command template "$VMID"
-        log_info "Template creation for VMID $VMID completed successfully."
+        log_info "Step 12: Completed. Template creation for VMID $VMID completed successfully."
         return 0
     else
         log_info "Step 1: Ensuring VM $VMID is defined..."
@@ -167,10 +207,22 @@ orchestrate_vm() {
         manage_snapshots "$VMID" "post-features"
         log_info "Step 9: Completed."
 
-        # --- New Step 10: Deploy Declarative Stacks to Agent ---
-        local portainer_role
-        portainer_role=$(jq -r ".vms[] | select(.vmid == $VMID) | .portainer_role" "$VM_CONFIG_FILE")
-        # Step 10 has been moved to the portainer_api_setup.sh script to resolve a race condition.
+        log_info "Step 10: Waiting for Portainer API to be responsive for VM $VMID..."
+        # The Portainer server is always on VM 1001, so we use its IP for the health check.
+        local portainer_server_ip=$(jq -r ".network.portainer_server_ip" "$HYPERVISOR_CONFIG_FILE")
+        local portainer_port=$(get_global_config_value ".network.portainer_server_port")
+        local cert_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl/portainer.phoenix.local.crt"
+
+        if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh" "$portainer_server_ip" "$portainer_port" "$cert_path"; then
+            log_fatal "Portainer API health check failed for VM $VMID."
+        fi
+        log_info "Step 10: Portainer API is responsive."
+
+        log_info "Step 11: Calling Portainer reconciliation for VM $VMID..."
+        if ! "${PHOENIX_BASE_DIR}/bin/reconcile_portainer.sh"; then
+            log_fatal "Portainer reconciliation failed."
+        fi
+        log_info "Step 11: Portainer reconciliation completed for VM $VMID."
     fi
 
     log_info "Available storage pools after VM creation:"
@@ -274,7 +326,6 @@ create_vm_from_image() {
     run_qm_command set "$VMID" --boot c --bootdisk scsi0
     run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
 
-    log_info "Cleaning up downloaded image file..."
     rm -f "$download_path"
 }
 
@@ -467,8 +518,6 @@ apply_volumes() {
     if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "mount | grep -q '${mount_point}'"; then
         log_fatal "Failed to mount NFS share ${server}:${path} at ${mount_point} in VM $VMID. Please check NFS server logs and network connectivity."
     fi
-    
-    log_info "NFS mount configured and verified successfully."
 }
 
 # =====================================================================================
@@ -528,6 +577,9 @@ provision_declarative_files() {
 
         if [ ! -f "$absolute_compose_path" ]; then
             log_warn "Compose file not found for stack '$stack_name' at path: $absolute_compose_path. Skipping."
+            log_info "--- DIAGNOSTIC: Listing contents of PHOENIX_BASE_DIR (${PHOENIX_BASE_DIR}) ---"
+            ls -la "$PHOENIX_BASE_DIR"
+            log_info "--- END DIAGNOSTIC ---"
             continue
         fi
 
@@ -605,19 +657,20 @@ apply_vm_features() {
     local temp_context_file="/tmp/vm_${VMID}_context.json"
     jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > "$temp_context_file"
 
+    local persistent_volume_path
+    persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
+
+    if [ -z "$persistent_volume_path" ]; then
+        log_fatal "No NFS volume found for VM $VMID. Cannot apply features."
+    fi
+
+    # Prepare scripts on the hypervisor's NFS share ONCE before the loop
+    local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
+    log_info "Preparing script directory at $hypervisor_scripts_dir..."
+    rm -rf "$hypervisor_scripts_dir"
+    mkdir -p "$hypervisor_scripts_dir"
+
     for feature in $features; do
-        local persistent_volume_path
-        persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
-
-        if [ -z "$persistent_volume_path" ]; then
-            log_fatal "No NFS volume found for VM $VMID. Cannot apply features."
-        fi
-
-        # Prepare scripts on the hypervisor's NFS share
-        local hypervisor_scripts_dir="${persistent_volume_path}/.phoenix_scripts"
-        rm -rf "$hypervisor_scripts_dir"
-        mkdir -p "$hypervisor_scripts_dir"
-        
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
         if [ ! -f "$feature_script_path" ]; then
             log_fatal "Feature script not found: $feature_script_path"
@@ -625,7 +678,6 @@ apply_vm_features() {
 
         cp "$feature_script_path" "$hypervisor_scripts_dir/"
         cp "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh" "$hypervisor_scripts_dir/"
-        cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_api_setup.sh" "$hypervisor_scripts_dir/"
         cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_agent_setup.sh" "$hypervisor_scripts_dir/"
         cp "$temp_context_file" "${hypervisor_scripts_dir}/vm_context.json"
         
@@ -660,18 +712,20 @@ apply_vm_features() {
         # Make scripts executable
         run_qm_command guest exec "$VMID" -- /bin/chmod -R +x "$vm_script_dir"
 
-        # Execute the script asynchronously
-        log_info "Executing feature script '$feature' asynchronously in VM $VMID..."
-        local pid_json
+        # Execute the script asynchronously and capture its PID
+        log_info "Executing feature script '$feature' in VM $VMID..."
+        local log_file_in_vm="/var/log/phoenix_feature_${feature}.log"
         local exit_code_file_in_vm="/tmp/phoenix_feature_${feature}_exit_code"
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f $exit_code_file_in_vm"
         
-        local exec_command="nohup /bin/bash -c '$vm_script_path; echo \$? > $exit_code_file_in_vm' > $log_file_in_vm 2>&1 &"
+        # Ensure previous exit code file is removed
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f $exit_code_file_in_vm"
+
+        # Execute the script in the background, redirecting output to log file and capturing exit code
+        local exec_command="nohup /bin/bash -c '$vm_script_path $VMID > $log_file_in_vm 2>&1; echo \$? > $exit_code_file_in_vm' &"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "$exec_command"
 
-        log_info "Feature script '$feature' started. Tailing log file: $log_file_in_vm"
+        log_info "Feature script '$feature' started. Streaming logs from $log_file_in_vm..."
 
-        # Monitor the process and stream the log
         local timeout=1800 # 30 minutes timeout
         local start_time=$SECONDS
         local last_log_line=0
@@ -688,7 +742,7 @@ apply_vm_features() {
                 last_log_line=$((last_log_line + new_lines_count))
             fi
 
-            # Check if the exit code file exists
+            # Check if the exit code file exists and contains a value
             local exit_code_output
             exit_code_output=$(qm guest exec "$VMID" -- /bin/bash -c "cat $exit_code_file_in_vm" 2>/dev/null)
             local exit_code
@@ -772,28 +826,9 @@ main_vm_orchestrator() {
         create)
             log_info "Starting 'create' workflow for VMID $vmid..."
             orchestrate_vm "$vmid"
-            log_info "Triggering Portainer reconciliation to sync endpoints and stacks..."
+            log_info "Calling Portainer reconciliation..."
             if ! "${PHOENIX_BASE_DIR}/bin/reconcile_portainer.sh"; then
-                log_warn "Portainer reconciliation script failed. The Portainer environment may be out of sync."
-            fi
-
-            # Run health check for Qdrant if it's one of the stacks
-            local docker_stacks
-            docker_stacks=$(jq -c ".vms[] | select(.vmid == $vmid) | .docker_stacks[]?" "$VM_CONFIG_FILE")
-            if echo "$docker_stacks" | grep -q "qdrant_service"; then
-                log_info "Running Qdrant health check for VMID $vmid..."
-                local health_check_script_path_in_vm="/persistent-storage/.phoenix_scripts/check_qdrant.sh"
-                # First, copy the health check script to the VM's persistent storage
-                cp "${PHOENIX_BASE_DIR}/bin/health_checks/check_qdrant.sh" "${persistent_volume_path}/.phoenix_scripts/"
-                if ! qm guest exec "$vmid" -- /bin/bash "$health_check_script_path_in_vm"; then
-                    log_fatal "Qdrant health check failed for VMID $vmid."
-                fi
-            fi
-
-            log_info "Running Portainer health check..."
-            local portainer_health_check_script_path="${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer.sh"
-            if ! "$portainer_health_check_script_path"; then
-                log_fatal "Portainer health check failed."
+                log_fatal "Portainer reconciliation failed."
             fi
             log_info "'create' workflow completed for VMID $vmid."
             ;;

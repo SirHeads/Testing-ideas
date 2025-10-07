@@ -24,36 +24,42 @@
 #
 
 set -e
+export PHOENIX_DEBUG="true" # Temporarily force debug mode for this script
+
+# Source common utilities provided by the orchestrator. This script contains helper functions for tasks like reading configuration.
+source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
+
+# Enable verbose logging if PHOENIX_DEBUG is set to "true"
+if [ "$PHOENIX_DEBUG" == "true" ]; then
+    set -x
+fi
 
 # Log file for feature script execution. This captures all output for debugging and auditing VM provisioning.
 LOG_FILE="/var/log/phoenix_feature_docker.log"
 exec &> >(tee -a "$LOG_FILE")
 
-echo "--- Starting Docker Installation ---"
+log_info "--- Starting Docker Installation ---"
+log_info "Sourcing common utilities..." # This log_info will now work
 
-# Source common utilities provided by the orchestrator. This script contains helper functions for tasks like reading configuration.
-if [ -f "$(dirname "$0")/phoenix_hypervisor_common_utils.sh" ]; then
-    source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
-else
-    echo "Error: Common utilities script not found at $(dirname "$0")/phoenix_hypervisor_common_utils.sh." >&2
-    exit 1
-fi
-
+log_info "Setting context file path..."
 # Set the context file path. This JSON file contains the configuration for the VM.
 CONTEXT_FILE="$(dirname "$0")/vm_context.json"
 if [ ! -f "$CONTEXT_FILE" ]; then
     log_fatal "VM context file not found at $CONTEXT_FILE. Cannot proceed with Docker installation."
 fi
+log_info "Context file set to $CONTEXT_FILE."
 
 # =====================================================================================
 # Function: wait_for_apt_lock
 # Description: Waits for the apt lock to be released.
 # =====================================================================================
 wait_for_apt_lock() {
+    log_info "Waiting for apt lock to be released..."
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do
         log_warn "Waiting for other package manager operations to complete..."
         sleep 5
     done
+    log_info "Apt lock released."
 }
 
 # Idempotency Check: Check if Docker is already installed and running.
@@ -73,7 +79,7 @@ fi
 log_info "Primary username is '$USERNAME'."
 
 # 1. Update Package Manager
-log_info "Step 1: Updating package manager..."
+log_info "Step 1: Updating package manager (apt-get update)..."
 wait_for_apt_lock
 if ! apt-get update; then
     log_fatal "Failed to update package manager. Please check network connectivity and repository configuration."
@@ -81,7 +87,7 @@ fi
 log_info "Package manager updated successfully."
 
 # 2. Install Dependencies
-log_info "Step 2: Installing dependencies for Docker..."
+log_info "Step 2: Installing dependencies for Docker (apt-get install apt-transport-https ca-certificates curl software-properties-common)..."
 wait_for_apt_lock
 if ! apt-get install -y apt-transport-https ca-certificates curl software-properties-common; then
     log_fatal "Failed to install Docker dependencies."
@@ -89,36 +95,36 @@ fi
 log_info "Dependencies installed successfully."
 
 # 3. Add Docker's Official GPG Key
-log_info "Step 3: Adding Docker's official GPG key..."
+log_info "Step 3: Adding Docker's official GPG key (curl | gpg --dearmor)..."
 if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg; then
-    log_fatal "Failed to add Docker's GPG key."
+    log_fatal "Failed to add Docker's GPG key. Command: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg"
 fi
 log_info "Docker GPG key added successfully."
 
 # 4. Add Docker Repository
-log_info "Step 4: Adding Docker repository..."
+log_info "Step 4: Adding Docker repository (echo deb | tee /etc/apt/sources.list.d/docker.list)..."
 if ! echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null; then
-    log_fatal "Failed to add Docker repository."
+    log_fatal "Failed to add Docker repository. Command: echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null"
 fi
 log_info "Docker repository added successfully."
 
 # 5. Install Docker Engine
-log_info "Step 5: Installing Docker Engine..."
+log_info "Step 5: Installing Docker Engine (apt-get update && apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)..."
 wait_for_apt_lock
 if ! apt-get update || ! apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-    log_fatal "Failed to install Docker Engine."
+    log_fatal "Failed to install Docker Engine. Command: apt-get update || apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
 fi
 log_info "Docker Engine installed successfully."
 
 # 6. Enable and Start Docker Service
-log_info "Step 6: Enabling and starting Docker service..."
+log_info "Step 6: Enabling and starting Docker service (systemctl enable docker && systemctl start docker)..."
 if ! systemctl enable docker || ! systemctl start docker; then
     log_fatal "Failed to enable or start Docker service."
 fi
 log_info "Docker service enabled and started successfully."
 
 # 7. Add User to Docker Group
-log_info "Step 7: Adding user '$USERNAME' to the docker group..."
+log_info "Step 7: Adding user '$USERNAME' to the docker group (getent group docker || groupadd docker; usermod -aG docker)..."
 if ! getent group docker >/dev/null; then
     log_info "Docker group does not exist. Creating it..."
     if ! groupadd docker; then
@@ -157,6 +163,34 @@ case "$PORTAINER_ROLE" in
             compose_file="/persistent-storage/portainer/docker-compose.yml"
             if [ -f "$compose_file" ]; then
                 log_info "Found docker-compose.yml. Deploying Portainer server..."
+
+                # --- Debugging: Verify NFS mount and volume path existence/permissions inside VM ---
+                log_info "Verifying NFS mount and host volume path inside VM..."
+
+                # Check if /persistent-storage is mounted
+                if mountpoint -q /persistent-storage; then
+                    log_info "/persistent-storage is mounted inside VM."
+                    log_info "Mount details for /persistent-storage: $(mount | grep /persistent-storage)"
+                else
+                    log_warn "/persistent-storage IS NOT mounted inside VM. This is a critical issue for shared storage."
+                    # Attempt to mount it if not already mounted (might be a temporary workaround for debugging)
+                    # This should ideally be handled by base_setup or cloud-init
+                    # mount -a || log_warn "Attempted 'mount -a' but it failed or did not resolve the issue."
+                fi
+
+                # Verify the specific directory for Portainer data
+                if [ -d "/persistent-storage/portainer/data" ]; then
+                    log_info "Directory /persistent-storage/portainer/data exists inside VM."
+                    log_info "Permissions for /persistent-storage/portainer/data: $(stat -c '%a %n' /persistent-storage/portainer/data)"
+                    log_info "Contents of /persistent-storage/portainer/data: $(ls -la /persistent-storage/portainer/data)"
+                else
+                    log_warn "Directory /persistent-storage/portainer/data DOES NOT exist inside VM. Attempting to create it."
+                    mkdir -p /persistent-storage/portainer/data || log_fatal "Failed to create /persistent-storage/portainer/data inside VM."
+                    log_info "Directory /persistent-storage/portainer/data created inside VM."
+                    log_info "Permissions for /persistent-storage/portainer/data: $(stat -c '%a %n' /persistent-storage/portainer/data)"
+                fi
+                # --- End Debugging ---
+
                 (cd "$(dirname "$compose_file")" && docker compose up -d)
                 log_info "Portainer server deployment initiated. Waiting for container to start..."
                 sleep 15
@@ -176,7 +210,7 @@ case "$PORTAINER_ROLE" in
         log_info "Deploying Portainer agent..."
         if [ -f "$(dirname "$0")/portainer_agent_setup.sh" ]; then
             if ! "$(dirname "$0")/portainer_agent_setup.sh"; then
-                log_error "Portainer agent deployment script failed."
+                log_fatal "Portainer agent deployment script failed."
             fi
         else
             log_warn "Portainer agent deployment script not found. Skipping."
@@ -190,4 +224,4 @@ case "$PORTAINER_ROLE" in
         ;;
 esac
 
-echo "--- Docker Installation Complete ---"
+log_info "--- Docker Installation Complete ---"

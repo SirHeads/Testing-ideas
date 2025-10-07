@@ -73,16 +73,17 @@ graph TD
         P[vm-manager.sh completes orchestration for 1002];
         P --> Q[Call reconcile_portainer.sh];
         Q --> R[Script identifies Primary Portainer VM 1001];
-        R --> S[Executes portainer_api_setup.sh inside VM 1001];
+        R --> S[Executes API calls to portainer.phoenix.local];
     end
 
-    subgraph Portainer API Setup [portainer_api_setup.sh on VM 1001]
-        S --> T[Wait for Portainer API to be ready];
-        T --> U[Get JWT Token];
-        U --> V[For each agent VM e.g., 1002];
-        V --> W[Wait for Agent to be responsive via HTTP ping];
-        W --> X[ensure_agent_endpoint_exists: Create/Verify Portainer endpoint over HTTP];
-        X --> Y[deploy_stack: Create/Update Qdrant stack via Portainer API type 2];
+    subgraph NGINX Gateway [LXC 101]
+        S --> T[api-gateway];
+        T -- proxies to --> U[VM 1001: Portainer];
+    end
+
+    subgraph Portainer API
+        U -- creates --> V[Endpoint for VM 1002];
+        U -- deploys --> W[Stack to VM 1002];
     end
 
     subgraph Result
@@ -93,8 +94,8 @@ graph TD
 
 ## Key Improvements
 
-1.  **Centralized Reconciliation**: The `reconcile_portainer.sh` script is now called as the final step in the `vm-manager.sh`'s `create` workflow. This prevents race conditions by ensuring that the Portainer primary server only attempts to configure agents and stacks *after* they have been fully provisioned.
-2.  **Robust API Interaction**: The `portainer_api_setup.sh` script now includes wait/retry loops to confirm that both the Portainer server API (via `localhost`) and the remote agent endpoints (via HTTP ping) are responsive before attempting to communicate with them.
+1.  **Centralized Reconciliation**: The `reconcile_portainer.sh` script is now called as the final step in the `vm-manager.sh`'s `create` workflow. This script runs directly on the hypervisor and communicates with the Portainer API through the NGINX gateway, eliminating the complexity of script injection.
+2.  **Configuration-Driven**: The new process is entirely driven by the `phoenix_vm_configs.json` and `phoenix_stacks_config.json` files. All Portainer entities—endpoints and stacks—are now managed declaratively, eliminating the need for hardcoded values.
 3.  **Corrected Agent Communication**: The system now correctly uses HTTP to communicate with the Portainer agent, resolving the TLS mismatch that was causing endpoint creation to fail.
 4.  **Idempotent Operations**: The logic for creating and updating Portainer endpoints and stacks has been improved to be fully idempotent, allowing the `phoenix converge` command to work reliably.
 4.  **Clear Separation of Concerns**: The workflow maintains a clear separation of responsibilities, with each script handling a specific part of the process, making the system easier to maintain and debug.

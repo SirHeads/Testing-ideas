@@ -1146,6 +1146,13 @@ main_lxc_orchestrator() {
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
+                if [ "$ctid" -eq 101 ]; then
+                    log_info "NGINX gateway container detected. Forcing SSL certificate regeneration..."
+                    if ! "${PHOENIX_BASE_DIR}/bin/generate_ssl_certs.sh" --force; then
+                        log_fatal "Failed to force SSL certificate regeneration."
+                    fi
+                fi
+
                 apply_mount_points "$ctid"
                 # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"

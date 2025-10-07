@@ -7,4 +7,4 @@ services:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - /var/lib/docker/volumes/qdrant_storage/_data:/qdrant/storage:z
+      - ./qdrant_storage:/qdrant/storage:z

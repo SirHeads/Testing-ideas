@@ -36,6 +36,7 @@ export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_con
 export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
 export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.schema.json"
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+export PHOENIX_DEBUG="true" # Set to "true" to enable debug logging and 'set -x' in feature scripts
 
 # --- Dynamic LXC_CONFIG_FILE Path ---
 # This logic allows the script to be used both on the host and inside a container's temporary execution environment.

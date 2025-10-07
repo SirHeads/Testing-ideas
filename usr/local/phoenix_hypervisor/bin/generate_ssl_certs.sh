@@ -2,6 +2,7 @@
 #
 # File: generate_ssl_certs.sh
 # Description: Idempotent script to generate self-signed SSL certificates for the Phoenix Hypervisor environment.
+#              It now includes a --force flag to allow for the regeneration of certificates.
 
 set -e
 
@@ -20,14 +21,22 @@ certs=(
     ["ollama.phoenix.local"]="Phoenix Ollama"
 )
 
+FORCE_REGENERATE=false
+if [ "$1" == "--force" ]; then
+    FORCE_REGENERATE=true
+fi
+
 for domain in "${!certs[@]}"; do
     org_name="${certs[$domain]}"
     key_file="${SSL_DIR}/${domain}.key"
     crt_file="${SSL_DIR}/${domain}.crt"
 
-    if [ -f "$crt_file" ] && [ -f "$key_file" ]; then
+    if [ -f "$crt_file" ] && [ -f "$key_file" ] && [ "$FORCE_REGENERATE" = false ]; then
         log_info "Certificate for ${domain} already exists. Skipping generation."
     else
+        if [ "$FORCE_REGENERATE" = true ]; then
+            log_info "Forcing regeneration of certificate for ${domain}..."
+        fi
         log_info "Generating self-signed certificate for ${domain}..."
         openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
             -keyout "$key_file" \

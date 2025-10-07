@@ -34,6 +34,7 @@ cp $TMP_DIR/sites-available/* $SITES_AVAILABLE_DIR/ || { echo "Config files miss
 cp $TMP_DIR/scripts/* $SCRIPTS_DIR/ || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
 
 # Link enabled sites
+# Link the consolidated gateway configuration
 ln -sf $SITES_AVAILABLE_DIR/gateway $SITES_ENABLED_DIR/gateway
 
 # Remove default site

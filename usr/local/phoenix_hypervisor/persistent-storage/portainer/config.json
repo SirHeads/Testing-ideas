@@ -1,0 +1,12 @@
+{
+    "endpoints": [
+        {
+            "Name": "drphoenix",
+            "URL": "tcp://10.0.0.102:9001",
+            "Type": 2,
+            "GroupID": 1,
+            "TLS": true,
+            "TLSSkipVerify": true
+        }
+    ]
+}

@@ -37,7 +37,7 @@
             ],
             "portainer_role": "primary",
             "portainer_admin_user": "admin",
-            "portainer_admin_password": "Kick@$$2025",
+            "portainer_admin_password": "NewKick@$$2025",
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1"
@@ -81,7 +81,7 @@
                 {
                     "type": "nfs",
                     "name": "persistent-storage",
-                    "path": "/quickOS/vm-persistent-data/1000",
+                    "path": "/quickOS/vm-persistent-data/1002",
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
                 }

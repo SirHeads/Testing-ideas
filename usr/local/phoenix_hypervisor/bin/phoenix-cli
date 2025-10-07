@@ -444,7 +444,7 @@ main() {
             source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "$VERB" "$target"
         elif is_vm_target "$target"; then
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
-            "$MANAGER_DIR/vm-manager.sh" "$VERB" "$target"
+            source "$MANAGER_DIR/vm-manager.sh" && main_vm_orchestrator "$VERB" "$target"
         else
             # Handle non-guest targets (e.g., setup commands)
             case "$VERB" in

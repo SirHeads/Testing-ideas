@@ -1,11 +1,4 @@
 #!/bin/bash
-#
-# File: reconcile_portainer.sh
-# Description: This script triggers the Portainer reconciliation process. It finds the primary
-#              Portainer server VM and executes the portainer_api_setup.sh script inside it.
-#              This ensures that all agent endpoints and Docker stacks are kept in sync with
-#              the hypervisor's configuration.
-
 set -e
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
@@ -13,80 +6,120 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
 
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
-main() {
-    log_info "Starting Portainer reconciliation process..."
+# =====================================================================================
+# Function: reconcile_portainer
+# Description: Main function to orchestrate the Portainer reconciliation process.
+# =====================================================================================
+reconcile_portainer() {
+    log_info "Starting Portainer reconciliation process on the hypervisor..."
 
-    local primary_vmid
-    primary_vmid=$(jq -r '.vms[] | select(.portainer_role == "primary") | .vmid' "$VM_CONFIG_FILE")
+    # --- Configuration ---
+    local PORTAINER_URL="https://portainer.phoenix.local"
+    local USERNAME="admin"
+    local PASSWORD
+    PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
+    local STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 
-    if [ -z "$primary_vmid" ] || [ "$primary_vmid" == "null" ]; then
-        log_warn "No primary Portainer VM found in the configuration. Skipping reconciliation."
-        exit 0
+    # --- 1. Authenticate and get JWT ---
+    log_info "Authenticating with Portainer API..."
+    local JWT
+    local CA_CERT_PATH="${PHOENIX_BASE_DIR}/persistent-storage/ssl/portainer.phoenix.local.crt"
+
+    # Ensure the certificate file exists
+    if [ ! -f "$CA_CERT_PATH" ]; then
+        log_fatal "CA certificate file not found at: ${CA_CERT_PATH}. Cannot authenticate with Portainer API."
     fi
 
-    log_info "Found primary Portainer VM with ID: $primary_vmid"
+    JWT=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/auth" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\":\"${USERNAME}\",\"password\":\"${PASSWORD}\"}" | jq -r '.jwt // ""')
 
-    # The API setup script is expected to be on the persistent volume, copied there by the feature install script.
-    local script_path_in_vm="/persistent-storage/.phoenix_scripts/portainer_api_setup.sh"
-
-    log_info "Executing Portainer API setup script asynchronously inside VM $primary_vmid..."
-    
-    local log_file_in_vm="/var/log/phoenix_portainer_reconciliation.log"
-    local exit_code_file_in_vm="/tmp/phoenix_reconciliation_exit_code"
-
-    # Remove the old exit code file to ensure a clean run
-    qm guest exec "$primary_vmid" -- /bin/bash -c "rm -f $exit_code_file_in_vm" >/dev/null 2>&1
-
-    # Execute the script in the background, writing the exit code to a file upon completion
-    local exec_command="nohup /bin/bash -c 'bash $script_path_in_vm; echo \$? > $exit_code_file_in_vm' > $log_file_in_vm 2>&1 &"
-    if ! qm guest exec "$primary_vmid" -- /bin/bash -c "$exec_command"; then
-        log_error "Failed to start Portainer API setup script in VM $primary_vmid. Reconciliation failed."
-        exit 1
+    if [ -z "$JWT" ]; then
+      log_fatal "Failed to authenticate with Portainer API. Check credentials and SSL certificate."
     fi
+    log_info "Successfully authenticated with Portainer API."
 
-    log_info "Reconciliation script started. Tailing log file: $log_file_in_vm"
+    # --- 2. Process each agent VM to create endpoints ---
+    local agent_vms_json
+    agent_vms_json=$(jq -c '[.vms[] | select(.portainer_role == "agent")]' "$VM_CONFIG_FILE")
 
-    # Monitor the process and stream the log
-    local timeout=1800 # 30 minutes timeout
-    local start_time=$SECONDS
-    local last_log_line=0
+    echo "$agent_vms_json" | jq -c '.[]' | while read -r agent_vm; do
+        local AGENT_IP
+        AGENT_IP=$(echo "$agent_vm" | jq -r '.network_config.ip' | cut -d'/' -f1)
+        local AGENT_NAME
+        AGENT_NAME=$(echo "$agent_vm" | jq -r '.name')
+        local AGENT_PORT="9001"
 
-    while true; do
-        # Stream new log content
-        local new_log_output
-        new_log_output=$(qm guest exec "$primary_vmid" -- /bin/bash -c "tail -n +$((last_log_line + 1)) $log_file_in_vm" 2>/dev/null)
-        local new_log_content
-        new_log_content=$(echo "$new_log_output" | jq -r '."out-data" // ""')
-        if [ -n "$new_log_content" ]; then
-            echo -e "$new_log_content"
-            new_lines_count=$(echo "$new_log_content" | wc -l | tr -d '[:space:]')
-            last_log_line=$((last_log_line + new_lines_count))
+        log_info "Processing agent: ${AGENT_NAME} at ${AGENT_IP}"
+
+        # Check if endpoint already exists
+        local ENDPOINT_URL="http://${AGENT_IP}:${AGENT_PORT}"
+        local ENDPOINT_ID
+        ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+
+        if [ -z "$ENDPOINT_ID" ]; then
+          log_info "Creating endpoint for ${AGENT_NAME}..."
+          local JSON_PAYLOAD
+          JSON_PAYLOAD=$(jq -n --arg name "${AGENT_NAME}" --arg url "${ENDPOINT_URL}" '{Name: $name, EndpointType: 2, URL: $url, PublicURL: "", TLS: false}')
+          
+          local RESPONSE
+          RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
+            -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
+
+          ENDPOINT_ID=$(echo "$RESPONSE" | jq -r '.Id // ""')
+          if [ -z "$ENDPOINT_ID" ]; then
+              log_error "Failed to create endpoint for ${AGENT_NAME}. Response: ${RESPONSE}"
+              continue
+          fi
+          log_info "Endpoint for ${AGENT_NAME} created with ID: ${ENDPOINT_ID}"
+        else
+          log_info "Endpoint for ${AGENT_NAME} already exists with ID: ${ENDPOINT_ID}"
         fi
 
-        # Check if the exit code file exists
-        local exit_code_output
-        exit_code_output=$(qm guest exec "$primary_vmid" -- /bin/bash -c "cat $exit_code_file_in_vm" 2>/dev/null)
-        local exit_code
-        exit_code=$(echo "$exit_code_output" | jq -r '."out-data" // ""' | tr -d '[:space:]')
+        # --- 3. Deploy stacks associated with this agent ---
+        echo "$agent_vm" | jq -r '.docker_stacks[]?' | while read -r STACK_NAME; do
+            log_info "Processing stack '${STACK_NAME}' for agent '${AGENT_NAME}'"
+            
+            local STACK_EXISTS_ID
+            STACK_EXISTS_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}" | jq -r --arg name "${STACK_NAME}" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
-        if [ -n "$exit_code" ]; then
-            if [ "$exit_code" -eq 0 ]; then
-                log_success "Reconciliation script completed successfully."
-                break
-            else
-                log_fatal "Reconciliation script failed with exit code $exit_code."
+            if [ -n "$STACK_EXISTS_ID" ]; then
+                log_info "Stack '${STACK_NAME}' already exists on this endpoint. Skipping."
+                continue
             fi
-        fi
 
-        # Check for timeout
-        if (( SECONDS - start_time > timeout )); then
-            log_fatal "Timeout reached while waiting for reconciliation script to complete."
-        fi
+            local compose_file_path
+            compose_file_path=$(jq -r ".docker_stacks.\"${STACK_NAME}\".compose_file_path" "$STACKS_CONFIG_FILE")
+            local FULL_COMPOSE_PATH="${PHOENIX_BASE_DIR}/${compose_file_path}"
 
-        sleep 5
+            if [ ! -f "$FULL_COMPOSE_PATH" ]; then
+                log_error "Stack file ${FULL_COMPOSE_PATH} not found. Skipping."
+                continue
+            fi
+
+            log_info "Deploying stack: ${STACK_NAME}"
+            local STACK_CONTENT
+            STACK_CONTENT=$(cat "$FULL_COMPOSE_PATH")
+
+            local JSON_PAYLOAD
+            JSON_PAYLOAD=$(jq -n --arg name "${STACK_NAME}" --arg content "${STACK_CONTENT}" '{Name: $name, StackFileContent: $content}')
+
+            local RESPONSE
+            RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=1&method=string&endpointId=${ENDPOINT_ID}" \
+              -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
+
+            if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
+              log_info "Stack '${STACK_NAME}' deployed successfully."
+            else
+              log_error "Failed to deploy stack '${STACK_NAME}'. Response: ${RESPONSE}"
+            fi
+        done
     done
 
     log_success "Portainer reconciliation process completed successfully."
 }
 
-main
+# If the script is executed directly, call the main function
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    reconcile_portainer "$@"
+fi
