@@ -87,7 +87,14 @@
                 }
             ],
             "docker_stacks": [
-                "qdrant_service"
+                {
+                    "name": "qdrant_service",
+                    "environment": "production"
+                },
+                {
+                    "name": "thinkheads_ai_app",
+                    "environment": "development"
+                }
             ]
         }
     ]

@@ -67,6 +67,7 @@ print_usage() {
     echo "  stop      Stops a specific LXC container or VM."
     echo "  restart   Restarts a specific LXC container or VM."
     echo "  status    Gets the status of a specific LXC container or VM."
+    echo "  sync      Synchronizes Portainer environments and/or Docker stacks."
     echo "  LetsGo    Creates and starts all defined guests in the correct order."
     echo ""
     echo "OPTIONS:"
@@ -316,7 +317,7 @@ main() {
 
     # --- VERB VALIDATION ---
     # Before proceeding, ensure the provided verb is valid.
-    local valid_verbs="setup create delete start stop restart status LetsGo converge"
+    local valid_verbs="setup create delete start stop restart status sync LetsGo converge"
     if ! [[ $valid_verbs =~ (^|[[:space:]])"$VERB"($|[[:space:]]) ]]; then
         log_error "Invalid verb '$VERB'."
         print_usage
@@ -380,7 +381,9 @@ main() {
                         log_warn "Unknown guest type for '$target'. Skipping startup."
                     fi
                 done
-                log_info "All guests started successfully. 'LetsGo' command complete."
+                log_info "All guests started successfully. Handing off to Portainer manager for environment synchronization..."
+                "$SCRIPT_DIR/managers/portainer-manager.sh" "sync" "all"
+                log_info "'LetsGo' command complete."
                 ;;
             *)
                 log_error "Verb '$VERB' requires at least one target."
@@ -396,6 +399,10 @@ main() {
     if [ "$VERB" == "delete" ]; then
         log_info "Delete command detected. Processing targets without dependency resolution."
         targets_to_process=("${TARGETS[@]}")
+    elif [ "$VERB" == "sync" ]; then
+        log_info "Sync command detected. Routing to portainer-manager.sh..."
+        "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "${TARGETS[@]}"
+        exit 0
     else
         log_info "Targets detected. Resolving dependencies for all targets..."
         local sorted_targets

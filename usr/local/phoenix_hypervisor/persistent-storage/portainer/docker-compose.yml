@@ -1,36 +1,21 @@
 version: '3.8'
+
 services:
   portainer:
     image: portainer/portainer-ce:latest
-    container_name: portainer
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
+    command: -H unix:///var/run/docker.sock --tlsskipverify
     volumes:
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
-      - /usr/local/phoenix_hypervisor/persistent-storage/ssl/portainer.phoenix.local.crt:/certs/portainer.phoenix.local.crt:ro
-      - /usr/local/phoenix_hypervisor/persistent-storage/ssl/portainer.phoenix.local.key:/certs/portainer.phoenix.local.key:ro
     ports:
+      - "9000:9000"
       - "9443:9443"
-      - "8000:8000"
-    environment:
-      - TZ=America/New_York
-      - HASHED_PASSWORD=$2y$05$OyT3kN36L3531Avk3Hx2k.W7ePNHy/moGUsWHp1KCXw6A22QwuM3.
-      - TLS_CERT_FILE=/certs/portainer.phoenix.local.crt
-      - TLS_KEY_FILE=/certs/portainer.phoenix.local.key
+    restart: always
     networks:
       - portainer_network
 
 volumes:
   portainer_data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /persistent-storage/portainer/data
 
 networks:
   portainer_network:

@@ -1,6 +1,6 @@
 ---
 title: 'Feature: Portainer'
-summary: The `portainer` feature is a critical component of the declarative stack management system. It automates the deployment of the Portainer server and provides the API that drives the entire stack orchestration workflow.
+summary: The Portainer integration is now managed by the dedicated `portainer-manager.sh` script, which orchestrates the deployment of the Portainer server and agents, and drives the declarative stack management system via the Portainer API.
 document_type: "Feature Summary"
 status: "Approved"
 version: "1.0.0"
@@ -14,13 +14,13 @@ review_cadence: "Annual"
 last_reviewed: "2025-09-30"
 ---
 
-The `portainer` feature is now a core component of the declarative stack management system. It is no longer just a management UI, but the engine that drives the entire stack deployment workflow.
+The Portainer integration is now a core component of the declarative environment management layer, orchestrated by `portainer-manager.sh`. It is no longer just a management UI, but the engine that drives the entire stack deployment workflow.
 
 ## Key Actions
 
-1.  **Portainer Server Deployment**: The feature deploys the `portainer/portainer-ce:latest` Docker container in a dedicated VM (typically VM 1001).
-2.  **API Integration**: The `vm-manager.sh` script uses the `portainer_api_setup.sh` utility to interact with the Portainer API. This allows for the programmatic creation of endpoints and the deployment of stacks.
-3.  **Declarative Stack Orchestration**: The entire stack deployment process is now declarative. The `phoenix-cli` CLI reads the desired state from the configuration files and uses the Portainer API to make the live system match that state.
+1.  **Portainer Instance Deployment**: The `portainer-manager.sh` deploys the `portainer/portainer-ce:latest` Docker container as the server in a dedicated VM (typically VM 1001) and `portainer/agent:latest` containers as agents on other Docker-enabled VMs.
+2.  **API-Driven Environment Management**: The `portainer-manager.sh` authenticates with the Portainer API to create and manage environments (endpoints) for each agent-enabled VM.
+3.  **Declarative Stack Orchestration**: The `portainer-manager.sh` reads the desired state of Docker stacks from configuration files and uses the Portainer API to deploy, update, or remove stacks on the configured environments.
 
 ## Architectural Shift: VM-Based Deployment
 
@@ -34,4 +34,4 @@ The script is idempotent. Before deploying a container, it checks if a container
 
 ## Usage
 
-This feature is a foundational component of the declarative stack management system. It is automatically deployed to its own dedicated VM as part of the `phoenix-cli setup` command. The `docker` feature is a prerequisite.
+The Portainer environment is a foundational component of the declarative environment management layer. It is deployed and managed by the `portainer-manager.sh` script, which is invoked by the `phoenix-cli sync portainer` command or automatically as part of the `phoenix-cli LetsGo` workflow. The `docker` feature is a prerequisite for any VM hosting Portainer instances.

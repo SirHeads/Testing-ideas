@@ -25,8 +25,8 @@ The use of Docker within unprivileged LXC containers presented persistent challe
 
 ## 3. Resolution
 
-The designated replacement for all Docker-in-LXC workloads is VM 1001 (`Dr-Phoenix`). This dedicated Virtual Machine provides a more stable and secure environment for Docker, eliminating the complexities of nested containerization.
+The designated replacement for all Docker-in-LXC workloads is VM 1001 (`Portainer Server`) and other Docker-enabled VMs (e.g., VM 1002 `drphoenix`). These dedicated Virtual Machines provide a more stable and secure environment for Docker, with their environments and stacks managed by the new `portainer-manager.sh`, eliminating the complexities of nested containerization.
 
 ## 4. Conclusion
 
-The Docker-in-LXC approach has been officially deprecated. All future Docker workloads will be deployed within VM 1001 (`Dr-Phoenix`), and the `Template-Docker` and `Template-Docker-GPU` LXC templates have been removed from the system.
+The Docker-in-LXC approach has been officially deprecated. All future Docker workloads will be deployed within dedicated Docker-enabled VMs (e.g., VM 1001 for Portainer Server, VM 1002 for other services), and the `Template-Docker` and `Template-Docker-GPU` LXC templates have been removed from the system. The management of these Docker environments and their stacks is now handled by the `portainer-manager.sh`.

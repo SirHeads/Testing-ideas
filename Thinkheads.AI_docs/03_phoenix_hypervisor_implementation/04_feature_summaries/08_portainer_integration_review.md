@@ -34,13 +34,13 @@ All identified issues have been resolved. This report validates that the impleme
 
 *   **Issue**: The `phoenix_hypervisor_config.json` file contained a placeholder password for the Portainer API, while the `phoenix_vm_configs.json` and the Portainer `docker-compose.yml` defined the correct password. This guaranteed that any post-deployment scripts attempting to interact with the Portainer API would fail to authenticate.
 *   **Resolution**: The placeholder password in `phoenix_hypervisor_config.json` was updated to match the correct password.
-*   **Validation**: This change directly enables the `portainer_api_setup.sh` and `reconcile_portainer.sh` scripts to successfully authenticate with the Portainer API. This is a cornerstone of the declarative model, as it allows the orchestration engine to programmatically manage the Portainer environment, create endpoints, and deploy stacks.
+*   **Validation**: This change directly enables the `portainer-manager.sh` to successfully authenticate with the Portainer API. This is a cornerstone of the declarative model, as it allows the orchestration engine to programmatically manage the Portainer environment, create endpoints, and deploy stacks.
 
 ### 2.2. NFS Path Correction and Agent VM Provisioning
 
-*   **Issue**: The NFS volume path for the agent VM (1002) was incorrectly set to the path for VM 1000. This prevented the `vm-manager.sh` script from mounting the correct persistent storage volume, which is the sole mechanism for delivering feature scripts (like the Docker installer and the Portainer agent setup script) into the guest.
+*   **Issue**: The NFS volume path for the agent VM (1002) was incorrectly set to the path for VM 1000. This prevented the `vm-manager.sh` script from mounting the correct persistent storage volume, which is the sole mechanism for delivering feature scripts (like the Docker installer) and configuration files into the guest. The Portainer agent deployment is now handled by `portainer-manager.sh`.
 *   **Resolution**: The NFS path was corrected in `phoenix_vm_configs.json`.
-*   **Validation**: With the correct path, the agent VM can now be successfully provisioned with all its required software. This is essential for the distributed architecture, as it allows the agent to come online and be ready for management by the Portainer server.
+*   **Validation**: With the correct path, the agent VM can now be successfully provisioned with all its required software. This is essential for the distributed architecture, as it allows the agent to come online and be ready for management by the Portainer server, orchestrated by `portainer-manager.sh`.
 
 ### 2.3. NGINX Proxy Repair and UI/API Accessibility
 

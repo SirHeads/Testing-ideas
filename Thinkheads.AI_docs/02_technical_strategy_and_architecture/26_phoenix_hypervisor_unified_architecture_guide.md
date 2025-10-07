@@ -111,7 +111,7 @@ The `phoenix-cli` CLI is the cornerstone of the Phoenix Hypervisor's automation 
 
 ### 3.2. Dispatcher-Manager Architecture
 
-The `phoenix-cli` script acts as a **dispatcher**, parsing verb-first commands and routing them to the appropriate **manager** script (`hypervisor-manager.sh`, `lxc-manager.sh`, `vm-manager.sh`). Each manager implements a state machine for its domain, ensuring idempotent and robust execution. This separation of concerns makes the system easy to extend and maintain.
+The `phoenix-cli` script acts as a **dispatcher**, parsing verb-first commands and routing them to the appropriate **manager** script (`hypervisor-manager.sh`, `lxc-manager.sh`, `vm-manager.sh`, `portainer-manager.sh`). Each manager implements a state machine for its domain, ensuring idempotent and robust execution. This separation of concerns makes the system easy to extend and maintain.
 
 ### 3.3. Orchestration Workflows
 
@@ -159,40 +159,77 @@ graph TD
     L --> M[End];
 ```
 
-#### 3.3.3. VM Construction
+#### 3.3.3. VM Construction (Infrastructure Layer)
 
-Triggered by `phoenix-cli create <ID>`, this workflow is managed by `vm-manager.sh`. The process has been significantly enhanced to support declarative stack management via the Portainer API.
+Triggered by `phoenix-cli create <ID>`, this workflow is managed by `vm-manager.sh`. Its sole responsibility is to provision the VM and install core infrastructure components like Docker. It does *not* manage Portainer or application stacks.
 
 ```mermaid
 graph TD
-    subgraph "Orchestration"
-        A[phoenix-cli create vm-id] -- reads --> B[phoenix_vm_configs.json];
-        A -- reads --> B2[phoenix_stacks_config.json];
-        A -- reads --> B3[phoenix_hypervisor_config.json];
+    subgraph "User Interaction"
+        A[Admin] -- "phoenix-cli create vm-id" --> B[phoenix-cli Dispatcher]
     end
 
-    subgraph "Hypervisor Host"
-        B -- triggers --> C{vm-manager.sh};
-        C -- creates --> D[VM Guest];
-        C -- executes --> P[portainer_api_setup.sh];
-    end
-    
-    subgraph "Portainer"
-        P -- interacts with --> PA[Portainer API];
+    subgraph "Infrastructure Orchestration"
+        B -- Invokes --> C{vm-manager.sh};
     end
 
-    subgraph "VM Guest"
-        D -- on boot --> G(cloud-init);
-        G -- runs --> H(base_setup feature);
-        H -- installs --> I[docker];
+    subgraph "VM Provisioning"
+        C -- Reads --> D[phoenix_vm_configs.json];
+        C -- Creates --> E[VM Guest];
+        E -- on boot --> F(cloud-init);
+        F -- runs --> G(base_setup feature);
+        G -- installs --> H[Docker Engine];
     end
 
-    subgraph "Git Repository"
-        GR[Git Repo with Docker Compose]
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:2px
+    style D fill:#ffc,stroke:#333,stroke-width:2px
+    style E fill:#cfc,stroke:#333,stroke-width:2px
+    style F fill:#fcf,stroke:#333,stroke-width:2px
+    style G fill:#cff,stroke:#333,stroke-width:2px
+    style H fill:#fcc,stroke:#333,stroke-width:2px
+```
+
+#### 3.3.4. Portainer Environment Synchronization (Environment Layer)
+
+Triggered by `phoenix-cli sync portainer` or automatically by `phoenix-cli LetsGo`, this workflow is managed by the new `portainer-manager.sh`. It is responsible for deploying Portainer instances and synchronizing Docker application stacks.
+
+```mermaid
+graph TD
+    subgraph "User Interaction"
+        A[Admin] -- "phoenix-cli sync portainer" --> B[phoenix-cli Dispatcher]
+        B -- "or from LetsGo" --> F[portainer-manager.sh]
     end
 
-    PA -- deploys stack to --> D;
-    GR -- is source for --> PA;
+    subgraph "Environment Orchestration"
+        F[portainer-manager.sh]
+    end
+
+    subgraph "Portainer Ecosystem"
+        G["VM 1001: Portainer Server"]
+        H["VM 1002: Portainer Agent"]
+        I[Portainer API]
+        J[Docker Stacks (e.g., Qdrant)]
+    end
+
+    F -- "1. Deploy Instances" --> G
+    F -- "1. Deploy Instances" --> H
+    F -- "2. Wait for API" --> I
+    F -- "3. Authenticate & Sync Environments" --> I
+    F -- "4. Deploy/Update Stacks" --> J
+
+    G -- Hosts --> I
+    H -- Connects to --> I
+    I -- Manages --> J
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style F fill:#ccf,stroke:#333,stroke-width:2px
+    style G fill:#cfc,stroke:#333,stroke-width:2px
+    style H fill:#cff,stroke:#333,stroke-width:2px
+    style I fill:#fcc,stroke:#333,stroke-width:2px
+    style J fill:#ffc,stroke:#333,stroke-width:2px
 ```
 
 ### 3.4. Inter-Script Communication
@@ -347,16 +384,23 @@ The deployment of vLLM containers has been refactored to a declarative, two-scri
 
 *   **New FP8 Template**: A new template, `Template-VLLM-FP8` (CTID 921), has been introduced for FP8 quantization. It is cloned from the base GPU template (901) to ensure a clean environment, free from legacy configurations. This new, streamlined process serves as the blueprint for all future vLLM deployments.
 
-### 8.4. Declarative Stack Management
+### 8.4. Declarative Stack Management (Enhanced)
 
-The Docker integration has evolved into a fully declarative stack management system, orchestrated by `vm-manager.sh` and powered by the Portainer API.
+The Docker integration has been significantly enhanced to support environment-specific, configuration-first deployments, orchestrated by the `portainer-manager.sh`. This provides granular control over Docker stacks across multiple environments (e.g., production, testing, development).
 
-*   **Centralized Stack Definitions**: Docker compositions are now defined as reusable "stacks" in `phoenix_stacks_config.json`. Each stack points to a Git repository containing the `docker-compose.yml` file.
-*   **Declarative VM Configuration**: The `phoenix_vm_configs.json` file no longer contains inline Docker Compose files. Instead, a VM is assigned one or more stacks using the `docker_stacks` array.
-*   **Automated Deployment**: The `vm-manager.sh` script now uses the `portainer_api_setup.sh` utility to interact with the Portainer API. It reads the stack definitions, connects to the appropriate Git repository, and deploys the stack to the target VM.
-*   **Portainer as the Engine**: Portainer is no longer just a management interface; it is now the engine that drives our declarative stack deployments. The `portainer_api` object in `phoenix_hypervisor_config.json` securely stores the necessary credentials for this integration.
+*   **Centralized Stack Definitions**: Docker compositions are defined as reusable "stacks" in `phoenix_stacks_config.json`. Each stack now includes:
+    *   `compose_file_path`: The relative path to the `docker-compose.yml` file on the hypervisor.
+    *   `environments`: An object defining environment-specific configurations (e.g., `production`, `testing`, `development`). Each environment can specify:
+        *   `variables`: An array of key-value pairs for environment variables to be injected into the stack.
+        *   `files`: An array of objects specifying source configuration files on the hypervisor and their destination paths within the container. These are managed as Portainer Configs.
+*   **Declarative VM Configuration**: The `phoenix_vm_configs.json` file assigns one or more stacks to a VM using the `docker_stacks` array. Each entry now specifies both the `name` of the stack and the `environment` to deploy (e.g., `{ "name": "thinkheads_ai_app", "environment": "development" }`).
+*   **Automated Deployment (via `portainer-manager.sh`)**: The `portainer-manager.sh` script now intelligently interacts with the Portainer API. It reads the detailed stack and environment definitions from `phoenix_stacks_config.json` and `phoenix_vm_configs.json`. It then:
+    1.  Creates Portainer "Config" objects from the specified configuration files.
+    2.  Injects environment variables.
+    3.  Deploys or updates the Docker stacks to the target Portainer environments, ensuring environment-specific configurations are applied.
+*   **Portainer as the Engine**: Portainer remains the central engine that drives our declarative stack deployments, with its API being orchestrated by `portainer-manager.952.sh`. The `portainer_api` object in `phoenix_hypervisor_config.json` securely stores the necessary credentials for this integration.
 
-This new architecture provides a robust, version-controlled, and highly automated system for managing our Dockerized services, significantly improving the reliability and scalability of our platform.
+This enhanced architecture provides a highly flexible, robust, and automated system for managing Dockerized services across different environments, significantly improving the reliability and scalability of our platform.
 
 ## 9. Testing & QA
 
