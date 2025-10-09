@@ -2,6 +2,16 @@
 #
 # File: phoenix_hypervisor_lxc_101.sh
 # Description: Self-contained setup for Nginx API Gateway in LXC 101. Copies configs from /tmp/phoenix_run/, generates certs if needed, and starts the service with NJS module support.
+#
+# Arguments:
+#   $1 - The CTID of the container (expected to be 101).
+#
+# Dependencies:
+#   - phoenix_hypervisor_common_utils.sh: For logging and utility functions.
+#   - step-cli and step-ca binaries (installed by feature_install_step_ca.sh).
+#
+# Version: 1.0.0
+# Author: Phoenix Hypervisor Team
 
 set -e
 
@@ -80,11 +90,27 @@ generate_nginx_certs() {
     fi
     echo "INFO: Locally mounted root CA certificate added to trust store successfully."
 
+    # Bootstrap the step CLI with the CA's URL and fingerprint
+    echo "INFO: Bootstrapping step CLI with CA information..."
+    echo "INFO: Testing connectivity to Step CA at $CA_URL..."
+    if ! curl -vk --cacert "$ROOT_CA_CERT_PATH" "$CA_URL/health" > /dev/null 2>&1; then
+        echo "FATAL: Failed to connect to Step CA at $CA_URL. Please check network connectivity and CA service status." >&2
+        exit 1
+    fi
+    echo "INFO: Successfully connected to Step CA."
+
+    if ! STEPDEBUG=1 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
+        echo "FATAL: Failed to bootstrap step CLI with CA information." >&2
+        exit 1
+    fi
+    echo "INFO: step CLI bootstrapped successfully."
+
     # Generate the certificate and key
     local cert_cmd=(
         step ca certificate "$NGINX_HOSTNAME"
         "${NGINX_CERT_DIR}/internal_traefik_proxy.crt"
         "${NGINX_CERT_DIR}/internal_traefik_proxy.key"
+        --password-file "${NGINX_CERT_DIR}/ca_password.txt" # Use the mounted password file
     )
     if ! "${cert_cmd[@]}"; then
         echo "FATAL: Failed to generate Nginx server certificate for $NGINX_HOSTNAME." >&2

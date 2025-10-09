@@ -29,8 +29,8 @@ CA_PROVISIONER_EMAIL="admin@thinkheads.ai"
 CA_CONFIG_DIR="/root/.step/config"
 CA_CONFIG_FILE="${CA_CONFIG_DIR}/ca.json"
 CA_SERVICE_FILE="/etc/systemd/system/step-ca.service"
-CA_PASSWORD_FILE="/root/.step/secrets/ca_password.txt"
-CA_INIT_PASSWORD=$(openssl rand -base64 32) # Generate a strong, random password
+CA_PASSWORD_FILE="/etc/step-ca/ssl/ca_password.txt" # Path to the mounted password file
+# CA_INIT_PASSWORD=$(openssl rand -base64 32) # Removed: Password is now managed on the host
 
 # =====================================================================================
 # Function: initialize_step_ca
@@ -49,13 +49,27 @@ initialize_step_ca() {
         return 0
     fi
  
-    # Initialize the CA with a password and store it in a file
-    log_info "Initializing Smallstep CA with a password and storing it in a file..."
-    mkdir -p "$(dirname "$CA_PASSWORD_FILE")" || log_fatal "Failed to create directory for CA password file."
-    echo "$CA_INIT_PASSWORD" > "$CA_PASSWORD_FILE" || log_fatal "Failed to write CA password to file."
-    chmod 600 "$CA_PASSWORD_FILE" || log_fatal "Failed to set permissions for CA password file."
+    # Initialize the CA with a password from the mounted file
+    log_info "Initializing Smallstep CA using the mounted password file: $CA_PASSWORD_FILE..."
+    
+    # Verify the password file exists and its permissions
+    log_debug "Checking for existence of CA password file inside container: $CA_PASSWORD_FILE"
+    if [ ! -f "$CA_PASSWORD_FILE" ]; then
+        log_fatal "CA password file not found at $CA_PASSWORD_FILE inside container. Cannot initialize CA."
+    fi
+    log_debug "CA password file found at $CA_PASSWORD_FILE inside container."
 
-    if ! /bin/bash -c "echo \"$CA_INIT_PASSWORD\" | /usr/bin/step ca init --name \"$CA_NAME\" --dns \"$CA_DNS\" --address \"$CA_ADDRESS\" --provisioner \"$CA_PROVISIONER_EMAIL\" --deployment-type standalone --password-file \"$CA_PASSWORD_FILE\""; then
+    log_debug "Checking permissions of CA password file inside container: $CA_PASSWORD_FILE"
+    local file_permissions
+    file_permissions=$(stat -c "%a" "$CA_PASSWORD_FILE")
+    log_debug "Permissions of $CA_PASSWORD_FILE: $file_permissions"
+    if [ "$file_permissions" != "600" ]; then
+        log_warn "Permissions for CA password file are not 600. Attempting to set permissions."
+        chmod 600 "$CA_PASSWORD_FILE" || log_fatal "Failed to set permissions for CA password file inside container."
+        log_debug "Set permissions of $CA_PASSWORD_FILE to 600."
+    fi
+
+    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE"; then
         log_fatal "Failed to initialize Smallstep CA in container $CTID."
     fi
     log_success "Smallstep CA initialized successfully."
@@ -66,6 +80,10 @@ initialize_step_ca() {
         echo "127.0.0.1 ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add entry to /etc/hosts."
     fi
     log_success "Entry added to /etc/hosts successfully."
+
+   log_info "Dumping content of $CA_CONFIG_FILE after initialization for debugging:"
+   cat "$CA_CONFIG_FILE" || log_warn "Could not read $CA_CONFIG_FILE"
+   log_info "End of $CA_CONFIG_FILE dump."
 }
 
 # =====================================================================================
@@ -81,9 +99,9 @@ add_acme_provisioner() {
 
     # Check if ACME provisioner already exists
     local provisioner_list_output
-    provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt)
+    provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt 2>&1)
     if [ $? -ne 0 ]; then
-        log_info "step ca provisioner list failed or returned empty output. Assuming no ACME provisioner exists."
+        log_warn "step ca provisioner list failed or returned empty output. Assuming no ACME provisioner exists. Output: $provisioner_list_output"
         provisioner_list_output="[]" # Ensure the variable is a valid empty JSON array
     fi
 
@@ -92,11 +110,81 @@ add_acme_provisioner() {
         return 0
     fi
 
-    if ! /bin/bash -c "/usr/bin/step ca provisioner add acme --type ACME --ca-url https://$CA_DNS$CA_ADDRESS --root /root/.step/certs/root_ca.crt"; then
-        log_fatal "Failed to add ACME provisioner to Smallstep CA in container $CTID."
+    log_info "Attempting to add ACME provisioner..."
+    local add_provisioner_output
+    if ! add_provisioner_output=$(/bin/bash -c "STEPDEBUG=1 /usr/bin/step ca provisioner add acme --type ACME --ca-url https://$CA_DNS$CA_ADDRESS --root /root/.step/certs/root_ca.crt" 2>&1); then
+        log_fatal "Failed to add ACME provisioner to Smallstep CA in container $CTID. Output: $add_provisioner_output"
     fi
-    log_success "ACME provisioner added successfully."
+    log_success "ACME provisioner added successfully. Output: $add_provisioner_output"
+
+    log_info "Restarting step-ca service to apply provisioner changes..."
+    if ! systemctl restart step-ca; then
+        log_fatal "Failed to restart step-ca service."
+    fi
+    log_success "step-ca service restarted successfully."
 }
+
+# =====================================================================================
+# Function: verify_ca_status
+# Description: Verifies the status of the Step CA service and its ACME provisioner.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if verification fails.
+# =====================================================================================
+verify_ca_status() {
+    log_info "Verifying Step CA service status..."
+    if ! systemctl is-active --quiet step-ca; then
+        log_fatal "Step CA service is not running."
+    fi
+    log_info "Step CA service is running."
+
+    log_info "Verifying Step CA is listening on ${CA_ADDRESS} with retries..."
+    local retries=10
+    local delay=2
+    local attempt=1
+    while [ "$attempt" -le "$retries" ]; do
+        local ss_output
+        ss_output=$(ss -tuln 2>&1)
+        if echo "$ss_output" | awk '($5 ~ /:9000$/)' | grep -q LISTEN; then
+            log_info "Step CA is now listening on ${CA_ADDRESS}."
+            break # Exit loop on success
+        fi
+        log_warn "Attempt $attempt/$retries: Step CA is not yet listening on ${CA_ADDRESS}. Retrying in $delay seconds..."
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+
+    if [ "$attempt" -gt "$retries" ]; then
+        local final_ss_output
+        final_ss_output=$(ss -tuln 2>&1)
+        log_debug "Final 'ss -tuln' output: $final_ss_output"
+        log_fatal "Step CA failed to start listening on ${CA_ADDRESS} after $retries attempts."
+    fi
+
+    # Now that we know it's listening, proceed with the original ACME check
+    log_info "Verifying ACME provisioner status with retries..."
+    local acme_retries=5
+    local acme_delay=5
+    local acme_attempt=1
+    while [ "$acme_attempt" -le "$acme_retries" ]; do
+        local provisioner_list_output
+        provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt 2>&1)
+        if echo "$provisioner_list_output" | jq -e '.[] | select(.type == "ACME")' > /dev/null; then
+            log_info "ACME provisioner is active."
+            return 0
+        else
+            log_warn "ACME provisioner not found or not active on attempt $acme_attempt/$acme_retries. Output: $provisioner_list_output"
+            if [ "$acme_attempt" -lt "$acme_retries" ]; then
+                log_info "Retrying in $acme_delay seconds..."
+                sleep "$acme_delay"
+            fi
+            acme_attempt=$((acme_attempt + 1))
+        fi
+    done
+    log_fatal "ACME provisioner failed to become active after $acme_retries attempts."
+}
+
 
 # =====================================================================================
 # Function: setup_ca_service
@@ -114,7 +202,7 @@ setup_ca_service() {
     log_info "Creating wrapper script: ${WRAPPER_SCRIPT_PATH}"
     cat <<EOF > "${WRAPPER_SCRIPT_PATH}"
 #!/bin/bash
-/usr/bin/step-ca ${CA_CONFIG_FILE} --password-file "${CA_PASSWORD_FILE}"
+/usr/bin/step-ca "${CA_CONFIG_FILE}" --password-file "${CA_PASSWORD_FILE}"
 EOF
     chmod +x "${WRAPPER_SCRIPT_PATH}" || log_fatal "Failed to make wrapper script executable."
  
@@ -177,7 +265,41 @@ WantedBy=multi-user.target"
     log_info "Gathering detailed journalctl logs for step-ca..."
     journalctl -u step-ca --no-pager > /tmp/step-ca_journalctl.log 2>&1
     log_info "Journalctl logs logged to /tmp/step-ca_journalctl.log"
-    log_success "Smallstep CA service set up and started successfully."
+
+    # Add process and network inspection for step-ca
+    log_info "Inspecting step-ca process details..."
+    local step_ca_pid
+    step_ca_pid=$(systemctl show --value --property MainPID step-ca)
+    if [ -n "$step_ca_pid" ] && [ "$step_ca_pid" -ne 0 ]; then
+        log_info "step-ca process (PID: $step_ca_pid) found. Checking open files and network connections..."
+        lsof -p "$step_ca_pid" > /tmp/step-ca_lsof.log 2>&1 || log_warn "Failed to run lsof for step-ca process."
+        log_info "lsof output for step-ca logged to /tmp/step-ca_lsof.log"
+        
+        # Check network connections specifically for the process
+        netstat -tulnp | grep "$step_ca_pid" > /tmp/step-ca_netstat.log 2>&1 || log_warn "Failed to run netstat for step-ca process."
+        log_info "netstat output for step-ca logged to /tmp/step-ca_netstat.log"
+    else
+        log_warn "step-ca process not found or PID is 0. Cannot perform lsof/netstat."
+    fi
+
+    # Check container's internal firewall rules (if ufw is installed)
+    log_info "Checking container's internal firewall status (ufw)..."
+    if command -v ufw &> /dev/null; then
+        ufw status verbose > /tmp/step-ca_ufw_status.log 2>&1 || log_warn "Failed to get ufw status."
+        log_info "ufw status logged to /tmp/step-ca_ufw_status.log"
+    else
+        log_info "ufw not installed in container. Skipping internal firewall check."
+    fi
+
+    log_success "Smallstep CA service set up and started successfully with extended diagnostics."
+
+    # Install net-tools for future debugging
+    log_info "Installing net-tools (for netstat) in container..."
+    if ! apt-get update > /dev/null 2>&1 || ! apt-get install -y net-tools > /dev/null 2>&1; then
+        log_warn "Failed to install net-tools in container. netstat command may not be available."
+    else
+        log_info "net-tools installed successfully."
+    fi
 }
 
 # =====================================================================================
@@ -198,7 +320,41 @@ main() {
     initialize_step_ca
     setup_ca_service
     add_acme_provisioner
+    verify_ca_status
  
+    # Pull diagnostic logs to the host before the temporary directory is cleaned up
+    log_info "Pulling diagnostic logs from container to host..."
+    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
+    local ca_output_dir="${lxc_persistent_data_base_path}/${CTID}/ssl" # Using the existing SSL directory for logs
+
+    mkdir -p "$ca_output_dir/logs" || log_warn "Failed to create log directory on host: $ca_output_dir/logs"
+
+    if pct pull "$CTID" "/tmp/step-ca_systemctl_status.log" "${ca_output_dir}/logs/step-ca_systemctl_status.log"; then
+        log_success "Pulled systemctl status log."
+    else
+        log_warn "Failed to pull systemctl status log."
+    fi
+    if pct pull "$CTID" "/tmp/step-ca_journalctl.log" "${ca_output_dir}/logs/step-ca_journalctl.log"; then
+        log_success "Pulled journalctl log."
+    else
+        log_warn "Failed to pull journalctl log."
+    fi
+    if pct pull "$CTID" "/tmp/step-ca_lsof.log" "${ca_output_dir}/logs/step-ca_lsof.log"; then
+        log_success "Pulled lsof log."
+    else
+        log_warn "Failed to pull lsof log."
+    fi
+    if pct pull "$CTID" "/tmp/step-ca_netstat.log" "${ca_output_dir}/logs/step-ca_netstat.log"; then
+        log_success "Pulled netstat log."
+    else
+        log_warn "Failed to pull netstat log."
+    fi
+    if pct pull "$CTID" "/tmp/step-ca_ufw_status.log" "${ca_output_dir}/logs/step-ca_ufw_status.log"; then
+        log_success "Pulled ufw status log."
+    else
+        log_warn "Failed to pull ufw status log."
+    fi
+
     log_info "Step CA application script completed for CTID $CTID."
 }
 

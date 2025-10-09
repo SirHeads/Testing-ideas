@@ -107,6 +107,19 @@ bootstrap_step_ca() {
         log_fatal "Failed to install locally mounted root CA certificate into trust store."
     fi
     log_info "Locally mounted root CA certificate added to trust store successfully."
+
+    # Bootstrap the step CLI with the CA's URL and fingerprint
+    log_info "Bootstrapping step CLI with CA information..."
+    log_info "Testing connectivity to Step CA at $CA_URL..."
+    if ! curl -vk --cacert "$ROOT_CA_CERT_PATH" "$CA_URL/health" > /dev/null 2>&1; then
+        log_fatal "Failed to connect to Step CA at $CA_URL. Please check network connectivity and CA service status."
+    fi
+    log_info "Successfully connected to Step CA."
+
+    if ! STEPDEBUG=1 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
+        log_fatal "Failed to bootstrap step CLI with CA information."
+    fi
+    log_info "step CLI bootstrapped successfully."
 }
 
 # =====================================================================================

@@ -229,6 +229,13 @@
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
                 "proxmox_storage_type": "dir",
                 "proxmox_content_type": "images,rootdir"
+            },
+            {
+                "name": "lxc-persistent-data",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images,rootdir"
             }
         ]
     },
@@ -236,7 +243,8 @@
         "quickos_vm": "quickOS-vm-disks",
         "quickos_lxc": "quickOS-lxc-disks",
         "fastData_shared_backups": "fastData-shared-backups",
-        "fastdata_iso": "fastData-shared-iso"
+        "fastdata_iso": "fastData-shared-iso",
+        "quickos_lxc_persistent_data": "quickOS-lxc-persistent-data"
     },
     "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {
@@ -316,21 +324,6 @@
                 "950": "/vllm_models",
                 "951": "/vllm_models"
             }
-        },
-        "firewall": {
-            "enabled": true,
-            "default_input_policy": "DROP",
-            "default_output_policy": "ACCEPT",
-            "global_firewall_rules": [
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.101",
-                    "dest": "10.0.0.102",
-                    "proto": "tcp",
-                    "port": "9001"
-                }
-            ]
         },
         "firewall": {
             "enabled": true,

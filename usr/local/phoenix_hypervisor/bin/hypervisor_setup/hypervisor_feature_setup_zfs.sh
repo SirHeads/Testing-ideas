@@ -309,6 +309,7 @@ add_proxmox_storage() {
         local mountpoint="/$full_dataset_path"
 
         # Convergent State Logic: Check if storage exists and update if necessary, or create if it doesn't.
+        local storage_needs_creation=true
         if pvesm status | grep -q "^$storage_id"; then
             local storage_block=$(awk -v id="$storage_id" '$0 ~ "^(dir|zfspool): " id "$" {f=1} f && /^$/ {f=0} f' /etc/pve/storage.cfg)
             if [ -n "$storage_block" ]; then
@@ -316,21 +317,30 @@ add_proxmox_storage() {
                 local current_content=$(echo "$storage_block" | grep '^\s*content' | awk '{print $2}')
 
                 if [ "$current_type" != "$proxmox_storage_type" ]; then
-                    log_fatal "Proxmox storage '$storage_id' exists with incorrect type. Current: '$current_type', Desired: '$proxmox_storage_type'. Manual intervention required."
-                fi
-
-                if [ "$current_content" != "$proxmox_content_type" ]; then
+                    if [[ "$current_type" == "dir" && "$proxmox_storage_type" == "zfspool" ]]; then
+                        log_warn "Proxmox storage '$storage_id' exists with incorrect type ('$current_type' instead of '$proxmox_storage_type'). Removing existing 'dir' storage to re-create as 'zfspool'."
+                        retry_command "pvesm remove $storage_id" || log_fatal "Failed to remove existing 'dir' storage '$storage_id'."
+                        storage_needs_creation=true # Mark for creation after removal
+                    else
+                        log_fatal "Proxmox storage '$storage_id' exists with incorrect type. Current: '$current_type', Desired: '$proxmox_storage_type'. Manual intervention required."
+                    fi
+                elif [ "$current_content" != "$proxmox_content_type" ]; then
                     log_info "Proxmox storage '$storage_id' exists but has incorrect content type. Updating..."
                     retry_command "pvesm set $storage_id --content $proxmox_content_type" || log_fatal "Failed to update Proxmox storage '$storage_id'"
                     log_info "Successfully updated content type for storage '$storage_id'."
+                    storage_needs_creation=false # No need to create, just updated
                 else
                     log_info "Proxmox storage '$storage_id' already exists and is correctly configured."
+                    storage_needs_creation=false # No need to create or update
                 fi
             else
-                log_warn "Could not retrieve config for existing storage '$storage_id'. Assuming correct."
+                log_warn "Could not retrieve config for existing storage '$storage_id'. Assuming it needs creation."
+                storage_needs_creation=true
             fi
-        else
-            log_info "Proxmox storage '$storage_id' does not exist. Creating..."
+        fi
+
+        if [ "$storage_needs_creation" = true ]; then
+            log_info "Proxmox storage '$storage_id' does not exist or was removed. Creating..."
             if [[ "$proxmox_storage_type" == "zfspool" ]]; then
                 retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $proxmox_content_type" || log_fatal "Failed to add ZFS storage '$storage_id'"
                 log_info "Added Proxmox ZFS storage: '$storage_id' for '$full_dataset_path'"

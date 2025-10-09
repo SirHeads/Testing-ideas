@@ -15,11 +15,69 @@
 # Author: Phoenix Hypervisor Team
 
 # --- Determine script's absolute directory ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
 # --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
+
+# =====================================================================================
+# Function: manage_ca_password_on_hypervisor
+# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
+#              If the file does not exist, a new strong password is generated and stored.
+# Arguments:
+#   $1 - The CTID of the container (expected to be 103).
+# Returns:
+#   None. Exits with a fatal error if directory or file operations fail.
+# =====================================================================================
+local ca_password_file_on_host=""
+
+# =====================================================================================
+# Function: manage_ca_password_on_hypervisor
+# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
+#              If the file does not exist, a new strong password is generated and stored
+#              in a temporary location.
+# Arguments:
+#   $1 - The CTID of the container (expected to be 103).
+# Returns:
+#   The path to the temporary password file on the hypervisor. Exits with a fatal error
+#   if file operations fail.
+# =====================================================================================
+manage_ca_password_on_hypervisor() {
+    local CTID="$1"
+    log_info "Managing CA password for CTID $CTID on hypervisor..."
+    
+    # Define a temporary file path on the hypervisor
+    ca_password_file_on_host="/tmp/ca_password_${CTID}.txt"
+
+    log_debug "Attempting to manage CA password on hypervisor for CTID $CTID."
+    log_debug "Temporary CA password file on host: $ca_password_file_on_host"
+
+    # Check if the password file already exists in the *final* persistent location
+    # This check is now for idempotency across runs, not for initial creation.
+    local final_ca_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
+    local final_ca_password_file="${final_ca_password_dir}/ca_password.txt"
+
+    if [ -f "$final_ca_password_file" ]; then
+        log_info "CA password file already exists at $final_ca_password_file. Using existing password."
+        # Copy existing password to temporary file for pushing to container
+        cp "$final_ca_password_file" "$ca_password_file_on_host" || log_fatal "Failed to copy existing CA password to temporary file."
+        chmod 600 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file."
+        log_debug "Copied existing password to temporary file: $ca_password_file_on_host"
+    else
+        log_info "CA password file not found at $final_ca_password_file. Generating a new password..."
+        # Generate a strong, random password directly to the temporary file
+        local new_password=$(openssl rand -base64 32)
+        echo "$new_password" > "$ca_password_file_on_host" || log_fatal "Failed to write new CA password to $ca_password_file_on_host."
+        log_debug "Generated and wrote new password to $ca_password_file_on_host."
+
+        # Set permissions for the temporary file
+        chmod 600 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file on hypervisor."
+        log_debug "Set permissions of $ca_password_file_on_host to 600."
+        log_success "New CA password generated and stored temporarily at $ca_password_file_on_host."
+    fi
+    echo "$ca_password_file_on_host" # Return the path to the temporary file
+}
 
 # =====================================================================================
 # Function: validate_inputs
@@ -156,8 +214,9 @@ create_container_from_template() {
     local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
+    local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
-
+ 
     # --- Build the pct create command array ---
     # Using an array for the command arguments is a best practice that avoids issues with word splitting and quoting.
     local pct_create_cmd=(
@@ -522,42 +581,50 @@ apply_mount_points() {
 
         # Idempotency Check
         if ! pct config "$CTID" | grep -q "mp.*: ${mount_string}"; then
-            # --- BEGIN DIAGNOSTIC LOGGING ---
             log_info "Verifying host path '$host_path' before applying mount..."
+            # --- BEGIN DIAGNOSTIC LOGGING ---
+            log_debug "Checking if host path '$host_path' exists."
             if [ ! -e "$host_path" ]; then
                 log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
                 # Optionally, you could make this a fatal error to stop the process immediately
                 # log_fatal "Host path '$host_path' does not exist."
             else
-                log_info "Host path '$host_path' found."
+                log_debug "Host path '$host_path' found."
             fi
             # --- END DIAGNOSTIC LOGGING ---
 
             log_info "Applying mount: ${host_path} -> ${container_path}"
             run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
+            log_debug "Mount command executed for ${host_path} -> ${container_path} with ID ${mount_id}."
             volume_index=$((volume_index + 1))
         else
             log_info "Mount point ${host_path} -> ${container_path} already configured."
+            log_debug "Skipping mount as it's already configured."
         fi
     done
 
     # --- Special Handling for Nginx Gateway SSL Certificates ---
     if [ "$CTID" -eq 101 ]; then
         log_info "Applying special mount for Nginx gateway (CTID 101) SSL certificates..."
-        local ssl_host_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl"
+        local ssl_host_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl" # Corrected path to match where CA cert is exported
         local ssl_container_path="/etc/nginx/ssl"
         local ssl_mount_id="mp${volume_index}"
         local ssl_mount_string="${ssl_host_path},mp=${ssl_container_path}"
 
+        log_debug "Checking if central SSL directory exists on host: $ssl_host_path"
         if [ ! -d "$ssl_host_path" ]; then
             log_warn "Central SSL directory not found at $ssl_host_path. Nginx may fail if certs are expected."
+        else
+            log_debug "Central SSL directory found on host: $ssl_host_path"
         fi
 
         if ! pct config "$CTID" | grep -q "mp.*: ${ssl_mount_string}"; then
             log_info "Applying Nginx SSL mount: ${ssl_host_path} -> ${ssl_container_path}"
             run_pct_command set "$CTID" --"${ssl_mount_id}" "$ssl_mount_string" || log_fatal "Failed to apply Nginx SSL mount."
+            log_debug "Nginx SSL mount command executed for ${ssl_host_path} -> ${ssl_container_path} with ID ${ssl_mount_id}."
         else
             log_info "Nginx SSL mount point already configured."
+            log_debug "Skipping Nginx SSL mount as it's already configured."
         fi
     fi
 }
@@ -566,7 +633,7 @@ apply_mount_points() {
 # Function: ensure_container_disk_size
 # Description: Ensures that the container's root disk size matches the size specified in the
 #              configuration file. The `pct resize` command is idempotent, so this function
-#              can be run multiple times without causing issues.
+# #              can be run multiple times without causing issues.
 #
 # Arguments:
 #   $1 - The CTID of the container.
@@ -650,7 +717,6 @@ apply_features() {
     log_info "Applying features for CTID: $CTID"
     local features
     features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
-
     if [ -z "$features" ]; then
         log_info "No features to apply for CTID $CTID."
         return 0
@@ -1137,6 +1203,10 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
+            if [ "$ctid" -eq 103 ]; then
+                manage_ca_password_on_hypervisor "$ctid"
+            fi
+
             if ensure_container_defined "$ctid"; then
                 # Ensure the container is stopped before applying configurations that require a restart
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
@@ -1146,10 +1216,42 @@ main_lxc_orchestrator() {
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
-
                 apply_mount_points "$ctid"
                 # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
+
+                # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
+                if [ "$ctid" -eq 103 ]; then
+                    log_info "Handling CA password file for Step CA container (CTID 103)..."
+                    local temp_ca_password_file_on_host
+                    temp_ca_password_file_on_host=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the temporary file
+
+                    local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
+                    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
+                    local ca_output_dir="${lxc_persistent_data_base_path}/${ctid}/ssl"
+
+                    # Ensure the destination directory exists on the hypervisor
+                    mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
+
+                    # Copy the password file from the temporary location on the host to the container
+                    log_info "Pushing CA password file from host temp '$temp_ca_password_file_on_host' to container '$ctid:$container_ca_password_path'..."
+                    if ! pct push "$ctid" "$temp_ca_password_file_on_host" "$container_ca_password_path"; then
+                        log_fatal "Failed to push CA password file to container $ctid."
+                    fi
+                    log_success "CA password file pushed to container successfully."
+
+                    # Set appropriate permissions inside the container
+                    log_info "Setting permissions for CA password file inside container $ctid..."
+                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
+                        log_fatal "Failed to set permissions for CA password file inside container $ctid."
+                    fi
+                    log_success "Permissions set for CA password file inside container."
+
+                    # Clean up the temporary password file on the hypervisor
+                    log_info "Cleaning up temporary CA password file on hypervisor: $temp_ca_password_file_on_host"
+                    rm -f "$temp_ca_password_file_on_host" || log_warn "Failed to remove temporary CA password file from hypervisor."
+                fi
+                # --- END NEW HANDLING ---
 
                 local enable_lifecycle_snapshots
                 enable_lifecycle_snapshots=$(jq_get_value "$ctid" ".enable_lifecycle_snapshots" || echo "false")
@@ -1170,12 +1272,14 @@ main_lxc_orchestrator() {
                 # --- Special Handling for Step CA (CTID 103) to Export Root Certificate ---
                 if [ "$ctid" -eq 103 ]; then
                     log_info "Step CA container (CTID 103) created. Exporting root CA certificate to hypervisor shared storage..."
-                    local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
-                    local ca_root_cert_dest_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl/phoenix_ca.crt"
+                    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
+                    local ca_output_dir="${lxc_persistent_data_base_path}/${ctid}/ssl"
                     
                     # Ensure the destination directory exists on the hypervisor
-                    mkdir -p "$(dirname "$ca_root_cert_dest_path")" || log_fatal "Failed to create destination directory for CA root certificate."
+                    mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
 
+                    local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
+                    local ca_root_cert_dest_path="${ca_output_dir}/phoenix_ca.crt"
                     if ! pct pull "$ctid" "$ca_root_cert_source_path" "$ca_root_cert_dest_path"; then
                         log_fatal "Failed to pull root CA certificate from CTID 103 to $ca_root_cert_dest_path."
                     fi
@@ -1215,6 +1319,6 @@ main_lxc_orchestrator() {
 }
 
 # If the script is executed directly, call the main orchestrator
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if [[ "${BASH_SOURCE}" == "${0}" ]]; then
     main_lxc_orchestrator "$@"
 fi

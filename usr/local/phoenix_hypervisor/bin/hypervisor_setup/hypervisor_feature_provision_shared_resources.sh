@@ -89,9 +89,19 @@ main() {
     provision_shared_zfs_volumes
 
     log_info "Creating shared directories..."
-    mkdir -p /mnt/pve/quickOS/shared-prod-data/ssl
+    mkdir -p /usr/local/phoenix_hypervisor/persistent-storage/ssl
     mkdir -p /mnt/pve/quickOS/shared-prod-data/logs/nginx
-    log_info "Shared directories created successfully."
+    
+    # Create placeholder for ca_password.txt if it doesn't exist
+    local ca_password_file="/usr/local/phoenix_hypervisor/persistent-storage/ssl/ca_password.txt"
+    if [ ! -f "$ca_password_file" ]; then
+        log_info "Creating placeholder for CA password file: $ca_password_file"
+        touch "$ca_password_file"
+        chmod 600 "$ca_password_file"
+    else
+        log_info "CA password file placeholder already exists: $ca_password_file"
+    fi
+    log_info "Shared directories and CA password placeholder created successfully."
 
     exit_script 0
 }

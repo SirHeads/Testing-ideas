@@ -36,6 +36,11 @@
 # sourcing of other scripts, regardless of where this script is called from.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --- DEFINE CORE CONFIGURATION FILE ---
+# Explicitly define the path to the main hypervisor configuration file.
+# This ensures it's always available, regardless of environment variables.
+export HYPERVISOR_CONFIG_FILE="$SCRIPT_DIR/../etc/phoenix_hypervisor_config.json"
+
 # --- DEFINE MANAGER DIRECTORY ---
 # Centralize the path to the manager scripts for easier maintenance.
 MANAGER_DIR="$SCRIPT_DIR/managers"

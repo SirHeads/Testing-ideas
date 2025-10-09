@@ -29,6 +29,149 @@
 # --- Shell Settings ---
 set -e # Exit immediately if a command exits with a non-zero status.
 set -o pipefail # Return the exit status of the last command in the pipe that failed.
+# --- Color Codes ---
+COLOR_GREEN='\033[0;32m'
+COLOR_RED='\033[0;31m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_BLUE='\033[0;34m'
+COLOR_RESET='\033[0m'
+
+# --- Logging Functions ---
+# =====================================================================================
+# Function: log_debug
+# Description: Logs a debug message to stdout and the main log file. This function is only
+#              active when the `PHOENIX_DEBUG` environment variable is set to "true".
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_debug() {
+    # Check if debug mode is enabled
+    if [ "$PHOENIX_DEBUG" == "true" ]; then
+        # Log the debug message with timestamp and script name
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    fi
+}
+
+# =====================================================================================
+# Function: log_info
+# Description: Logs an informational message to stdout and the main log file. This is the
+#              standard logging function for general-purpose messages.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_info() {
+    # Log the informational message with timestamp and script name
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_success
+# Description: Logs a success message to stdout and the main log file. This is used to
+#              indicate that a significant operation has completed successfully.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_success() {
+    # Log the success message with timestamp and script name
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_warn
+# Description: Logs a warning message to stderr and the main log file. This is used for
+#              non-fatal issues that should be brought to the user's attention.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_warn() {
+	# Log the warning message with timestamp and script name to stderr
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_error
+# Description: Logs an error message to stderr and the main log file. This is used for
+#              recoverable errors that do not require the script to exit.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_error() {
+    # Log the error message with timestamp and script name to stderr
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_fatal
+# Description: Logs a fatal error message to stderr and the main log file, and then exits
+#              the script with a status code of 1. This is used for unrecoverable errors.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   Exits the script with status 1.
+# =====================================================================================
+log_fatal() {
+    # Log the fatal message with timestamp and script name to stderr
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    # Exit the script due to a fatal error
+    exit 1
+}
+
+# =====================================================================================
+# Function: setup_logging
+# Description: Ensures that the log directory exists and that the log file is available for
+#              writing. This function is called at the beginning of the main orchestrator script.
+#
+# Arguments:
+#   $1 - The full path to the log file.
+#
+# Returns:
+#   None. The function will exit with a fatal error if the log directory or file cannot be created.
+# =====================================================================================
+setup_logging() {
+    local log_file="$1"
+    local log_dir
+    log_dir=$(dirname "$log_file")
+
+    if [ ! -d "$log_dir" ]; then
+        # Create the log directory if it doesn't exist
+        mkdir -p "$log_dir" || log_fatal "Failed to create log directory: $log_dir"
+    fi
+    # Touch the log file to ensure it exists
+    touch "$log_file" || log_fatal "Failed to create log file: $log_file"
+}
+ 
+ # --- Exit Function ---
+ exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
 
 # --- Global Constants ---
 export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
@@ -56,12 +199,6 @@ export LANG="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
 
-# --- Color Codes ---
-COLOR_GREEN='\033[0;32m'
-COLOR_RED='\033[0;31m'
-COLOR_YELLOW='\033[1;33m'
-COLOR_BLUE='\033[0;34m'
-COLOR_RESET='\033[0m'
 
 # --- Logging Functions ---
 # =====================================================================================
