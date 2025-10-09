@@ -15,9 +15,9 @@
 
 # --- SCRIPT INITIALIZATION ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
-PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../../.." &> /dev/null && pwd)
+PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../" &> /dev/null && pwd)
 
-source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
+source "${PHOENIX_BASE_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"

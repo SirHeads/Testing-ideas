@@ -89,7 +89,7 @@ bootstrap_step_ca() {
     log_info "CA entry added to /etc/hosts."
 
     # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="/etc/traefik/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
+    local ROOT_CA_CERT_PATH="/etc/traefik/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
     log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
     if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
         log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH. Cannot retrieve fingerprint."

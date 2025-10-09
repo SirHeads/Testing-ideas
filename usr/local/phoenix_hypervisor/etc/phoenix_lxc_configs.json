@@ -591,6 +591,12 @@
                     "size_gb": 1,
                     "mount_point": "/etc/traefik"
                 }
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/traefik/ssl"
+                }
             ]
         }
     }

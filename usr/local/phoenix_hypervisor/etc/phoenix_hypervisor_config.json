@@ -165,7 +165,7 @@
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=standard,quota=600G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "rootdir"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-prod-data",
