@@ -739,7 +739,7 @@ run_application_script() {
         return 0
     fi
 
-    local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path
+    local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path from PHOENIX_BASE_DIR
     log_info "Executing application script inside container: $app_script_name ($app_script_path)"
 
     # Check if the application script exists
@@ -1146,12 +1146,6 @@ main_lxc_orchestrator() {
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
-                if [ "$ctid" -eq 101 ]; then
-                    log_info "NGINX gateway container detected. Forcing SSL certificate regeneration..."
-                    if ! "${PHOENIX_BASE_DIR}/bin/generate_ssl_certs.sh" --force; then
-                        log_fatal "Failed to force SSL certificate regeneration."
-                    fi
-                fi
 
                 apply_mount_points "$ctid"
                 # Now, start the container *after* all hardware configurations are applied

@@ -324,17 +324,6 @@ main() {
         exit 1
     fi
 
-    # --- ENSURE SSL CERTIFICATES EXIST ---
-    # Before any operation, run the idempotent script to ensure SSL certs are available.
-    log_info "Ensuring SSL certificates are present..."
-    local cert_script_path="$SCRIPT_DIR/generate_ssl_certs.sh"
-    if [ -f "$cert_script_path" ]; then
-        if ! "$cert_script_path"; then
-            log_fatal "Failed to generate or verify SSL certificates."
-        fi
-    else
-        log_fatal "Certificate generation script not found at $cert_script_path."
-    fi
 
     # --- TARGET RESOLUTION AND ROUTING ---
     # Handle cases with no targets first.
@@ -382,7 +371,7 @@ main() {
                     fi
                 done
                 log_info "All guests started successfully. Handing off to Portainer manager for environment synchronization..."
-                "$SCRIPT_DIR/managers/portainer-manager.sh" "sync" "all"
+                "$SCRIPT_DIR/managers/portainer-manager.sh" "sync" "all" --config "$HYPERVISOR_CONFIG_FILE"
                 log_info "'LetsGo' command complete."
                 ;;
             *)
@@ -401,7 +390,7 @@ main() {
         targets_to_process=("${TARGETS[@]}")
     elif [ "$VERB" == "sync" ]; then
         log_info "Sync command detected. Routing to portainer-manager.sh..."
-        "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "${TARGETS[@]}"
+        "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "${TARGETS[@]}" --config "$HYPERVISOR_CONFIG_FILE"
         exit 0
     else
         log_info "Targets detected. Resolving dependencies for all targets..."

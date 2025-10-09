@@ -58,6 +58,26 @@ main() {
     log_info "Setting default output policy to: $output_policy"
     pve-firewall set /cluster/firewall/options -policy_out "$output_policy"
 
+    # Apply global firewall rules
+    log_info "Applying global firewall rules..."
+    local rules
+    rules=$(jq -c '.firewall.global_firewall_rules[]?' "$HYPERVISOR_CONFIG_FILE")
+    if [ -n "$rules" ]; then
+        echo "$rules" | while read -r rule; do
+            local type=$(echo "$rule" | jq -r '.type')
+            local action=$(echo "$rule" | jq -r '.action')
+            local source=$(echo "$rule" | jq -r '.source')
+            local dest=$(echo "$rule" | jq -r '.dest')
+            local proto=$(echo "$rule" | jq -r '.proto')
+            local port=$(echo "$rule" | jq -r '.port')
+
+            log_info "Adding rule: type=$type, action=$action, source=$source, dest=$dest, proto=$proto, port=$port"
+            pve-firewall set /cluster/firewall/rules -type "$type" -action "$action" -source "$source" -dest "$dest" -proto "$proto" -dport "$port"
+        done
+    else
+        log_info "No global firewall rules to apply."
+    fi
+
     log_info "Global firewall settings configured successfully."
 }
 

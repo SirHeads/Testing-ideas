@@ -120,6 +120,7 @@ setup_hypervisor() {
         "hypervisor_feature_fix_apparmor_tunables.sh"
     )
 
+
     # Iterate through the setup scripts and execute them.
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"

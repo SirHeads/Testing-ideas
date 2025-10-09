@@ -5,6 +5,101 @@
 
 set -e
 
+# --- Function to generate Nginx certificates ---
+generate_nginx_certs() {
+    set -x # Enable verbose logging for this function
+    echo "Generating Nginx server certificates for internal_traefik_proxy..."
+    local NGINX_CERT_DIR="/etc/nginx/ssl" # Certificates will be stored directly in the container's Nginx SSL directory
+    local NGINX_HOSTNAME="internal.thinkheads.ai" # Wildcard domain for internal Traefik proxy
+    local CA_URL="https://ca.internal.thinkheads.ai"
+    local CA_FINGERPRINT=""
+    local MAX_RETRIES=10
+    local RETRY_DELAY=10
+    local attempt=1
+
+    # Ensure step-cli is installed inside the container
+    if ! command -v step &> /dev/null; then
+        echo "INFO: step-cli not found in LXC 101. Installing..."
+        echo "INFO: Installing step-cli via Smallstep APT repository..."
+        # Add Smallstep GPG key
+        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || { echo "FATAL: Failed to download Smallstep GPG key." >&2; exit 1; }
+        # Add Smallstep APT repository
+        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || { echo "FATAL: Failed to add Smallstep APT repository." >&2; exit 1; }
+        # Update package lists and install step-cli
+        apt-get update && apt-get install -y step-cli || { echo "FATAL: Failed to install step-cli from APT repository." >&2; exit 1; }
+        hash -r # Clear the command hash table
+        # Re-check if step-cli is now available after installation
+        if ! command -v step &> /dev/null; then
+            echo "FATAL: Failed to install step-cli in LXC 101, or it's not in PATH after installation." >&2
+            exit 1
+        fi
+        echo "INFO: step-cli installed successfully in LXC 101."
+    fi
+
+    # Wait for Step CA (LXC 103) to be reachable and responsive
+    echo "Waiting for Step CA (LXC 103 at 10.0.0.10) to be reachable..."
+    local CA_IP="10.0.0.10"
+    while ! ping -c 1 "$CA_IP" > /dev/null 2>&1 && [ "$attempt" -le "$MAX_RETRIES" ]; do
+        echo "Attempt $attempt/$MAX_RETRIES: Ping to Step CA ($CA_IP) failed. Retrying in $RETRY_DELAY seconds..."
+        sleep "$RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+    if [ "$attempt" -gt "$MAX_RETRIES" ]; then
+        echo "FATAL: Step CA ($CA_IP) is not reachable after $MAX_RETRIES attempts. Cannot generate certificates." >&2
+        exit 1
+    fi
+    echo "Step CA ($CA_IP) is reachable."
+
+    attempt=1
+    while [ -z "$CA_FINGERPRINT" ] && [ "$attempt" -le "$MAX_RETRIES" ]; do
+        echo "Attempt $attempt/$MAX_RETRIES: Retrieving Step CA fingerprint from $CA_URL using 'step ca root' and 'step certificate fingerprint'..."
+        local TEMP_ROOT_CRT="/tmp/step_ca_root.crt"
+        if step ca root "$TEMP_ROOT_CRT" --ca-url "$CA_URL"; then
+            CA_FINGERPRINT=$(step certificate fingerprint "$TEMP_ROOT_CRT" 2>/dev/null)
+            rm -f "$TEMP_ROOT_CRT"
+        fi
+        if [ -z "$CA_FINGERPRINT" ]; then
+            echo "WARNING: Could not retrieve Step CA fingerprint. Retrying in $RETRY_DELAY seconds." >&2
+            sleep "$RETRY_DELAY"
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    if [ -z "$CA_FINGERPRINT" ]; then
+        echo "FATAL: Could not retrieve Step CA fingerprint after $MAX_RETRIES attempts. Is Step CA (LXC 103) running and accessible at $CA_URL?" >&2
+        exit 1
+    fi
+    echo "Step CA fingerprint retrieved: $CA_FINGERPRINT"
+
+    # Retrieve CA fingerprint from the mounted root certificate
+    local ROOT_CA_CERT_PATH="${NGINX_CERT_DIR}/phoenix_ca.crt" # Assuming phoenix_ca.crt is the root CA cert
+    echo "INFO: Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
+    if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
+        echo "FATAL: Root CA certificate not found at $ROOT_CA_CERT_PATH. Cannot retrieve fingerprint." >&2
+        exit 1
+    fi
+    echo "INFO: Root CA certificate found. Retrieving fingerprint..."
+    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
+    if [ -z "$CA_FINGERPRINT" ]; then
+        echo "FATAL: Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH." >&2
+        exit 1
+    fi
+    echo "INFO: Retrieved CA Fingerprint: $CA_FINGERPRINT"
+
+    
+
+
+
+    # Generate the certificate and key
+    if ! step ca certificate "$NGINX_HOSTNAME" "${NGINX_CERT_DIR}/internal_traefik_proxy.crt" "${NGINX_CERT_DIR}/internal_traefik_proxy.key" \
+        --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT" --not-after 8760h --force; then # 1 year validity
+        echo "FATAL: Failed to generate Nginx server certificate for $NGINX_HOSTNAME." >&2
+        exit 1
+    fi
+
+    echo "Nginx server certificates generated successfully."
+}
+
 # --- Package Installation ---
 echo "Updating package lists and installing Nginx and the NJS module..."
 apt-get update
@@ -30,19 +125,30 @@ SSL_DIR="/etc/nginx/ssl"
 mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SSL_DIR
 
 # Copy files (assume pushed by lxc-manager.sh)
-cp $TMP_DIR/sites-available/* $SITES_AVAILABLE_DIR/ || { echo "Config files missing in $TMP_DIR." >&2; exit 1; }
-cp $TMP_DIR/scripts/* $SCRIPTS_DIR/ || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
+
+cp "$TMP_DIR/sites-available/gateway" "$SITES_AVAILABLE_DIR/gateway" || { echo "Config file gateway missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/sites-available/internal_traefik_proxy" "$SITES_AVAILABLE_DIR/internal_traefik_proxy" || { echo "Config file internal_traefik_proxy missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/sites-available/vllm_gateway" "$SITES_AVAILABLE_DIR/vllm_gateway" || { echo "Config file vllm_gateway missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/sites-available/vllm_proxy" "$SITES_AVAILABLE_DIR/vllm_proxy" || { echo "Config file vllm_proxy missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/scripts/http.js" "$SCRIPTS_DIR/http.js" || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
 
 # Link enabled sites
 # Link the consolidated gateway configuration
-ln -sf $SITES_AVAILABLE_DIR/gateway $SITES_ENABLED_DIR/gateway
+
+ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
+ln -sf "$SITES_AVAILABLE_DIR/internal_traefik_proxy" "$SITES_ENABLED_DIR/internal_traefik_proxy"
+ln -sf "$SITES_AVAILABLE_DIR/vllm_gateway" "$SITES_ENABLED_DIR/vllm_gateway"
+ln -sf "$SITES_AVAILABLE_DIR/vllm_proxy" "$SITES_ENABLED_DIR/vllm_proxy"
 
 # Remove default site
 rm -f $SITES_ENABLED_DIR/default
 
-# Certificate generation is now handled centrally by the phoenix-cli.
-# This container will have the certs mounted by the lxc-manager.
-echo "Skipping certificate generation in LXC 101."
+# Generate Nginx certificates for internal Traefik proxy
+generate_nginx_certs
+
+
+# Set correct permissions for the private key
+chmod 600 "${NGINX_CERT_DIR}/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }
 
 # Remove invalid js_include from nginx.conf if present
 sed -i '/js_include/d' /etc/nginx/nginx.conf
@@ -53,7 +159,8 @@ cat > /etc/nginx/conf.d/njs.conf << 'EOF'
 js_import http from /etc/nginx/scripts/http.js;
 EOF
 
-# Overwrite vllm_gateway to ensure JS module usage
+
+# Overwrite vllm_gateway to ensure JS module usage. This is now handled by copying the file directly.
 
 # --- Service Management and Validation ---
 echo "Testing Nginx configuration..."

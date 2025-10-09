@@ -199,30 +199,12 @@ orchestrate_vm() {
         apply_vm_features "$VMID"
         log_info "Step 8: Completed."
 
-        log_info "Step 8.5: Provisioning declarative files for VM $VMID..."
-        provision_declarative_files "$VMID"
-        log_info "Step 8.5: Completed."
 
         log_info "Step 9: Managing post-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "post-features"
         log_info "Step 9: Completed."
 
-        log_info "Step 10: Waiting for Portainer API to be responsive for VM $VMID..."
-        # The Portainer server is always on VM 1001, so we use its IP for the health check.
-        local portainer_server_ip=$(jq -r ".network.portainer_server_ip" "$HYPERVISOR_CONFIG_FILE")
-        local portainer_port=$(get_global_config_value ".network.portainer_server_port")
-        local cert_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl/portainer.phoenix.local.crt"
 
-        if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh" "$portainer_server_ip" "$portainer_port" "$cert_path"; then
-            log_fatal "Portainer API health check failed for VM $VMID."
-        fi
-        log_info "Step 10: Portainer API is responsive."
-
-        log_info "Step 11: Calling Portainer reconciliation for VM $VMID..."
-        if ! "${PHOENIX_BASE_DIR}/bin/reconcile_portainer.sh"; then
-            log_fatal "Portainer reconciliation failed."
-        fi
-        log_info "Step 11: Portainer reconciliation completed for VM $VMID."
     fi
 
     log_info "Available storage pools after VM creation:"
@@ -520,84 +502,6 @@ apply_volumes() {
     fi
 }
 
-# =====================================================================================
-# Function: provision_declarative_files
-# Description: Provisions declarative Docker stack files from the hypervisor to the VM's
-#              persistent storage. It reads the 'docker_stacks' array from the VM's
-#              configuration, looks up the stack definition in 'phoenix_stacks_config.json',
-#              and copies the compose file to a dedicated 'stacks' subdirectory.
-#
-# Arguments:
-#   $1 - The VMID of the VM.
-#
-# Returns:
-#   None.
-# =====================================================================================
-provision_declarative_files() {
-    local VMID="$1"
-    log_info "Provisioning declarative stack files for VMID: $VMID"
-
-    local persistent_volume_path
-    persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
-
-    if [ -z "$persistent_volume_path" ]; then
-        log_info "No NFS persistent volume found for VM $VMID. Skipping declarative file provisioning."
-        return 0
-    fi
-
-    local docker_stacks
-    docker_stacks=$(jq -c ".vms[] | select(.vmid == $VMID) | .docker_stacks[]?" "$VM_CONFIG_FILE")
-
-    if [ -z "$docker_stacks" ]; then
-        log_info "No docker_stacks to provision for VMID $VMID."
-        return 0
-    fi
-
-    echo "$docker_stacks" | while read -r stack_name_json; do
-        local stack_name
-        stack_name=$(echo "$stack_name_json" | jq -r '.')
-        
-        log_info "Processing stack: $stack_name"
-
-        local stack_config
-        stack_config=$(jq -r ".docker_stacks.\"$stack_name\"" "$STACKS_CONFIG_FILE")
-
-        if [ -z "$stack_config" ] || [ "$stack_config" == "null" ]; then
-            log_warn "Stack '$stack_name' not found in $STACKS_CONFIG_FILE. Skipping."
-            continue
-        fi
-
-        local compose_file_path
-        compose_file_path=$(echo "$stack_config" | jq -r '.compose_file_path')
-        local stack_dir_name
-        stack_dir_name=$(echo "$stack_config" | jq -r '.name')
-
-        local config_dir
-        local absolute_compose_path="${PHOENIX_BASE_DIR}/${compose_file_path}"
-
-        if [ ! -f "$absolute_compose_path" ]; then
-            log_warn "Compose file not found for stack '$stack_name' at path: $absolute_compose_path. Skipping."
-            log_info "--- DIAGNOSTIC: Listing contents of PHOENIX_BASE_DIR (${PHOENIX_BASE_DIR}) ---"
-            ls -la "$PHOENIX_BASE_DIR"
-            log_info "--- END DIAGNOSTIC ---"
-            continue
-        fi
-
-        local destination_dir="${persistent_volume_path}/stacks/${stack_dir_name}"
-        local full_destination_path="${destination_dir}/docker-compose.yml"
-
-        log_info "Ensuring destination directory exists: $destination_dir"
-        if ! mkdir -p "$destination_dir"; then
-            log_error "Failed to create destination directory: $destination_dir"
-            continue
-        fi
-
-        log_info "Copying '$absolute_compose_path' to '$full_destination_path'"
-        if ! cp "$absolute_compose_path" "$full_destination_path"; then
-            log_error "Failed to copy compose file to $full_destination_path"
-        fi
-    done
-}
 
 # =====================================================================================
 # Function: start_vm
@@ -678,7 +582,6 @@ apply_vm_features() {
 
         cp "$feature_script_path" "$hypervisor_scripts_dir/"
         cp "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh" "$hypervisor_scripts_dir/"
-        cp "${PHOENIX_BASE_DIR}/bin/vm_features/portainer_agent_setup.sh" "$hypervisor_scripts_dir/"
         cp "$temp_context_file" "${hypervisor_scripts_dir}/vm_context.json"
         
         # --- Definitive Fix: Copy all required configs ---
@@ -826,10 +729,6 @@ main_vm_orchestrator() {
         create)
             log_info "Starting 'create' workflow for VMID $vmid..."
             orchestrate_vm "$vmid"
-            log_info "Calling Portainer reconciliation..."
-            if ! "${PHOENIX_BASE_DIR}/bin/reconcile_portainer.sh"; then
-                log_fatal "Portainer reconciliation failed."
-            fi
             log_info "'create' workflow completed for VMID $vmid."
             ;;
         start)

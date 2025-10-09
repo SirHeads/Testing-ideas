@@ -3,10 +3,13 @@ version: '3.8'
 services:
   portainer:
     image: portainer/portainer-ce:latest
-    command: -H unix:///var/run/docker.sock --tlsskipverify
+    command: -H unix:///var/run/docker.sock --tlsverify --tlscert /certs/cert.pem --tlskey /certs/key.pem --tlscacert /certs/ca.pem
+    container_name: portainer_server
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+      - /tmp/portainer_ssl:/certs
+      - /tmp/portainer_ssl/ca.pem:/etc/ssl/certs/ca.pem
     ports:
       - "9000:9000"
       - "9443:9443"

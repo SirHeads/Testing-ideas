@@ -190,6 +190,37 @@ setup_logging() {
 }
  
 # =====================================================================================
+# Function: update_etc_hosts
+# Description: Adds or updates an entry in /etc/hosts for a given hostname and IP address.
+#              This function is idempotent, ensuring the correct entry exists and
+#              removing any old entries for the same hostname.
+#
+# Arguments:
+#   $1 - The IP address to map.
+#   $2 - The hostname to map.
+#
+# Returns:
+#   None. Exits with a fatal error if /etc/hosts cannot be updated.
+# =====================================================================================
+update_etc_hosts() {
+    local ip_address="$1"
+    local hostname="$2"
+    local hosts_file="/etc/hosts"
+
+    log_info "Ensuring /etc/hosts entry for ${hostname} (${ip_address})..."
+
+    # Remove any existing entries for the hostname
+    if grep -q "\s${hostname}$" "$hosts_file"; then
+        log_info "Removing old /etc/hosts entry for ${hostname}."
+        sed -i "/\s${hostname}$/d" "$hosts_file" || log_fatal "Failed to remove old entry from ${hosts_file}."
+    fi
+
+    # Add the new entry
+    echo "${ip_address} ${hostname}" >> "$hosts_file" || log_fatal "Failed to add new entry to ${hosts_file}."
+    log_success "/etc/hosts updated: ${ip_address} ${hostname}"
+}
+
+# =====================================================================================
 # Function: log_plain_output
 # Description: Logs multi-line output from a variable or command while preserving its
 #              original formatting. This function is designed to be used with pipes.

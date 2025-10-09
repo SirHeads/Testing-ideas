@@ -320,7 +320,32 @@
         "firewall": {
             "enabled": true,
             "default_input_policy": "DROP",
-            "default_output_policy": "ACCEPT"
+            "default_output_policy": "ACCEPT",
+            "global_firewall_rules": [
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.101",
+                    "dest": "10.0.0.102",
+                    "proto": "tcp",
+                    "port": "9001"
+                }
+            ]
+        },
+        "firewall": {
+            "enabled": true,
+            "default_input_policy": "DROP",
+            "default_output_policy": "ACCEPT",
+            "global_firewall_rules": [
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.101",
+                    "dest": "10.0.0.102",
+                    "proto": "tcp",
+                    "port": "9001"
+                }
+            ]
         }
     },
     "portainer_api": {
