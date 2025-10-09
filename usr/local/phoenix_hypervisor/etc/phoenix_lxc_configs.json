@@ -571,6 +571,12 @@
             "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/usr/local/phoenix_hypervisor/persistent-storage/ssl/phoenix_ca.crt",
+                    "container_path": "/etc/traefik/phoenix_ca.crt"
+                }
             ]
         }
     }

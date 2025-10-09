@@ -1167,6 +1167,21 @@ main_lxc_orchestrator() {
                     create_final_form_snapshot "$ctid"
                 fi
 
+                # --- Special Handling for Step CA (CTID 103) to Export Root Certificate ---
+                if [ "$ctid" -eq 103 ]; then
+                    log_info "Step CA container (CTID 103) created. Exporting root CA certificate to hypervisor shared storage..."
+                    local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
+                    local ca_root_cert_dest_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl/phoenix_ca.crt"
+                    
+                    # Ensure the destination directory exists on the hypervisor
+                    mkdir -p "$(dirname "$ca_root_cert_dest_path")" || log_fatal "Failed to create destination directory for CA root certificate."
+
+                    if ! pct pull "$ctid" "$ca_root_cert_source_path" "$ca_root_cert_dest_path"; then
+                        log_fatal "Failed to pull root CA certificate from CTID 103 to $ca_root_cert_dest_path."
+                    fi
+                    log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
+                fi
+
                 log_info "'create' workflow completed for CTID $ctid."
             fi
             ;;

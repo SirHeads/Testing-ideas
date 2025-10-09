@@ -29,7 +29,8 @@ CA_PROVISIONER_EMAIL="admin@thinkheads.ai"
 CA_CONFIG_DIR="/root/.step/config"
 CA_CONFIG_FILE="${CA_CONFIG_DIR}/ca.json"
 CA_SERVICE_FILE="/etc/systemd/system/step-ca.service"
-CA_PASSWORD_FILE="/root/.step/secrets/password"
+CA_PASSWORD_FILE="/root/.step/secrets/ca_password.txt"
+CA_INIT_PASSWORD=$(openssl rand -base64 32) # Generate a strong, random password
 
 # =====================================================================================
 # Function: initialize_step_ca
@@ -47,32 +48,22 @@ initialize_step_ca() {
         log_info "Smallstep CA already initialized. Skipping."
         return 0
     fi
+ 
+    # Initialize the CA with a password and store it in a file
+    log_info "Initializing Smallstep CA with a password and storing it in a file..."
+    mkdir -p "$(dirname "$CA_PASSWORD_FILE")" || log_fatal "Failed to create directory for CA password file."
+    echo "$CA_INIT_PASSWORD" > "$CA_PASSWORD_FILE" || log_fatal "Failed to write CA password to file."
+    chmod 600 "$CA_PASSWORD_FILE" || log_fatal "Failed to set permissions for CA password file."
 
-    # Use the provided password and store it in a file
-    local CA_PASSWORD="NewKick@$$2025"
-    log_info "Using pre-defined CA password."
-
-    # Create secrets directory if it doesn't exist
-    mkdir -p "$(dirname "$CA_PASSWORD_FILE")"
-    
-    if ! echo -n "$CA_PASSWORD" > "$CA_PASSWORD_FILE"; then
-        log_fatal "Failed to write CA password to file."
-    fi
-    
-    if ! chmod 600 "$CA_PASSWORD_FILE"; then
-        log_fatal "Failed to set permissions on CA password file."
-    fi
-
-    # Initialize the CA
-    if ! /bin/bash -c "/usr/bin/step ca init --name \"$CA_NAME\" --dns \"$CA_DNS\" --address \"$CA_ADDRESS\" --provisioner \"$CA_PROVISIONER_EMAIL\" --password-file \"$CA_PASSWORD_FILE\""; then
+    if ! /bin/bash -c "echo \"$CA_INIT_PASSWORD\" | /usr/bin/step ca init --name \"$CA_NAME\" --dns \"$CA_DNS\" --address \"$CA_ADDRESS\" --provisioner \"$CA_PROVISIONER_EMAIL\" --deployment-type standalone --password-file \"$CA_PASSWORD_FILE\""; then
         log_fatal "Failed to initialize Smallstep CA in container $CTID."
     fi
     log_success "Smallstep CA initialized successfully."
-
+ 
     # Add ca.internal.thinkheads.ai to /etc/hosts for internal resolution
     log_info "Adding '127.0.0.1 ca.internal.thinkheads.ai' to /etc/hosts..."
-    if ! echo "127.0.0.1 ca.internal.thinkheads.ai" >> /etc/hosts; then
-        log_fatal "Failed to add entry to /etc/hosts."
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        echo "127.0.0.1 ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add entry to /etc/hosts."
     fi
     log_success "Entry added to /etc/hosts successfully."
 }
@@ -117,21 +108,32 @@ add_acme_provisioner() {
 # =====================================================================================
 setup_ca_service() {
     log_info "Setting up systemd service for Smallstep CA..."
-
+ 
+    # Create the wrapper script
+    local WRAPPER_SCRIPT_PATH="/usr/local/bin/run-step-ca.sh"
+    log_info "Creating wrapper script: ${WRAPPER_SCRIPT_PATH}"
+    cat <<EOF > "${WRAPPER_SCRIPT_PATH}"
+#!/bin/bash
+/usr/bin/step-ca ${CA_CONFIG_FILE} --password-file "${CA_PASSWORD_FILE}"
+EOF
+    chmod +x "${WRAPPER_SCRIPT_PATH}" || log_fatal "Failed to make wrapper script executable."
+ 
     # Create the systemd service file content
     local SERVICE_CONTENT="[Unit]
 Description=Step CA Service
 After=network.target
-
+ 
 [Service]
-ExecStart=/usr/bin/step-ca ${CA_CONFIG_FILE} --password-file ${CA_PASSWORD_FILE}
+ExecStart=${WRAPPER_SCRIPT_PATH}
+StandardOutput=append:/var/log/step-ca-startup.log
+StandardError=append:/var/log/step-ca-startup.log
 Restart=always
 User=root
-
+ 
 [Install]
 WantedBy=multi-user.target"
-
-    # Push the service file to the container
+ 
+     # Push the service file to the container
     if ! /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"$CA_SERVICE_FILE\""; then
         log_fatal "Failed to create systemd service file in container $CTID."
     fi
@@ -161,14 +163,17 @@ WantedBy=multi-user.target"
     done
 
     if ! /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt &> /dev/null; then
-        log_fatal "Step CA service failed to become healthy after $((retries * delay)) seconds."
+        log_error "Step CA service failed to become healthy after $((retries * delay)) seconds."
+        log_info "Displaying /var/log/step-ca-startup.log for more details:"
+        cat /var/log/step-ca-startup.log || log_warn "Could not read /var/log/step-ca-startup.log"
+        log_fatal "Step CA service failed to become healthy."
     fi
-
-    # Add detailed logging for systemd status and journalctl
+ 
+     # Add detailed logging for systemd status and journalctl
     log_info "Gathering detailed systemd status for step-ca..."
     systemctl status step-ca > /tmp/step-ca_systemctl_status.log 2>&1
     log_info "Systemd status logged to /tmp/step-ca_systemctl_status.log"
-
+ 
     log_info "Gathering detailed journalctl logs for step-ca..."
     journalctl -u step-ca --no-pager > /tmp/step-ca_journalctl.log 2>&1
     log_info "Journalctl logs logged to /tmp/step-ca_journalctl.log"
@@ -189,11 +194,11 @@ main() {
     fi
 
     log_info "Starting Step CA application script for CTID $CTID."
-
+ 
     initialize_step_ca
     setup_ca_service
     add_acme_provisioner
-
+ 
     log_info "Step CA application script completed for CTID $CTID."
 }
 

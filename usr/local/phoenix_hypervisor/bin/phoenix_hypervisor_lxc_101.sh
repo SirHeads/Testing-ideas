@@ -11,7 +11,7 @@ generate_nginx_certs() {
     echo "Generating Nginx server certificates for internal_traefik_proxy..."
     local NGINX_CERT_DIR="/etc/nginx/ssl" # Certificates will be stored directly in the container's Nginx SSL directory
     local NGINX_HOSTNAME="internal.thinkheads.ai" # Wildcard domain for internal Traefik proxy
-    local CA_URL="https://ca.internal.thinkheads.ai"
+    local CA_URL="https://ca.internal.thinkheads.ai:9000"
     local CA_FINGERPRINT=""
     local MAX_RETRIES=10
     local RETRY_DELAY=10
@@ -50,26 +50,12 @@ generate_nginx_certs() {
     fi
     echo "Step CA ($CA_IP) is reachable."
 
-    attempt=1
-    while [ -z "$CA_FINGERPRINT" ] && [ "$attempt" -le "$MAX_RETRIES" ]; do
-        echo "Attempt $attempt/$MAX_RETRIES: Retrieving Step CA fingerprint from $CA_URL using 'step ca root' and 'step certificate fingerprint'..."
-        local TEMP_ROOT_CRT="/tmp/step_ca_root.crt"
-        if step ca root "$TEMP_ROOT_CRT" --ca-url "$CA_URL"; then
-            CA_FINGERPRINT=$(step certificate fingerprint "$TEMP_ROOT_CRT" 2>/dev/null)
-            rm -f "$TEMP_ROOT_CRT"
-        fi
-        if [ -z "$CA_FINGERPRINT" ]; then
-            echo "WARNING: Could not retrieve Step CA fingerprint. Retrying in $RETRY_DELAY seconds." >&2
-            sleep "$RETRY_DELAY"
-            attempt=$((attempt + 1))
-        fi
-    done
-
-    if [ -z "$CA_FINGERPRINT" ]; then
-        echo "FATAL: Could not retrieve Step CA fingerprint after $MAX_RETRIES attempts. Is Step CA (LXC 103) running and accessible at $CA_URL?" >&2
-        exit 1
+    # Add CA hostname to /etc/hosts for internal resolution
+    echo "INFO: Adding 'ca.internal.thinkheads.ai' to /etc/hosts..."
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || { echo "FATAL: Failed to add CA entry to /etc/hosts." >&2; exit 1; }
     fi
-    echo "Step CA fingerprint retrieved: $CA_FINGERPRINT"
+    echo "INFO: CA entry added to /etc/hosts."
 
     # Retrieve CA fingerprint from the mounted root certificate
     local ROOT_CA_CERT_PATH="${NGINX_CERT_DIR}/phoenix_ca.crt" # Assuming phoenix_ca.crt is the root CA cert
@@ -86,13 +72,21 @@ generate_nginx_certs() {
     fi
     echo "INFO: Retrieved CA Fingerprint: $CA_FINGERPRINT"
 
-    
-
-
+    # Add the locally mounted root CA certificate to the trust store
+    echo "INFO: Adding locally mounted root CA certificate to trust store..."
+    if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
+        echo "FATAL: Failed to install locally mounted root CA certificate into trust store." >&2
+        exit 1
+    fi
+    echo "INFO: Locally mounted root CA certificate added to trust store successfully."
 
     # Generate the certificate and key
-    if ! step ca certificate "$NGINX_HOSTNAME" "${NGINX_CERT_DIR}/internal_traefik_proxy.crt" "${NGINX_CERT_DIR}/internal_traefik_proxy.key" \
-        --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT" --not-after 8760h --force; then # 1 year validity
+    local cert_cmd=(
+        step ca certificate "$NGINX_HOSTNAME"
+        "${NGINX_CERT_DIR}/internal_traefik_proxy.crt"
+        "${NGINX_CERT_DIR}/internal_traefik_proxy.key"
+    )
+    if ! "${cert_cmd[@]}"; then
         echo "FATAL: Failed to generate Nginx server certificate for $NGINX_HOSTNAME." >&2
         exit 1
     fi

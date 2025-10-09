@@ -1,154 +1,168 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_lxc_102.sh
-# Description: This script configures and starts the Traefik service within LXC 102.
-#              It generates Traefik's main configuration, dynamic configurations for
-#              internal services, and sets up a systemd service for Traefik.
+# Description: Self-contained setup for Traefik Internal Proxy in LXC 102.
+#              Installs step-cli, bootstraps with Step CA, configures Traefik,
+#              and starts the service.
 #
 # Arguments:
 #   $1 - The CTID of the container (expected to be 102).
 #
 # Dependencies:
 #   - phoenix_hypervisor_common_utils.sh: For logging and utility functions.
-#   - Traefik binary (installed by feature_install_traefik.sh).
+#   - step-cli and step-ca binaries (installed by feature_install_step_ca.sh).
 #
 # Version: 1.0.0
 # Author: Phoenix Hypervisor Team
+
+set -e
 
 # --- SCRIPT INITIALIZATION ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
-source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
+source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-TRAEFIK_CONFIG_DIR="/etc/traefik"
-TRAEFIK_DYNAMIC_CONFIG_DIR="${TRAEFIK_CONFIG_DIR}/dynamic"
-TRAEFIK_LOG_FILE="/var/log/traefik/traefik.log"
-TRAEFIK_SERVICE_FILE="/etc/systemd/system/traefik.service"
-CA_SERVER_URL="https://ca.internal.thinkheads.ai/acme/acme/directory"
-ACME_STORAGE_FILE="${TRAEFIK_CONFIG_DIR}/acme.json"
+CA_URL="https://ca.internal.thinkheads.ai:9000"
+CA_IP="10.0.0.10" # IP of LXC 103 (Step CA)
+CA_FINGERPRINT=""
+MAX_RETRIES=10
+RETRY_DELAY=10
 
 # =====================================================================================
-# Function: generate_main_config
-# Description: Generates the main traefik.yml configuration file.
+# Function: install_step_cli
+# Description: Installs the Smallstep CLI tool if it's not already present.
 # Arguments:
 #   None.
 # Returns:
-#   None. Exits with a fatal error if file creation fails.
+#   None. Exits with a fatal error if installation fails.
 # =====================================================================================
-generate_main_config() {
-    log_info "Generating main Traefik configuration file: ${TRAEFIK_CONFIG_DIR}/traefik.yml"
-
-    local CONFIG_CONTENT="global:
-  checkNewVersion: true
-  sendAnonymousUsage: false
-entryPoints:
-  web:
-    address: \":80\"
-    http:
-      redirections:
-        entryPoint:
-          to: \"websecure\"
-          scheme: \"https\"
-  websecure:
-    address: \":443\"
-api:
-  dashboard: true
-  insecure: false
-providers:
-  file:
-    directory: ${TRAEFIK_DYNAMIC_CONFIG_DIR}
-    watch: true
-certificatesResolvers:
-  internal:
-    acme:
-      caServer: ${CA_SERVER_URL}
-      storage: ${ACME_STORAGE_FILE}
-      # No DNS challenge provider needed for internal CA, as Traefik will directly
-      # communicate with Step CA's ACME endpoint.
-log:
-  level: INFO
-  filePath: ${TRAEFIK_LOG_FILE}
-accessLog:
-  filePath: /var/log/traefik/access.log
-"
-    if ! pct exec "$CTID" -- /bin/bash -c "echo \"$CONFIG_CONTENT\" > \"${TRAEFIK_CONFIG_DIR}/traefik.yml\""; then
-        log_fatal "Failed to create main Traefik configuration file in container $CTID."
+install_step_cli() {
+    if ! command -v step &> /dev/null; then
+        log_info "step-cli not found in LXC $CTID. Installing..."
+        log_info "Installing step-cli via Smallstep APT repository..."
+        # Add Smallstep GPG key
+        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || log_fatal "Failed to download Smallstep GPG key."
+        # Add Smallstep APT repository
+        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || log_fatal "Failed to add Smallstep APT repository."
+        # Update package lists and install step-cli
+        apt-get update && apt-get install -y step-cli || log_fatal "Failed to install step-cli from APT repository."
+        hash -r # Clear the command hash table
+        # Re-check if step-cli is now available after installation
+        if ! command -v step &> /dev/null; then
+            log_fatal "Failed to install step-cli in LXC $CTID, or it's not in PATH after installation."
+        fi
+        log_info "step-cli installed successfully in LXC $CTID."
+    else
+        log_info "step-cli is already installed in LXC $CTID."
     fi
-    log_success "Main Traefik configuration file generated successfully."
 }
 
 # =====================================================================================
-# Function: generate_dynamic_configs
-# Description: Generates dynamic configuration files for internal services.
+# Function: bootstrap_step_ca
+# Description: Bootstraps the step-cli with the Step CA's root certificate and fingerprint.
 # Arguments:
 #   None.
 # Returns:
-#   None. Exits with a fatal error if file creation fails.
+#   None. Exits with a fatal error if bootstrapping fails.
 # =====================================================================================
-generate_dynamic_configs() {
-    log_info "Generating dynamic Traefik configuration files..."
-
-    # --- Portainer Configuration ---
-    local PORTAINER_VMID="1001" # Assuming Portainer Server is on VMID 1001
-    local PORTAINER_IP=$(jq -r ".vms[] | select(.vmid == ${PORTAINER_VMID}) | .network_config.ip" "${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json" | cut -d'/' -f1)
-    local PORTAINER_PORT=$(get_global_config_value '.network.portainer_server_port')
-
-    local PORTAINER_CONFIG_CONTENT="http:
-  routers:
-    portainer:
-      rule: \"Host(\`portainer.internal.thinkheads.ai\`)\"
-      service: portainer
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: internal
-  services:
-    portainer:
-      loadBalancer:
-        servers:
-          - url: \"https://${PORTAINER_IP}:${PORTAINER_PORT}\"
-        # Ensure Traefik trusts the internal CA for backend communication
-        serversTransport: portainer-transport
-  serversTransports:
-    portainer-transport:
-      insecureSkipVerify: true # Temporarily skip verify, will be replaced with CA trust
-      # We will later add the CA certificate here once it's bootstrapped
-"
-    if ! pct exec "$CTID" -- /bin/bash -c "echo \"$PORTAINER_CONFIG_CONTENT\" > \"${TRAEFIK_DYNAMIC_CONFIG_DIR}/portainer.yml\""; then
-        log_fatal "Failed to create Portainer dynamic configuration file in container $CTID."
+bootstrap_step_ca() {
+    log_info "Waiting for Step CA (LXC 103 at $CA_IP) to be reachable..."
+    local attempt=1
+    while ! ping -c 1 "$CA_IP" > /dev/null 2>&1 && [ "$attempt" -le "$MAX_RETRIES" ]; do
+        log_info "Attempt $attempt/$MAX_RETRIES: Ping to Step CA ($CA_IP) failed. Retrying in $RETRY_DELAY seconds..."
+        sleep "$RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+    if [ "$attempt" -gt "$MAX_RETRIES" ]; then
+        log_fatal "Step CA ($CA_IP) is not reachable after $MAX_RETRIES attempts. Cannot bootstrap step-cli."
     fi
-    log_success "Portainer dynamic configuration file generated."
+    log_info "Step CA ($CA_IP) is reachable."
 
-    # --- Proxmox VE GUI Configuration ---
-    local PVE_IP="10.0.0.1" # Assuming Proxmox host IP
-    local PVE_PORT="8006"
-
-    local PVE_CONFIG_CONTENT="http:
-  routers:
-    pve:
-      rule: \"Host(\`pve.internal.thinkheads.ai\`)\"
-      service: pve
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: internal
-  services:
-    pve:
-      loadBalancer:
-        servers:
-          - url: \"https://${PVE_IP}:${PVE_PORT}\"
-        serversTransport: pve-transport
-  serversTransports:
-    pve-transport:
-      insecureSkipVerify: true # Temporarily skip verify, will be replaced with CA trust
-"
-    if ! pct exec "$CTID" -- /bin/bash -c "echo \"$PVE_CONFIG_CONTENT\" > \"${TRAEFIK_DYNAMIC_CONFIG_DIR}/pve.yml\""; then
-        log_fatal "Failed to create Proxmox dynamic configuration file in container $CTID."
+    # Add CA hostname to /etc/hosts for internal resolution
+    log_info "Adding 'ca.internal.thinkheads.ai' to /etc/hosts..."
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add CA entry to /etc/hosts."
     fi
-    log_success "Proxmox dynamic configuration file generated."
+    log_info "CA entry added to /etc/hosts."
+
+    # Retrieve CA fingerprint from the mounted root certificate
+    local ROOT_CA_CERT_PATH="/etc/traefik/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
+    log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
+    if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
+        log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH. Cannot retrieve fingerprint."
+    fi
+    log_info "Root CA certificate found. Retrieving fingerprint..."
+    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
+    if [ -z "$CA_FINGERPRINT" ]; then
+        log_fatal "Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH."
+    fi
+    log_info "Retrieved CA Fingerprint: $CA_FINGERPRINT"
+
+    # Add the locally mounted root CA certificate to the trust store
+    log_info "Adding locally mounted root CA certificate to trust store..."
+    if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
+        log_fatal "Failed to install locally mounted root CA certificate into trust store."
+    fi
+    log_info "Locally mounted root CA certificate added to trust store successfully."
+}
+
+# =====================================================================================
+# Function: configure_traefik
+# Description: Configures Traefik with entrypoints and ACME provider.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if configuration fails.
+# =====================================================================================
+configure_traefik() {
+    log_info "Configuring Traefik..."
+
+    # Create Traefik configuration directory
+    mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
+
+    # Create traefik.yml
+    cat <<EOF > /etc/traefik/traefik.yml
+global:
+  checkNewVersion: true
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+api:
+  dashboard: true
+  insecure: true # For internal access only, consider securing in production
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  myresolver:
+    acme:
+      email: admin@thinkheads.ai
+      storage: /etc/traefik/acme.json
+      caServer: ${CA_URL}/acme/acme/directory
+      keyType: EC384
+      httpChallenge:
+        entryPoint: web
+EOF
+
+    # Set permissions for acme.json
+    touch /etc/traefik/acme.json
+    chmod 600 /etc/traefik/acme.json
+
+    log_info "Traefik configured successfully."
 }
 
 # =====================================================================================
@@ -162,36 +176,36 @@ generate_dynamic_configs() {
 setup_traefik_service() {
     log_info "Setting up systemd service for Traefik..."
 
+    # Create the systemd service file content
     local SERVICE_CONTENT="[Unit]
-Description=Traefik Reverse Proxy
+Description=Traefik Proxy
 After=network.target
 
 [Service]
-ExecStart=${TRAEFIK_INSTALL_DIR}/traefik --configFile=${TRAEFIK_CONFIG_DIR}/traefik.yml
+ExecStart=/usr/bin/traefik --configFile=/etc/traefik/traefik.yml
 Restart=always
 User=root
 
 [Install]
 WantedBy=multi-user.target"
 
-    if ! pct exec "$CTID" -- /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"$TRAEFIK_SERVICE_FILE\""; then
+    # Push the service file to the container
+    if ! /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"/etc/systemd/system/traefik.service\""; then
         log_fatal "Failed to create systemd service file in container $CTID."
     fi
 
-    if ! pct exec "$CTID" -- systemctl daemon-reload; then
+    # Reload systemd, enable and start the service
+    if ! systemctl daemon-reload; then
         log_fatal "Failed to reload systemd daemon in container $CTID."
     fi
-    if ! pct exec "$CTID" -- systemctl enable traefik; then
+    if ! systemctl enable traefik; then
         log_fatal "Failed to enable traefik service in container $CTID."
     fi
-    if ! pct exec "$CTID" -- systemctl start traefik; then
+    if ! systemctl start traefik; then
         log_fatal "Failed to start traefik service in container $CTID."
     fi
 
-    if ! pct exec "$CTID" -- systemctl is-active --quiet traefik; then
-        log_fatal "Traefik service is not running in container $CTID."
-    fi
-    log_success "Traefik service set up and started successfully."
+    log_info "Traefik service set up and started successfully."
 }
 
 # =====================================================================================
@@ -209,8 +223,9 @@ main() {
 
     log_info "Starting Traefik application script for CTID $CTID."
 
-    generate_main_config
-    generate_dynamic_configs
+    install_step_cli
+    bootstrap_step_ca
+    configure_traefik
     setup_traefik_service
 
     log_info "Traefik application script completed for CTID $CTID."
