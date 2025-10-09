@@ -427,12 +427,12 @@
                     "pool": "quickOS-lxc-persistent-data",
                     "size_gb": 1,
                     "mount_point": "/logs/nginx"
-                },
+                }
+            ],
+            "mount_points": [
                 {
-                    "name": "nginx_ssl",
-                    "pool": "quickOS-lxc-persistent-data",
-                    "size_gb": 1,
-                    "mount_point": "/etc/nginx/ssl"
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/nginx/ssl"
                 }
             ]
         },

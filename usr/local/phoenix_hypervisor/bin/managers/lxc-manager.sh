@@ -62,7 +62,7 @@ manage_ca_password_on_hypervisor() {
         log_info "CA password file already exists at $final_ca_password_file. Using existing password."
         # Copy existing password to temporary file for pushing to container
         cp "$final_ca_password_file" "$ca_password_file_on_host" || log_fatal "Failed to copy existing CA password to temporary file."
-        chmod 600 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file."
+        chmod 644 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file."
         log_debug "Copied existing password to temporary file: $ca_password_file_on_host"
     else
         log_info "CA password file not found at $final_ca_password_file. Generating a new password..."
@@ -72,8 +72,8 @@ manage_ca_password_on_hypervisor() {
         log_debug "Generated and wrote new password to $ca_password_file_on_host."
 
         # Set permissions for the temporary file
-        chmod 600 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file on hypervisor."
-        log_debug "Set permissions of $ca_password_file_on_host to 600."
+        chmod 644 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file on hypervisor."
+        log_debug "Set permissions of $ca_password_file_on_host to 644."
         log_success "New CA password generated and stored temporarily at $ca_password_file_on_host."
     fi
     echo "$ca_password_file_on_host" # Return the path to the temporary file
@@ -850,7 +850,7 @@ run_application_script() {
 
         # Create a tarball of the nginx configs on the host
         log_info "Creating tarball of Nginx configs at ${temp_tarball}"
-        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" sites-available scripts; then
+        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" sites-available scripts nginx.conf; then
             log_fatal "Failed to create Nginx config tarball."
         fi
 
@@ -1233,6 +1233,18 @@ main_lxc_orchestrator() {
                     # Ensure the destination directory exists on the hypervisor
                     mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
 
+                    # Copy the password file from the temporary location on the host to the persistent shared location
+                    log_info "Copying CA password file to persistent shared storage on host..."
+                    local final_ca_password_file="${ca_output_dir}/ca_password.txt"
+                    if ! cp "$temp_ca_password_file_on_host" "$final_ca_password_file"; then
+                        log_fatal "Failed to copy CA password file to persistent storage on host."
+                    fi
+                    # Ensure the final file has the correct permissions
+                    if ! chmod 644 "$final_ca_password_file"; then
+                        log_fatal "Failed to set permissions for final CA password file on host."
+                    fi
+                    log_success "CA password file copied to persistent storage with correct permissions."
+
                     # Copy the password file from the temporary location on the host to the container
                     log_info "Pushing CA password file from host temp '$temp_ca_password_file_on_host' to container '$ctid:$container_ca_password_path'..."
                     if ! pct push "$ctid" "$temp_ca_password_file_on_host" "$container_ca_password_path"; then
@@ -1242,7 +1254,7 @@ main_lxc_orchestrator() {
 
                     # Set appropriate permissions inside the container
                     log_info "Setting permissions for CA password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
+                    if ! pct exec "$ctid" -- chmod 644 "$container_ca_password_path"; then
                         log_fatal "Failed to set permissions for CA password file inside container $ctid."
                     fi
                     log_success "Permissions set for CA password file inside container."
@@ -1284,6 +1296,13 @@ main_lxc_orchestrator() {
                         log_fatal "Failed to pull root CA certificate from CTID 103 to $ca_root_cert_dest_path."
                     fi
                     log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
+
+                    # Set correct ownership for the shared SSL directory for unprivileged containers
+                    log_info "Setting ownership of shared SSL directory for unprivileged access..."
+                    if ! chown -R 100000:100000 "$ca_output_dir"; then
+                        log_fatal "Failed to set ownership of shared SSL directory."
+                    fi
+                    log_success "Ownership of shared SSL directory set successfully."
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."

@@ -1,7 +1,6 @@
 # Nginx API Gateway configuration for various backend AI and management services.
 # This file acts as a central entry point, routing requests to different services
 # based on the URL path or server name. It is a key component of the Phoenix
--
 # Hypervisor's microservice architecture.
 # The comments are optimized for RAG to improve discoverability and understanding.
 
@@ -128,101 +127,101 @@ server {
 }
 
 # Redirect HTTP to HTTPS for the n8n service.
-server {
-    listen 80;
-    server_name n8n.phoenix.local;
-    return 301 https://$host$request_uri;
-}
+# server {
+#     listen 80;
+#     server_name n8n.phoenix.local;
+#     return 301 https://$host$request_uri;
+# }
 
 # HTTPS server block for the n8n service.
-server {
-    listen 443 ssl http2;
-    server_name n8n.phoenix.local;
+# server {
+#     listen 443 ssl http2;
+#     server_name n8n.phoenix.local;
 
-    # SSL/TLS configuration.
-    ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
-    ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers off;
+#     # SSL/TLS configuration.
+#     ssl_certificate /etc/nginx/ssl/n8n.phoenix.local.crt;
+#     ssl_certificate_key /etc/nginx/ssl/n8n.phoenix.local.key;
+#     ssl_protocols TLSv1.2 TLSv1.3;
+#     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+#     ssl_prefer_server_ciphers off;
 
-    # Proxy all requests to the n8n backend, with WebSocket support.
-    location / {
-        proxy_pass http://n8n_service;
-        proxy_ssl_verify off;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+#     # Proxy all requests to the n8n backend, with WebSocket support.
+#     location / {
+#         proxy_pass http://n8n_service;
+#         proxy_ssl_verify off;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto https;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection "upgrade";
+#     }
+# }
 
 # Redirect HTTP to HTTPS for the Portainer service.
-server {
-    listen 80;
-    server_name portainer.phoenix.local;
-    return 301 https://$host$request_uri;
-}
+# server {
+#     listen 80;
+#     server_name portainer.phoenix.local;
+#     return 301 https://$host$request_uri;
+# }
 
 # HTTPS server block for the Portainer service.
-server {
-    listen 443 ssl http2;
-    server_name portainer.phoenix.local;
+# server {
+#     listen 443 ssl http2;
+#     server_name portainer.phoenix.local;
 
-    # SSL/TLS configuration.
-    ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
-    ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers off;
+#     # SSL/TLS configuration.
+#     ssl_certificate /etc/nginx/ssl/portainer.phoenix.local.crt;
+#     ssl_certificate_key /etc/nginx/ssl/portainer.phoenix.local.key;
+#     ssl_protocols TLSv1.2 TLSv1.3;
+#     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+#     ssl_prefer_server_ciphers off;
 
-    # Proxy all requests to the Portainer backend, with WebSocket support.
-    location / {
-        proxy_pass http://portainer_service;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+#     # Proxy all requests to the Portainer backend, with WebSocket support.
+#     location / {
+#         proxy_pass http://portainer_service;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto https;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection "upgrade";
+#     }
+# }
 
 # Redirect HTTP to HTTPS for the drphoenix agent service.
-server {
-    listen 80;
-    server_name drphoenix.phoenix.local;
-    return 301 https://$host$request_uri;
-}
+# server {
+#     listen 80;
+#     server_name drphoenix.phoenix.local;
+#     return 301 https://$host$request_uri;
+# }
 
 # HTTPS server block for the drphoenix agent service.
-server {
-    listen 443 ssl http2;
-    server_name drphoenix.phoenix.local;
+# server {
+#     listen 443 ssl http2;
+#     server_name drphoenix.phoenix.local;
 
-    # SSL/TLS configuration.
-    ssl_certificate /etc/nginx/ssl/drphoenix.phoenix.local.crt;
-    ssl_certificate_key /etc/nginx/ssl/drphoenix.phoenix.local.key;
-    ssl_trusted_certificate /etc/nginx/ssl/phoenix_ca.crt; # Trust our custom CA
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
-    ssl_prefer_server_ciphers off;
+#     # SSL/TLS configuration.
+#     ssl_certificate /etc/nginx/ssl/drphoenix.phoenix.local.crt;
+#     ssl_certificate_key /etc/nginx/ssl/drphoenix.phoenix.local.key;
+#     ssl_trusted_certificate /etc/nginx/ssl/phoenix_ca.crt; # Trust our custom CA
+#     ssl_protocols TLSv1.2 TLSv1.3;
+#     ssl_ciphers 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:ECDHE-RSA-AES128-GCM-SHA256';
+#     ssl_prefer_server_ciphers off;
 
-    # Proxy all requests to the Portainer agent backend, with WebSocket support.
-    location / {
-        proxy_pass https://10.0.0.102:9001; # Proxy to VM 1002 (drphoenix) Portainer agent
-        proxy_ssl_server_name on;
-        proxy_ssl_verify on; # Enable SSL verification now that we trust the CA
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
+#     # Proxy all requests to the Portainer agent backend, with WebSocket support.
+#     location / {
+#         proxy_pass https://10.0.0.102:9001; # Proxy to VM 1002 (drphoenix) Portainer agent
+#         proxy_ssl_server_name on;
+#         proxy_ssl_verify on; # Enable SSL verification now that we trust the CA
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+#         proxy_set_header X-Forwarded-Proto https;
+#         proxy_http_version 1.1;
+#         proxy_set_header Upgrade $http_upgrade;
+#         proxy_set_header Connection "upgrade";
+#     }
+# }

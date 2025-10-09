@@ -111,6 +111,8 @@ generate_nginx_certs() {
         "${NGINX_CERT_DIR}/internal_traefik_proxy.crt"
         "${NGINX_CERT_DIR}/internal_traefik_proxy.key"
         --password-file "${NGINX_CERT_DIR}/ca_password.txt" # Use the mounted password file
+        --provisioner "admin@thinkheads.ai"
+        --force
     )
     if ! "${cert_cmd[@]}"; then
         echo "FATAL: Failed to generate Nginx server certificate for $NGINX_HOSTNAME." >&2
@@ -142,7 +144,9 @@ SCRIPTS_DIR="/etc/nginx/scripts"
 SSL_DIR="/etc/nginx/ssl"
 
 # Create directories
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SSL_DIR
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SSL_DIR /var/cache/nginx
+# Set ownership for Nginx cache directory
+chown -R www-data:www-data /var/cache/nginx
 
 # Copy files (assume pushed by lxc-manager.sh)
 
@@ -151,6 +155,7 @@ cp "$TMP_DIR/sites-available/internal_traefik_proxy" "$SITES_AVAILABLE_DIR/inter
 cp "$TMP_DIR/sites-available/vllm_gateway" "$SITES_AVAILABLE_DIR/vllm_gateway" || { echo "Config file vllm_gateway missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/sites-available/vllm_proxy" "$SITES_AVAILABLE_DIR/vllm_proxy" || { echo "Config file vllm_proxy missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/scripts/http.js" "$SCRIPTS_DIR/http.js" || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in $TMP_DIR." >&2; exit 1; }
 
 # Link enabled sites
 # Link the consolidated gateway configuration
@@ -168,7 +173,7 @@ generate_nginx_certs
 
 
 # Set correct permissions for the private key
-chmod 600 "${NGINX_CERT_DIR}/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }
+chmod 600 "/etc/nginx/ssl/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }
 
 # Remove invalid js_include from nginx.conf if present
 sed -i '/js_include/d' /etc/nginx/nginx.conf
