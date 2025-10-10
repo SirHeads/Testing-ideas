@@ -59,6 +59,9 @@ server {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
 
+    # Include the ACME challenge snippet
+    include snippets/acme_challenge.conf;
+
     # Route requests for OpenAI-compatible chat completions to the Qwen service.
     location /v1/chat/completions {
         proxy_pass http://qwen_service;

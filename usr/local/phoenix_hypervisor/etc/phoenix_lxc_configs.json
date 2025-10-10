@@ -407,6 +407,18 @@
                 "enabled": true,
                 "rules": [
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "80"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "443"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.101",

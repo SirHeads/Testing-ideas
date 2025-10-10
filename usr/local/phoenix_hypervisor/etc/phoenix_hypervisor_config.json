@@ -336,7 +336,72 @@
                     "source": "10.0.0.101",
                     "dest": "10.0.0.102",
                     "proto": "tcp",
-                    "port": "9001"
+                    "port": "9001",
+                    "comment": "Allow Portainer agent communication"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "2049",
+                    "comment": "Allow NFS traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "2049",
+                    "comment": "Allow NFS traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "111",
+                    "comment": "Allow rpcbind traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "111",
+                    "comment": "Allow rpcbind traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "139",
+                    "comment": "Allow Samba NetBIOS"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "445",
+                    "comment": "Allow Samba SMB"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "137",
+                    "comment": "Allow Samba NetBIOS Name Service"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "138",
+                    "comment": "Allow Samba NetBIOS Datagram Service"
                 }
             ]
         }

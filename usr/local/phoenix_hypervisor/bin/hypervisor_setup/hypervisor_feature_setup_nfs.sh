@@ -156,17 +156,7 @@ configure_nfs_exports() {
 #              able to connect to the NFS server.
 # =====================================================================================
 configure_nfs_firewall() {
-  log_info "Configuring firewall for NFS..."
-  local subnet=$(jq -r '.network.interfaces.address // "10.0.0.0/24"' "$HYPERVISOR_CONFIG_FILE")
-  
-  # Attempt to allow the 'nfs' service by name, which is the cleanest approach.
-  if ! retry_command "ufw allow from $subnet to any port nfs"; then
-    log_warn "Failed to allow NFS service in firewall (ufw allow nfs). Trying fallback to specific ports..."
-    # Fallback to allowing specific NFS ports if the service rule fails.
-    retry_command "ufw allow from $subnet to any port 111" || log_fatal "Failed to allow port 111 (rpcbind) in firewall"
-    retry_command "ufw allow from $subnet to any port 2049" || log_fatal "Failed to allow port 2049 (nfs) in firewall"
-  fi
-  log_info "Firewall configured for NFS"
+  log_info "NFS firewall configuration is now managed by hypervisor_feature_setup_firewall.sh. Skipping."
 }
 
 # =====================================================================================

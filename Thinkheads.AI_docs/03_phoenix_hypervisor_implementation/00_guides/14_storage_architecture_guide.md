@@ -116,6 +116,14 @@ A key architectural change is the use of NFS for delivering feature scripts to V
     3. Mounting the NFS share from the hypervisor.
 - **Benefits:** This approach is more robust, flexible, and aligns with the declarative model. It simplifies the `vm-manager.sh` script by removing all ISO management logic and provides a persistent channel for data exchange between the hypervisor and the guest.
 
+### d. ZFS-backed Persistent Storage for LXCs
+
+A significant enhancement to the storage architecture is the introduction of ZFS-backed persistent storage for LXC containers. This provides a unified and robust storage model for both VMs and LXCs.
+
+- **Implementation:** The `lxc-manager.sh` script now supports a `zfs_volumes` array in the `phoenix_lxc_configs.json` file. This allows for the declarative creation and attachment of ZFS volumes to LXC containers.
+- **Declarative Configuration:** Each volume is defined with a `name`, `pool`, `size_gb`, and `mount_point`. This allows for fine-grained control over the storage for each container.
+- **Benefits:** This new feature provides a more flexible and powerful storage solution for LXC containers, allowing for dedicated storage for applications that require it. It also aligns the LXC storage model with the VM storage model, creating a more consistent and unified architecture.
+
 ## 4. Strengths, Concerns, and Recommendations
 
 ### Strengths

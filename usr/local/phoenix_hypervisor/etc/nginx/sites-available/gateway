@@ -8,6 +8,9 @@ server {
     location / {
         return 404; # Default action is to return not found
     }
+
+    # ACME Challenge for Traefik
+    include snippets/acme_challenge.conf;
 }
 
 

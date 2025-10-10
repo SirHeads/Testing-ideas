@@ -21,7 +21,7 @@ source "${PHOENIX_BASE_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-TRAEFIK_VERSION="v3.5.3"
+TRAEFIK_VERSION="v3.0.0"
 TRAEFIK_DOWNLOAD_URL="https://github.com/traefik/traefik/releases/download/${TRAEFIK_VERSION}/traefik_${TRAEFIK_VERSION}_linux_amd64.tar.gz"
 TRAEFIK_INSTALL_DIR="/usr/local/bin"
 TRAEFIK_CONFIG_DIR="/etc/traefik"
@@ -58,14 +58,9 @@ install_traefik_binary() {
         log_fatal "Failed to extract Traefik binary in container $CTID."
     fi
 
-    log_info "Moving Traefik binary to ${TRAEFIK_INSTALL_DIR}..."
-    if ! pct exec "$CTID" -- /bin/mv "${TEMP_DIR}/traefik" "$TRAEFIK_INSTALL_DIR/"; then
-        log_fatal "Failed to move Traefik binary to install directory in container $CTID."
-    fi
-
-    log_info "Setting permissions for Traefik binary..."
-    if ! pct exec "$CTID" -- /bin/chmod +x "${TRAEFIK_INSTALL_DIR}/traefik"; then
-        log_fatal "Failed to set executable permissions for Traefik binary in container $CTID."
+    log_info "Installing Traefik binary to ${TRAEFIK_INSTALL_DIR}..."
+    if ! pct exec "$CTID" -- /usr/bin/install -m 755 "${TEMP_DIR}/traefik" "${TRAEFIK_INSTALL_DIR}/traefik"; then
+        log_fatal "Failed to install Traefik binary to ${TRAEFIK_INSTALL_DIR} in container $CTID."
     fi
 
     log_info "Cleaning up temporary files..."

@@ -141,10 +141,11 @@ tar -xzf "$CONFIG_TARBALL" -C "$TMP_DIR" || { echo "Failed to extract Nginx conf
 SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
 SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
 SCRIPTS_DIR="/etc/nginx/scripts"
+SNIPPETS_DIR="/etc/nginx/snippets"
 SSL_DIR="/etc/nginx/ssl"
 
 # Create directories
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SSL_DIR /var/cache/nginx
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SNIPPETS_DIR $SSL_DIR /var/cache/nginx
 # Set ownership for Nginx cache directory
 chown -R www-data:www-data /var/cache/nginx
 
@@ -155,6 +156,7 @@ cp "$TMP_DIR/sites-available/internal_traefik_proxy" "$SITES_AVAILABLE_DIR/inter
 cp "$TMP_DIR/sites-available/vllm_gateway" "$SITES_AVAILABLE_DIR/vllm_gateway" || { echo "Config file vllm_gateway missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/sites-available/vllm_proxy" "$SITES_AVAILABLE_DIR/vllm_proxy" || { echo "Config file vllm_proxy missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/scripts/http.js" "$SCRIPTS_DIR/http.js" || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
+cp "$TMP_DIR/snippets/acme_challenge.conf" "$SNIPPETS_DIR/acme_challenge.conf" || { echo "ACME snippet missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in $TMP_DIR." >&2; exit 1; }
 
 # Link enabled sites

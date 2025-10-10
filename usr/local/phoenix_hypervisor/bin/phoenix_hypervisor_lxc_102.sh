@@ -147,7 +147,6 @@ log:
 
 api:
   dashboard: true
-  insecure: true # For internal access only, consider securing in production
 
 entryPoints:
   web:
@@ -175,6 +174,19 @@ EOF
     touch /etc/traefik/acme.json
     chmod 600 /etc/traefik/acme.json
 
+    # Create dynamic configuration for the dashboard
+    cat <<'EOF' > /etc/traefik/dynamic/dashboard.yml
+http:
+  routers:
+    dashboard:
+      rule: "Host(`traefik.internal.thinkheads.ai`)"
+      service: "api@internal"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+EOF
+
     log_info "Traefik configured successfully."
 }
 
@@ -195,7 +207,7 @@ Description=Traefik Proxy
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/traefik --configFile=/etc/traefik/traefik.yml
+ExecStart=/usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
 Restart=always
 User=root
 

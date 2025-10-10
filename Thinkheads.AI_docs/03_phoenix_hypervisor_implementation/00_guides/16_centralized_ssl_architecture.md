@@ -1,57 +1,78 @@
 # Centralized SSL Certificate Architecture
 
-## Overview
+This document outlines the new, centralized SSL certificate management architecture for the Phoenix Hypervisor environment. The primary goal of this architecture is to provide a robust, automated, and secure method for issuing and managing SSL certificates for all internal services.
 
-This document outlines the centralized SSL certificate management architecture for the Phoenix Hypervisor environment. The primary goal of this architecture is to create a single source of truth for self-signed SSL certificates, ensuring that all services that require them (such as the Nginx gateway and the Portainer server) are using the same, valid certificates.
+## 1. High-Level Architecture Overview
 
-## Architecture and Workflow
+The new SSL architecture is built around a dedicated Smallstep Step-CA instance running in an LXC container (103). This internal certificate authority is integrated with a Traefik internal proxy (LXC 102) to provide automatic certificate provisioning and renewal for all internal services. An Nginx gateway (LXC 101) serves as the external entry point, routing traffic to the internal Traefik proxy.
 
-The architecture is managed through a series of scripts that are orchestrated by the main `phoenix-cli` dispatcher.
+Here is a diagram illustrating the new SSL architecture:
 
 ```mermaid
 graph TD
-    A[phoenix create] --> B{generate_ssl_certs.sh};
-    B --> C[lxc-manager.sh];
-    B --> D[vm-manager.sh];
-    C --> E[LXC 101: Nginx Gateway];
-    D --> F[VM 1001: Portainer Server];
-    G[/usr/local/phoenix_hypervisor/persistent-storage/ssl] --> E;
-    G --> F;
-
-    subgraph Hypervisor
-        A;
-        B;
-        C;
-        D;
-        G;
+    subgraph "External Network"
+        A[Client]
     end
 
-    subgraph Guests
-        E;
-        F;
+    subgraph "Phoenix Hypervisor"
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
+        end
+
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
+
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+            F[VM 1002: Dr-Phoenix]
+            G[Other Services]
+        end
     end
+
+    A -- HTTPS --> B
+    B -- Routes Traffic --> C
+    C -- Routes to --> E
+    C -- Routes to --> F
+    C -- Routes to --> G
+    D -- Issues Certificates --> C
+    C -- Provides Certificates --> E
+    C -- Provides Certificates --> F
+    C -- Provides Certificates --> G
 ```
 
-### Workflow Steps:
+## 2. Core Components
 
-1.  **Initiation**: The process begins when a user runs a `phoenix create` or `phoenix converge` command.
+### a. Step-CA (LXC 103)
 
-2.  **Certificate Generation**: Before any guest creation begins, the `phoenix-cli` script calls the `generate_ssl_certs.sh` script.
-    *   **Idempotency**: This script is idempotent. It checks for the existence of certificates in the central store (`/usr/local/phoenix_hypervisor/persistent-storage/ssl`). If the certificates already exist, the script does nothing. If they are missing, it generates them.
-    *   **Central Store**: This ensures that a single, consistent set of certificates is always available on the hypervisor.
+- **Role**: Acts as the internal certificate authority for the entire Phoenix Hypervisor environment.
+- **Implementation**: A dedicated LXC container runs a Smallstep Step-CA instance. The CA is initialized with a root certificate and key, and is configured with an ACME provisioner to allow for automated certificate issuance.
+- **Benefits**: Provides a single source of truth for all internal certificates, eliminating the need for self-signed certificates and providing a higher level of security.
 
-3.  **Guest Provisioning**: The `phoenix-cli` proceeds to call the appropriate manager (`lxc-manager.sh` or `vm-manager.sh`) to provision the requested guests.
+### b. Traefik Internal Proxy (LXC 102)
 
-4.  **Nginx Gateway (LXC 101)**:
-    *   When `lxc-manager.sh` provisions the Nginx gateway, the `apply_mount_points` function mounts the central SSL store from the hypervisor directly into the container at `/etc/nginx/ssl`.
-    *   The `phoenix_hypervisor_lxc_101.sh` script, which runs inside the container, no longer needs to generate its own certificates; it simply uses the ones provided in the mounted directory.
+- **Role**: Acts as an internal service mesh and reverse proxy.
+- **Implementation**: Traefik is configured to automatically discover internal services and route traffic between them. It is also configured to use the Step-CA as an ACME provider, allowing it to automatically request, provision, and renew SSL certificates for all internal services.
+- **Benefits**: Simplifies the management of internal services and provides a seamless and automated solution for SSL certificate management.
 
-5.  **Portainer Server (VM 1001)**:
-    *   When `vm-manager.sh` provisions the Portainer server, the `apply_vm_features` function copies the certificates from the central SSL store on the hypervisor into the Portainer VM's persistent storage directory (`.../portainer/ssl`).
-    *   The `docker-compose.yml` file for Portainer mounts this directory into the container, allowing the Portainer service to use the correct, centralized certificates.
+### c. Nginx Gateway (LXC 101)
 
-## Benefits of this Architecture
+- **Role**: Serves as the primary external-facing Nginx reverse proxy and API gateway.
+- **Implementation**: The Nginx gateway is configured to route all external traffic to the internal Traefik proxy. It is also configured to use a certificate issued by the Step-CA, ensuring that all external communication is secure.
+- **Benefits**: Provides a secure and efficient entry point for all external traffic, and integrates seamlessly with the internal service mesh.
 
-*   **Single Source of Truth**: Eliminates certificate mismatches and ensures all services trust each other.
-*   **Idempotent and Resilient**: The process can be run safely multiple times. Certificates are only generated when needed, making the creation process robust.
-*   **Simplified Management**: Centralizes the creation and storage of certificates, making them easier to manage, update, or replace in the future.
+## 3. Workflow
+
+1.  **CA Initialization**: The `phoenix-cli` script provisions the Step-CA container (103) and initializes the CA.
+2.  **Traefik and Nginx Provisioning**: The `phoenix-cli` script provisions the Traefik (102) and Nginx (101) containers.
+3.  **Certificate Issuance**: Traefik automatically requests a certificate from the Step-CA for itself and for the Nginx gateway.
+4.  **Service Discovery**: Traefik automatically discovers all internal services and routes traffic to them.
+5.  **Certificate Renewal**: Traefik automatically renews all certificates before they expire.
+
+## 4. Strengths
+
+*   **Automated**: The entire process of certificate issuance, provisioning, and renewal is fully automated.
+*   **Secure**: All internal communication is encrypted and secure.
+*   **Centralized**: A single source of truth for all internal certificates.
+*   **Scalable**: The architecture can easily be extended to support additional services.

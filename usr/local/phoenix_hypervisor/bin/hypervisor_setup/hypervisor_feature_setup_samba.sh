@@ -210,10 +210,7 @@ EOF
 #              required for Samba to function.
 # =====================================================================================
 configure_samba_firewall() {
-  log_info "Configuring firewall for Samba..."
-  # Use the predefined 'Samba' application profile in UFW for simplicity and accuracy.
-  retry_command "ufw allow Samba" || log_fatal "Failed to configure firewall for Samba"
-  log_info "Updated firewall to allow Samba traffic"
+  log_info "Samba firewall configuration is now managed by hypervisor_feature_setup_firewall.sh. Skipping."
 }
 
 # =====================================================================================

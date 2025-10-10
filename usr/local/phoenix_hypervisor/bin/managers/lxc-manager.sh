@@ -850,7 +850,14 @@ run_application_script() {
 
         # Create a tarball of the nginx configs on the host
         log_info "Creating tarball of Nginx configs at ${temp_tarball}"
-        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" sites-available scripts nginx.conf; then
+        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
+            sites-available/gateway \
+            sites-available/internal_traefik_proxy \
+            sites-available/vllm_gateway \
+            sites-available/vllm_proxy \
+            scripts \
+            snippets \
+            nginx.conf; then
             log_fatal "Failed to create Nginx config tarball."
         fi
 

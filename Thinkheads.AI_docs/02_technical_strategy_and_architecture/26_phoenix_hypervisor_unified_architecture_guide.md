@@ -42,7 +42,7 @@ The architecture is guided by a set of core principles that ensure a robust, eff
 
 ### 1.3. High-Level System Architecture
 
-The following diagram provides a comprehensive overview of the Phoenix Hypervisor ecosystem, including user interaction, orchestration, configuration management, and the virtualized resources.
+The following diagram provides a comprehensive overview of the Phoenix Hypervisor ecosystem, including the new networking and certificate management layers.
 
 ```mermaid
 graph TD
@@ -59,22 +59,36 @@ graph TD
         G[Networking]
     end
 
-    subgraph "Configuration Files"
-        C1[/etc/phoenix-cli_hypervisor_config.json]
-        C2[/etc/phoenix-cli_lxc_configs.json]
-        C3[/etc/phoenix-cli_vm_configs.json]
-        C4[/etc/phoenix_stacks_config.json]
+    subgraph "Networking Layer"
+        H[LXC 101: Nginx Gateway]
+        I[LXC 102: Traefik Internal Proxy]
+        J[LXC 103: Step-CA]
+    end
+
+    subgraph "Application Layer"
+        K[VM 1001: Portainer]
+        L[VM 1002: Dr-Phoenix]
+        M[Other Services]
     end
 
     A -- Manages --> B
-    B -- Reads --> C1
-    B -- Reads --> C2
-    B -- Reads --> C3
-    B -- Reads --> C4
     B -- Provisions/Manages --> D
     B -- Provisions/Manages --> E
-    B -- Manages --> F
-    B -- Configures --> G
+
+    D -- Includes --> H
+    D -- Includes --> I
+    D -- Includes --> J
+
+    J -- Issues Certificates --> H
+    J -- Issues Certificates --> I
+    J -- Issues Certificates --> K
+    J -- Issues Certificates --> L
+
+    H -- Routes External Traffic --> I
+    I -- Routes Internal Traffic --> K
+    I -- Routes Internal Traffic --> L
+    I -- Routes Internal Traffic --> M
+```
 
 ## 2. Configuration Management
 
@@ -294,49 +308,71 @@ graph TD
 
 ## 5. Networking
 
-A shared network facilitates internal communication between all virtualized resources, while a dedicated API gateway provides a secure and managed entry point for all services.
+The network architecture has been enhanced to a three-tiered model, providing a robust and secure environment for both internal and external services. This new model consists of an Nginx gateway for external traffic, a Traefik proxy for internal service mesh and automatic certificate management, and a dedicated Step-CA container for issuing internal SSL certificates.
 
 ### 5.1. Network Topology
 
-The network is configured with a single bridge (`vmbr0`) that provides connectivity for all LXC containers and VMs. IP addresses, gateways, and DNS settings are all managed declaratively through the `phoenix-cli_hypervisor_config.json` and `phoenix-cli_lxc_configs.json` files.
+The network is configured with a single bridge (`vmbr0`) that provides connectivity for all LXC containers and VMs. IP addresses, gateways, and DNS settings are all managed declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files.
 
 ### 5.2. API Gateway (NGINX)
 
-LXC container `101` functions as a multi-service Nginx reverse proxy and API gateway. This container serves as a secure and efficient entry point for a variety of backend services, aligning with modern microservice architecture principles. The configuration is managed declaratively, with site configurations stored in the project repository and mounted into the container.
+LXC container `101` functions as the primary external-facing Nginx reverse proxy and API gateway. This container serves as a secure and efficient entry point for all external traffic, routing requests to the internal Traefik proxy.
+
+### 5.3. Internal Proxy (Traefik)
+
+LXC container `102` runs Traefik, which acts as an internal service mesh and reverse proxy. Traefik automatically discovers internal services and routes traffic between them. It also integrates with Step-CA to automatically provision and renew SSL certificates for all internal services, ensuring secure communication within the hypervisor.
+
+### 5.4. Certificate Authority (Step-CA)
+
+LXC container `103` hosts a Smallstep Step-CA instance, which serves as the internal certificate authority for the entire Phoenix Hypervisor environment. This allows for the automatic generation of trusted SSL certificates for all internal services, eliminating the need for self-signed certificates and providing a higher level of security.
 
 ```mermaid
 graph TD
-    subgraph "Internet"
+    subgraph "External Network"
         A[Client]
     end
 
-    subgraph "Proxmox Host"
-        subgraph "LXC 101: api-gateway-lxc"
-            B[Nginx Reverse Proxy]
+    subgraph "Phoenix Hypervisor"
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
         end
 
-        subgraph "Backend Services"
-            VM1001["VM 1001: Portainer"]
-            VM1002["VM 1002: Dr-Phoenix"]
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
+
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+            F[VM 1002: Dr-Phoenix]
+            G[Other Services]
         end
     end
 
-    A --> B
-    B --> VM1001
-    B --> VM1002
+    A -- HTTPS --> B
+    B -- Routes Traffic --> C
+    C -- Routes to --> E
+    C -- Routes to --> F
+    C -- Routes to --> G
+    D -- Issues Certificates --> C
+    C -- Provides Certificates --> E
+    C -- Provides Certificates --> F
+    C -- Provides Certificates --> G
 ```
 
-### 5.3. Firewall Management
+### 5.5. Firewall Management
 
-Firewall management is handled declaratively through the `phoenix-cli_hypervisor_config.json` and `phoenix-cli_lxc_configs.json` files. The `phoenix-cli` CLI applies the firewall rules during container provisioning, ensuring a consistent and reproducible security posture.
+Firewall management is handled declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files. The `phoenix-cli` CLI, specifically the `hypervisor_feature_setup_firewall.sh` script, reads the declarative configuration and writes the rules directly to `/etc/pve/firewall/cluster.fw`. This ensures a single, centralized source of truth for all firewall rules.
+
+**Note:** The system exclusively uses `pve-firewall`. All legacy `ufw` commands have been removed to prevent conflicts and ensure a consistent, reproducible security posture.
 
 ## 6. Storage
 
-The Phoenix Hypervisor's storage architecture is built on a declarative model, with ZFS as its foundation. The desired state of all storage resources is defined in `phoenix-cli_hypervisor_config.json`, and a series of idempotent scripts are responsible for implementing this state.
+The Phoenix Hypervisor's storage architecture is built on a declarative model, with ZFS as its foundation. The desired state of all storage resources is defined in `phoenix_hypervisor_config.json`, and a series of idempotent scripts are responsible for implementing this state.
 
-The system utilizes ZFS for its robust and high-performance pools and datasets. These are then exposed to the Proxmox environment and guest machines through direct integration, NFS shares, and Samba (SMB/CIFS) shares, providing a flexible and powerful storage solution.
+The system utilizes ZFS for its robust and high-performance pools and datasets. These are then exposed to the Proxmox environment and guest machines through direct integration, NFS shares, and Samba (SMB/CIFS) shares, providing a flexible and powerful storage solution for both VMs and LXCs. A recent enhancement is the introduction of shared storage for LXC containers, further unifying the storage model across the platform.
 
-For a comprehensive deep dive into the storage architecture, including ZFS, NFS, and Samba configuration, implementation details, and architectural diagrams, please refer to the **[Phoenix Hypervisor Storage Architecture Guide](../03_phoenix-cli_hypervisor_implementation/00_guides/14_storage_architecture_guide.md)**.
+For a comprehensive deep dive into the storage architecture, including ZFS, NFS, Samba, and the new LXC shared storage configuration, please refer to the **[Phoenix Hypervisor Storage Architecture Guide](../03_phoenix_hypervisor_implementation/00_guides/14_storage_architecture_guide.md)**.
 
 ## 7. Security
 
@@ -358,7 +394,17 @@ The **only** supported and recommended approach for running Docker workloads is 
 
 ### 7.3. User and Secret Management
 
-Administrative users are defined declaratively in `phoenix-cli_hypervisor_config.json`. Future evolution of the platform will include the introduction of a centralized and secure method for managing secrets, such as a GPG-encrypted vault, to eliminate hardcoded credentials.
+Administrative users are defined declaratively in `phoenix_hypervisor_config.json`. Future evolution of the platform will include the introduction of a centralized and secure method for managing secrets, such as a GPG-encrypted vault, to eliminate hardcoded credentials.
+
+### 7.4. Certificate Management
+
+The new architecture includes a centralized and automated approach to SSL certificate management.
+
+*   **Internal Certificate Authority**: A dedicated LXC container (103) runs a Smallstep Step-CA instance, which acts as the internal certificate authority for the entire environment.
+*   **Automated Certificate Provisioning**: The Traefik internal proxy (LXC 102) integrates with Step-CA to automatically request, provision, and renew SSL certificates for all internal services.
+*   **Enhanced Security**: This eliminates the need for self-signed certificates and ensures that all internal communication is encrypted and secure.
+
+For more details on the new SSL architecture, please refer to the **[Centralized SSL Certificate Architecture Guide](../03_phoenix_hypervisor_implementation/00_guides/16_centralized_ssl_architecture.md)**.
 
 ## 8. Workloads & Features
 

@@ -13,9 +13,11 @@ tags:
   - "vLLM"
   - "Qdrant"
   - "Nginx"
+  - "Traefik"
+  - "Step-CA"
   - "Ollama"
   - "n8n"
-review_cadence: "Annual"
+  review_cadence: "Annual"
 last_reviewed: "2025-09-29"
 ---
 
@@ -27,28 +29,42 @@ This document provides a single, authoritative, and RAG-optimized overview of al
 
 ## 2. System Architecture
 
-The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway (CTID 101). This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
+The LXC containers operate within a unified network bridge (`vmbr0`) and are part of a three-tiered networking model. This model consists of an Nginx gateway for external traffic, a Traefik proxy for the internal service mesh, and a Step-CA for automated certificate management.
 
 ### High-Level Interaction Diagram
 
 ```mermaid
 graph TD
-    subgraph "External Access"
-        User[User/Client]
+    subgraph "External Network"
+        A[Client]
     end
 
-    subgraph "Network Infrastructure"
-        API_Gateway[LXC 101: NGINX API Gateway]
+    subgraph "Phoenix Hypervisor"
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
+        end
+
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
+
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+            F[VM 1002: Dr-Phoenix]
+            G[Other Services]
+        end
     end
 
-    subgraph "Core Services"
-        VM1001["VM 1001: Portainer"]
-        VM1002["VM 1002: Dr-Phoenix (Docker Stacks)"]
-    end
-
-    User -- HTTPS --> API_Gateway
-    API_Gateway -- Routes to --> VM1001
-    API_Gateway -- Routes to --> VM1002
+    A -- HTTPS --> B
+    B -- Routes Traffic --> C
+    C -- Routes to --> E
+    C -- Routes to --> F
+    C -- Routes to --> G
+    D -- Issues Certificates --> C
+    C -- Provides Certificates --> E
+    C -- Provides Certificates --> F
+    C -- Provides Certificates --> G
 ```
 
 ---
@@ -69,6 +85,44 @@ This section provides a detailed breakdown of each container's purpose, key soft
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.102`
     *   **Data Persistence**: Data is managed by Docker volumes within the stacks.
+
+---
+
+### LXC 101: Nginx Gateway
+
+*   **Purpose**: Acts as the primary external-facing Nginx reverse proxy and API gateway.
+*   **Key Software**: Nginx
+*   **Resource Allocation**:
+    *   **CPU**: 4 cores
+    *   **Memory**: 4096 MB
+    *   **Storage**: 32 GB
+*   **Configuration Details**:
+    *   **IP Address**: `10.0.0.153`
+    *   **Data Persistence**: Logs are stored in a dedicated ZFS volume.
+
+### LXC 102: Traefik Internal Proxy
+
+*   **Purpose**: Acts as an internal service mesh and reverse proxy, with automatic certificate management.
+*   **Key Software**: Traefik
+*   **Resource Allocation**:
+    *   **CPU**: 2 cores
+    *   **Memory**: 2048 MB
+    *   **Storage**: 16 GB
+*   **Configuration Details**:
+    *   **IP Address**: `10.0.0.12`
+    *   **Data Persistence**: Configuration is stored in a dedicated ZFS volume.
+
+### LXC 103: Step-CA
+
+*   **Purpose**: Hosts a Smallstep Step-CA instance, which serves as the internal certificate authority.
+*   **Key Software**: Step-CA
+*   **Resource Allocation**:
+    *   **CPU**: 2 cores
+    *   **Memory**: 1024 MB
+    *   **Storage**: 16 GB
+*   **Configuration Details**:
+    *   **IP Address**: `10.0.0.10`
+    *   **Data Persistence**: SSL certificates and other CA data are stored in a dedicated ZFS volume.
 
 ---
 
