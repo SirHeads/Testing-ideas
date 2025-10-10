@@ -596,6 +596,25 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "443"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "80"
+                    }
+                ]
+            },
             "zfs_volumes": [
                 {
                     "name": "traefik_config",

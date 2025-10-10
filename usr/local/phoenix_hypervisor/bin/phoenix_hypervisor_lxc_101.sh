@@ -20,7 +20,7 @@ generate_nginx_certs() {
     set -x # Enable verbose logging for this function
     echo "Generating Nginx server certificates for internal_traefik_proxy..."
     local NGINX_CERT_DIR="/etc/nginx/ssl" # Certificates will be stored directly in the container's Nginx SSL directory
-    local NGINX_HOSTNAME="internal.thinkheads.ai" # Wildcard domain for internal Traefik proxy
+    local NGINX_HOSTNAME="*.internal.thinkheads.ai" # Wildcard domain for internal Traefik proxy
     local CA_URL="https://ca.internal.thinkheads.ai:9000"
     local CA_FINGERPRINT=""
     local MAX_RETRIES=10
@@ -153,8 +153,6 @@ chown -R www-data:www-data /var/cache/nginx
 
 cp "$TMP_DIR/sites-available/gateway" "$SITES_AVAILABLE_DIR/gateway" || { echo "Config file gateway missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/sites-available/internal_traefik_proxy" "$SITES_AVAILABLE_DIR/internal_traefik_proxy" || { echo "Config file internal_traefik_proxy missing in $TMP_DIR." >&2; exit 1; }
-cp "$TMP_DIR/sites-available/vllm_gateway" "$SITES_AVAILABLE_DIR/vllm_gateway" || { echo "Config file vllm_gateway missing in $TMP_DIR." >&2; exit 1; }
-cp "$TMP_DIR/sites-available/vllm_proxy" "$SITES_AVAILABLE_DIR/vllm_proxy" || { echo "Config file vllm_proxy missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/scripts/http.js" "$SCRIPTS_DIR/http.js" || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/snippets/acme_challenge.conf" "$SNIPPETS_DIR/acme_challenge.conf" || { echo "ACME snippet missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in $TMP_DIR." >&2; exit 1; }
@@ -164,8 +162,6 @@ cp "$TMP_DIR/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf mi
 
 ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
 ln -sf "$SITES_AVAILABLE_DIR/internal_traefik_proxy" "$SITES_ENABLED_DIR/internal_traefik_proxy"
-ln -sf "$SITES_AVAILABLE_DIR/vllm_gateway" "$SITES_ENABLED_DIR/vllm_gateway"
-ln -sf "$SITES_AVAILABLE_DIR/vllm_proxy" "$SITES_ENABLED_DIR/vllm_proxy"
 
 # Remove default site
 rm -f $SITES_ENABLED_DIR/default
@@ -173,6 +169,11 @@ rm -f $SITES_ENABLED_DIR/default
 # Generate Nginx certificates for internal Traefik proxy
 generate_nginx_certs
 
+# --- Trust the Internal CA ---
+echo "Installing Step-CA root certificate into system trust store..."
+cp /etc/nginx/ssl/phoenix_ca.crt /usr/local/share/ca-certificates/phoenix_ca.crt
+update-ca-certificates
+echo "Step-CA root certificate installed."
 
 # Set correct permissions for the private key
 chmod 600 "/etc/nginx/ssl/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }

@@ -88,11 +88,27 @@ bootstrap_step_ca() {
     fi
     log_info "CA entry added to /etc/hosts."
 
+    # Add internal hostnames to /etc/hosts to ensure proper routing
+    log_info "Adding internal hostnames to /etc/hosts..."
+    cat <<EOF >> /etc/hosts
+10.0.0.153 traefik.internal.thinkheads.ai
+10.0.0.153 granite-embedding.internal.thinkheads.ai
+10.0.0.153 granite-3b.internal.thinkheads.ai
+10.0.0.153 ollama.internal.thinkheads.ai
+10.0.0.153 llamacpp.internal.thinkheads.ai
+EOF
+
     # Retrieve CA fingerprint from the mounted root certificate
     local ROOT_CA_CERT_PATH="/etc/traefik/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
     log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
+    local cert_attempt=1
+    while [ ! -f "$ROOT_CA_CERT_PATH" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
+        log_info "Attempt $cert_attempt/$MAX_RETRIES: Root CA certificate not found at $ROOT_CA_CERT_PATH. Retrying in $RETRY_DELAY seconds..."
+        sleep "$RETRY_DELAY"
+        cert_attempt=$((cert_attempt + 1))
+    done
     if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
-        log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH. Cannot retrieve fingerprint."
+        log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH after $MAX_RETRIES attempts. Cannot retrieve fingerprint."
     fi
     log_info "Root CA certificate found. Retrieving fingerprint..."
     CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
@@ -139,7 +155,7 @@ configure_traefik() {
     # Create traefik.yml
     cat <<EOF > /etc/traefik/traefik.yml
 global:
-  checkNewVersion: true
+  checkNewVersion: false
   sendAnonymousUsage: false
 
 log:
@@ -169,15 +185,33 @@ certificatesResolvers:
       httpChallenge:
         entryPoint: web
 EOF
-
-    # Set permissions for acme.json
-    touch /etc/traefik/acme.json
-    chmod 600 /etc/traefik/acme.json
-
-    # Create dynamic configuration for the dashboard
+ 
+     # Force a fresh certificate request by deleting the old acme.json
+     log_info "Removing existing acme.json to force fresh certificate request..."
+     rm -f /etc/traefik/acme.json
+ 
+     # Set permissions for acme.json
+     touch /etc/traefik/acme.json
+     chmod 600 /etc/traefik/acme.json
+ 
+     # Create dynamic configuration for the dashboard
     cat <<'EOF' > /etc/traefik/dynamic/dashboard.yml
 http:
+  middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+
   routers:
+    web-redirect:
+      rule: "HostRegexp(`{host:.+}`)"
+      entryPoints:
+        - web
+      middlewares:
+        - https-redirect
+      service: "noop@internal"
+
     dashboard:
       rule: "Host(`traefik.internal.thinkheads.ai`)"
       service: "api@internal"
@@ -185,6 +219,64 @@ http:
         - websecure
       tls:
         certResolver: myresolver
+EOF
+
+    # Create dynamic configuration for backend services
+    cat <<'EOF' > /etc/traefik/dynamic/dynamic_conf.yml
+http:
+  routers:
+    granite-embedding-router:
+      rule: "Host(`granite-embedding.internal.thinkheads.ai`)"
+      service: "granite-embedding-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    granite-3b-router:
+      rule: "Host(`granite-3b.internal.thinkheads.ai`)"
+      service: "granite-3b-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    ollama-router:
+      rule: "Host(`ollama.internal.thinkheads.ai`)"
+      service: "ollama-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    llamacpp-router:
+      rule: "Host(`llamacpp.internal.thinkheads.ai`)"
+      service: "llamacpp-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+  services:
+    granite-embedding-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.141:8000"
+
+    granite-3b-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.142:8000"
+
+    ollama-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.155:11434"
+
+    llamacpp-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.157:8081"
 EOF
 
     log_info "Traefik configured successfully."
@@ -226,8 +318,8 @@ WantedBy=multi-user.target"
     if ! systemctl enable traefik; then
         log_fatal "Failed to enable traefik service in container $CTID."
     fi
-    if ! systemctl start traefik; then
-        log_fatal "Failed to start traefik service in container $CTID."
+    if ! systemctl restart traefik; then
+        log_fatal "Failed to restart traefik service in container $CTID."
     fi
 
     log_info "Traefik service set up and started successfully."

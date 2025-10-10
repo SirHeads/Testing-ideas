@@ -853,8 +853,6 @@ run_application_script() {
         if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
             sites-available/gateway \
             sites-available/internal_traefik_proxy \
-            sites-available/vllm_gateway \
-            sites-available/vllm_proxy \
             scripts \
             snippets \
             nginx.conf; then
@@ -870,6 +868,20 @@ run_application_script() {
         rm -f "$temp_tarball"
     fi
     # --- END OF MODIFICATIONS FOR NGINX CONFIG PUSH ---
+
+    # --- START OF MODIFICATIONS FOR TRAEFIK CONFIG PUSH ---
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
+        log_info "Traefik script detected. Pushing dynamic configuration..."
+        local traefik_config_path="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
+        if [ -f "$traefik_config_path" ]; then
+            if ! pct push "$CTID" "$traefik_config_path" "${temp_dir_in_container}/dynamic_conf.yml"; then
+                log_fatal "Failed to push Traefik dynamic config to container $CTID."
+            fi
+        else
+            log_warn "Traefik dynamic configuration not found at $traefik_config_path. Skipping."
+        fi
+    fi
+    # --- END OF MODIFICATIONS FOR TRAEFIK CONFIG PUSH ---
 
     # 2. Copy common_utils.sh to the container
     log_info "Copying common utilities to $CTID:$common_utils_dest_path..."

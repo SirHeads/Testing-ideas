@@ -1,0 +1,54 @@
+http:
+  routers:
+    granite-embedding-router:
+      rule: "Host(`granite-embedding.internal.thinkheads.ai`)"
+      service: "granite-embedding-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    granite-3b-router:
+      rule: "Host(`granite-3b.internal.thinkheads.ai`)"
+      service: "granite-3b-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    ollama-router:
+      rule: "Host(`ollama.internal.thinkheads.ai`)"
+      service: "ollama-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+    llamacpp-router:
+      rule: "Host(`llamacpp.internal.thinkheads.ai`)"
+      service: "llamacpp-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+
+  services:
+    granite-embedding-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.141:8000"
+
+    granite-3b-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.142:8000"
+
+    ollama-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.155:11434"
+
+    llamacpp-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.157:8081"

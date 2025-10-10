@@ -86,9 +86,9 @@ NFS and Samba provide network access to the ZFS datasets.
 -   **Configuration:** Defined in the `nfs.exports` array in `phoenix_hypervisor_config.json`. Each object specifies the `path` to export, the `clients` allowed to connect, and the NFS `options`.
 
 -   **Implementation:** The `hypervisor_feature_setup_nfs.sh` script automates the entire setup:
-    1.  **Installation:** Installs `nfs-kernel-server` and `ufw`.
+    1.  **Installation:** Installs `nfs-kernel-server`.
     2.  **Configuration:** It dynamically generates the `/etc/exports` file from the JSON configuration.
-    3.  **Firewall:** It opens the required NFS ports in `ufw` for the specified client subnets.
+    3.  **Firewall:** Firewall rules for NFS are now managed centrally by `hypervisor_feature_setup_firewall.sh`, which uses `pve-firewall`.
     4.  **Service Management:** It restarts and enables the `nfs-kernel-server` service.
     5.  **Proxmox Integration:** It uses `pvesm add nfs` to add the share as a Proxmox storage resource.
 
@@ -100,7 +100,7 @@ NFS and Samba provide network access to the ZFS datasets.
     1.  **Installation:** Installs the `samba` package.
     2.  **User Management:** Creates a Samba user with `smbpasswd`.
     3.  **Configuration:** It dynamically generates the `/etc/samba/smb.conf` file.
-    4.  **Firewall:** It opens the necessary Samba ports in `ufw`.
+    4.  **Firewall:** Firewall rules for Samba are now managed centrally by `hypervisor_feature_setup_firewall.sh`, which uses `pve-firewall`.
     5.  **Service Management:** It restarts the `smbd` and `nmbd` services.
 
 ---

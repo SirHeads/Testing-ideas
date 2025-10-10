@@ -1,25 +1,9 @@
-# Main API gateway server block for all services.
+# Redirect all HTTP traffic to HTTPS
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
 
     server_name _;
 
-    location / {
-        return 404; # Default action is to return not found
-    }
-
-    # ACME Challenge for Traefik
-    include snippets/acme_challenge.conf;
-}
-
-
-# vLLM Gateway
-server {
-    listen 8000;
-    server_name vllm.phoenix.local;
-
-    location / {
-        # This will be dynamically populated by the vllm setup script
-    }
+    return 301 https://$host$request_uri;
 }
