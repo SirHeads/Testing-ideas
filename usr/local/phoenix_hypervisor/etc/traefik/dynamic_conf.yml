@@ -32,8 +32,20 @@ http:
       tls:
         certResolver: myresolver
 
-  services:
-    granite-embedding-service:
+   portainer-router:
+     rule: "Host(`portainer.phoenix.local`)"
+     service: "portainer-service"
+     entryPoints:
+       - websecure
+     tls:
+       certResolver: myresolver
+
+ services:
+   portainer-service:
+     loadBalancer:
+       servers:
+         - url: "https://10.0.0.101:9443"
+   granite-embedding-service:
       loadBalancer:
         servers:
           - url: "http://10.0.0.141:8000"

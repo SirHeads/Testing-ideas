@@ -1,68 +1,60 @@
 #!/bin/bash
 #
 # File: check_portainer_api.sh
-# Description: Robust health check script to verify Portainer API responsiveness.
-#              It polls the /api/status endpoint and returns 0 on success, 1 on failure.
-#              Includes enhanced logging and error handling.
+# Description: This script performs a health check on the Portainer API to ensure it is responsive.
 #
-# Arguments:
-#   $1 - Portainer Hostname (e.g., portainer.phoenix.local)
-#   $2 - Portainer HTTPS port (e.g., 9443)
-#   $3 - Path to the CA certificate file (e.g., /persistent-storage/ssl/portainer.phoenix.local.crt)
+# Inputs:
+#   None. It reads all necessary configuration from the central phoenix_hypervisor_config.json.
 #
-# Returns:
-#   0 if Portainer API is responsive, 1 otherwise.
+# Version: 1.1.0
+# Author: Phoenix Hypervisor Team
 #
- 
-set -euo pipefail # Exit immediately if a command exits with a non-zero status, exit if an unset variable is used, and propagate errors through pipes.
- 
-# Source common utilities
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
-PHOENIX_BASE_DIR="/usr/local/phoenix_hypervisor" # Fixed base directory for hypervisor scripts
+
+# --- Determine script's absolute directory ---
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
+
+# --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
- 
-# --- Argument Parsing and Validation ---
-PORTAINER_HOSTNAME="${1:-}"
-PORTAINER_PORT="${2:-}"
-CA_CERT_PATH="${3:-}"
- 
-if [[ -z "$PORTAINER_HOSTNAME" || -z "$PORTAINER_PORT" || -z "$CA_CERT_PATH" ]]; then
-    log_error "Usage: $0 <portainer_hostname> <portainer_port> <ca_cert_path>"
-    return 1
+
+# --- Script Variables ---
+HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
+PORT=$(get_global_config_value '.network.portainer_server_port')
+CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+MAX_RETRIES=12
+RETRY_DELAY=10
+
+# --- Main Health Check Logic ---
+log_info "Performing health check on Portainer API at https://${HOSTNAME}:${PORT}..."
+
+# Wait for the CA certificate to exist
+log_info "Waiting for CA certificate to become available at ${CA_CERT_PATH}..."
+for ((i=1; i<=MAX_RETRIES; i++)); do
+    if [ -f "$CA_CERT_PATH" ]; then
+        log_info "CA certificate found."
+        break
+    fi
+    log_warn "Attempt ${i}/${MAX_RETRIES}: CA certificate not found. Retrying in ${RETRY_DELAY} seconds..."
+    sleep "$RETRY_DELAY"
+done
+
+if [ ! -f "$CA_CERT_PATH" ]; then
+    log_fatal "CA certificate not found at ${CA_CERT_PATH} after ${MAX_RETRIES} attempts."
 fi
- 
-PORTAINER_URL="https://${PORTAINER_HOSTNAME}:${PORTAINER_PORT}/api/status"
-MAX_ATTEMPTS=60 # Increased attempts for robustness
-INTERVAL=5      # Reduced interval for faster checks
-ATTEMPTS=0
- 
-log_info "Starting Portainer API health check."
-log_info "Target URL: ${PORTAINER_URL}"
-log_info "CA Certificate Path: ${CA_CERT_PATH}"
-log_info "Max attempts: ${MAX_ATTEMPTS}, Interval: ${INTERVAL} seconds."
- 
-# --- Pre-check: Ensure certificate file exists ---
-if [[ ! -f "$CA_CERT_PATH" ]]; then
-    log_error "CA certificate file not found at: ${CA_CERT_PATH}. Please ensure it exists and is accessible."
-    return 1
-fi
- 
-# --- Health Check Loop ---
-while [[ "$ATTEMPTS" -lt "$MAX_ATTEMPTS" ]]; do
-    ATTEMPTS=$((ATTEMPTS + 1))
-    log_info "Attempt ${ATTEMPTS}/${MAX_ATTEMPTS}: Checking Portainer API responsiveness..."
- 
-    # Use curl with increased verbosity for debugging, but suppress actual output unless it fails
-    # --insecure is removed as we expect the certificate to be valid now
-    if curl --silent --fail --show-error --cacert "$CA_CERT_PATH" "$PORTAINER_URL" > /dev/null; then
-        log_success "Portainer API is responsive after ${ATTEMPTS} attempts."
+
+for ((i=1; i<=MAX_RETRIES; i++)); do
+    log_info "Attempt ${i}/${MAX_RETRIES}: Checking Portainer API status..."
+    response=$(curl -s --cacert "$CA_CERT_PATH" "https://${HOSTNAME}:${PORT}/api/status" 2>&1)
+    exit_code=$?
+
+    if [ $exit_code -eq 0 ] && echo "$response" | jq -e '.Version' > /dev/null; then
+        log_success "Portainer API is responsive (found version field)."
         exit 0
     else
-        curl_exit_code=$?
-        log_warn "Portainer API not yet responsive (curl exit code: ${curl_exit_code}). Retrying in ${INTERVAL} seconds..."
-        sleep "$INTERVAL"
+        log_warn "Portainer API is not yet responsive. Curl exit code: $exit_code, Response: $response"
+        log_warn "Retrying in ${RETRY_DELAY} seconds..."
+        sleep "$RETRY_DELAY"
     fi
 done
- 
-log_error "Portainer API did not become responsive after ${MAX_ATTEMPTS} attempts. Health check failed."
-return 1
+
+log_fatal "Portainer API health check failed after ${MAX_RETRIES} attempts."

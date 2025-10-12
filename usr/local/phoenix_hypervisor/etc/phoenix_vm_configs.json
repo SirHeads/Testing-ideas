@@ -38,7 +38,8 @@
             "portainer_role": "primary",
             "network_config": {
                 "ip": "10.0.0.101/24",
-                "gw": "10.0.0.1"
+                "gw": "10.0.0.1",
+                "nameserver": "10.0.0.153"
             },
             "user_config": {
                 "username": "phoenix_user"
@@ -55,7 +56,7 @@
         },
         {
             "vmid": 1002,
-            "name": "drphoenix",
+            "name": "phoenix-agent",
             "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 4096,
@@ -70,7 +71,8 @@
             "portainer_role": "agent",
             "network_config": {
                 "ip": "10.0.0.102/24",
-                "gw": "10.0.0.1"
+                "gw": "10.0.0.1",
+                "nameserver": "10.0.0.153"
             },
             "user_config": {
                 "username": "phoenix_user"

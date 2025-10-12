@@ -1,15 +1,5 @@
-// /etc/nginx/scripts/http.js
-
-function get_model(r) {
-    try {
-        if (r.requestBuffer) {
-            const body = JSON.parse(r.requestBuffer);
-            return body.model || '';
-        }
-    } catch (e) {
-        r.error(`Error parsing JSON: ${e}`);
-    }
-    return '';
+function http(r) {
+    r.return(200, "Hello from NJS");
 }
 
-export default { get_model };
+export default { http };

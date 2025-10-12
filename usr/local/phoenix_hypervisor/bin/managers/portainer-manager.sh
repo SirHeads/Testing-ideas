@@ -26,10 +26,6 @@ source "${PHOENIX_BASE_DIR}/bin/managers/vm-manager.sh" # Source vm-manager.sh f
 # Rely on HYPERVISOR_CONFIG_FILE exported from phoenix_hypervisor_common_utils.sh
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
 STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
-SSL_DIR="${PHOENIX_BASE_DIR}/persistent-storage/ssl" # Define SSL_DIR here
-PORTAINER_SERVER_HOSTNAME="portainer.internal.thinkheads.ai" # Define hostname for server, now managed by Traefik
-PORTAINER_AGENT_HOSTNAME="drphoenix.internal.thinkheads.ai" # Define hostname for agent, now managed by Traefik
-
 # =====================================================================================
 # Function: get_portainer_jwt
 # Description: Authenticates with the Portainer API and retrieves a JWT.
@@ -39,12 +35,12 @@ PORTAINER_AGENT_HOSTNAME="drphoenix.internal.thinkheads.ai" # Define hostname fo
 # =====================================================================================
 get_portainer_jwt() {
     log_info "Attempting to authenticate with Portainer API..."
-    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai" # Use Traefik-managed hostname
-    local PORTAINER_PORT="443" # Traefik listens on 443
+    local PORTAINER_HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
+    local PORTAINER_PORT=$(get_global_config_value '.network.portainer_server_port')
     local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:${PORTAINER_PORT}"
     local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
     local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
-    local CA_CERT_PATH="/etc/ssl/certs/step-ca.pem" # Path to the Step CA root certificate in the hypervisor
+    local CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
 
     log_debug "HYPERVISOR_CONFIG_FILE: ${HYPERVISOR_CONFIG_FILE}"
     log_debug "Raw admin_user from config: $(jq -r '.portainer_api.admin_user' "$HYPERVISOR_CONFIG_FILE")"
@@ -150,7 +146,7 @@ deploy_portainer_instances() {
 
                 # Build the custom Portainer image inside VM 1001
                 log_info "Building custom Portainer image 'portainer-ce-custom:latest' inside VM $VMID..."
-                if ! qm guest exec "$VMID" -- /bin/bash -c "cd ${vm_mount_point}/portainer && docker build -t portainer-ce-custom:latest ."; then
+                if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "cd ${vm_mount_point}/portainer && docker build -t portainer-ce-custom:latest ."; then
                     log_fatal "Failed to build custom Portainer image inside VM $VMID."
                 fi
                 log_success "Custom Portainer image 'portainer-ce-custom:latest' built successfully inside VM $VMID."
@@ -162,6 +158,30 @@ deploy_portainer_instances() {
                     log_fatal "docker-compose.yml not found or is empty at ${compose_file_on_hypervisor}. Cannot update with custom image."
                 fi
                 yq -i -y '.services.portainer.image = "portainer-ce-custom:latest"' "$compose_file_on_hypervisor" || log_fatal "Failed to update docker-compose.yml with custom image using yq."
+
+                # --- BEGIN CERTIFICATE GENERATION ---
+                local cert_dir="${hypervisor_portainer_dir}/certs"
+                mkdir -p "$cert_dir"
+                local cert_path="${cert_dir}/cert.pem"
+                local key_path="${cert_dir}/key.pem"
+                local ca_path="${cert_dir}/ca.pem"
+
+                log_info "Generating Portainer certificate..."
+                local temp_cert_path="/tmp/portainer.phoenix.local.crt"
+                local temp_key_path="/tmp/portainer.phoenix.local.key"
+                pct exec 103 -- step ca certificate portainer.phoenix.local "$temp_cert_path" "$temp_key_path" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/ca_password.txt --force
+                pct pull 103 "$temp_cert_path" "$cert_path"
+                pct pull 103 "$temp_key_path" "$key_path"
+
+                # Copy the CA certificate to the certs directory, renaming it to ca.pem
+                log_info "Copying CA certificate to certs directory as ca.pem..."
+                local source_ca_path="${hypervisor_portainer_dir}/phoenix_ca.crt"
+                if [ -f "$source_ca_path" ]; then
+                    cp "$source_ca_path" "$ca_path" || log_fatal "Failed to copy CA certificate to ${ca_path}."
+                else
+                    log_fatal "Source CA certificate not found at ${source_ca_path}. Cannot proceed."
+                fi
+                # --- END CERTIFICATE GENERATION ---
 
                 # Ensure the compose file and config.json are present on the VM's persistent storage
                 if ! qm guest exec "$VMID" -- /bin/bash -c "test -f $compose_file_path"; then
@@ -176,6 +196,8 @@ deploy_portainer_instances() {
                 qm guest exec "$VMID" -- /bin/bash -c "docker volume inspect portainer_portainer_data > /dev/null 2>&1" && log_debug "Portainer volume 'portainer_portainer_data' exists before down." || log_debug "Portainer volume 'portainer_portainer_data' does NOT exist before down."
                 
                 qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly on VM $VMID. Proceeding with deployment."
+                log_info "Removing Portainer data volume to ensure a clean state..."
+                qm guest exec "$VMID" -- /bin/bash -c "docker volume rm portainer_portainer_data || true"
                 
                 # Explicitly remove the portainer_data volume to ensure a clean state for re-initialization
                 log_info "Removing Portainer data volume 'portainer_portainer_data' on VM $VMID to force re-initialization."
@@ -184,58 +206,29 @@ deploy_portainer_instances() {
                 # Check if portainer_data volume exists after docker compose down
                 qm guest exec "$VMID" -- /bin/bash -c "docker volume inspect portainer_portainer_data > /dev/null 2>&1" && log_debug "Portainer volume 'portainer_portainer_data' exists AFTER down." || log_debug "Portainer volume 'portainer_portainer_data' does NOT exist AFTER down."
 
-                # Certificates are now handled by Traefik and Step CA.
-                # The Portainer container will fetch its own certificates via Traefik.
-                log_info "Skipping direct SSL certificate transfer for Portainer server on VM $VMID."
-
-                # Debugging: Inspect the certificates inside the VM
-                log_info "DEBUG: Inspecting cert.pem in VM $VMID:"
-                qm guest exec "$VMID" -- /bin/bash -c "openssl x509 -text -noout -in ${vm_local_ssl_dir}/cert.pem"
-                log_info "DEBUG: Inspecting ca.pem in VM $VMID:"
-                qm guest exec "$VMID" -- /bin/bash -c "openssl x509 -text -noout -in ${vm_local_ssl_dir}/ca.pem"
+                # --- BEGIN DOCKER COMPOSE MODIFICATION ---
+                log_info "Updating docker-compose.yml to mount certificates..."
+                yq -i -y '.services.portainer.volumes += ["./certs:/certs"]' "$compose_file_on_hypervisor"
+                # --- END DOCKER COMPOSE MODIFICATION ---
 
                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
                 if ! qm guest exec "$VMID" -- /bin/bash -c "docker compose -f ${compose_file_path} up -d"; then
                     log_fatal "Failed to deploy Portainer server on VM $VMID."
                 fi
                 log_info "Portainer server deployment initiated on VM $VMID."
+                log_info "Waiting 30 seconds for Portainer to initialize..."
+                sleep 30
                 ;;
             agent)
                 log_info "Deploying Portainer agent on VM $VMID..."
-                log_info "Deploying Portainer agent on VM $VMID using docker run..."
                 local agent_port=$(get_global_config_value '.network.portainer_agent_port')
-                local agent_ip=$(jq -r ".vms[] | select(.vmid == $VMID) | .network_config.ip" "$VM_CONFIG_FILE" | cut -d'/' -f1)
-                local server_ip=$(get_global_config_value '.network.portainer_server_ip') # This is the IP of VM 1001
-
-                # The agent will now trust the Step CA directly.
-                # We need to copy the Step CA root certificate into the agent VM.
-                local vm_local_ca_dir="/usr/local/share/ca-certificates"
-                local vm_local_ca_path="${vm_local_ca_dir}/step-ca.crt"
-                local hypervisor_ca_path="/etc/ssl/certs/step-ca.pem" # Path to the Step CA root cert on the hypervisor
-
-                log_info "Copying Step CA root certificate to agent VM $VMID..."
-                if ! qm guest exec "$VMID" -- /bin/mkdir -p "$vm_local_ca_dir"; then
-                    log_fatal "Failed to create CA certificate directory in agent VM $VMID."
-                fi
-                if ! qm guest push "$VMID" "$hypervisor_ca_path" "$vm_local_ca_path"; then
-                    log_fatal "Failed to copy Step CA root certificate to agent VM $VMID."
-                fi
-                if ! qm guest exec "$VMID" -- /usr/sbin/update-ca-certificates; then
-                    log_fatal "Failed to update CA certificates in agent VM $VMID."
-                fi
-                log_success "Step CA root certificate copied and trusted in agent VM $VMID."
 
                 log_info "Ensuring clean restart for Portainer agent on VM $VMID..."
                 qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly on VM $VMID. Proceeding with deployment."
 
-                # The agent will connect to the Portainer server via its Traefik-managed internal hostname.
-                # The Portainer server will present a certificate issued by Step CA, which the agent will trust.
-                local docker_command="docker run -d -p ${agent_port}:${agent_port} --name portainer_agent --restart always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes portainer/agent:latest --tlsverify --tlscacert=${vm_local_ca_path} --tlscert=/certs/agent.crt --tlskey=/certs/agent.key"
-
-                # We need to generate agent-specific certificates from Step CA and mount them.
-                # This will be handled by a new function.
-                log_info "Generating and mounting agent certificates for VM $VMID..."
-                generate_and_mount_agent_certs "$VMID" "$vm_mount_point" "$vm_local_ca_dir" "$vm_local_ca_path"
+                # The Docker daemon in the VM is already configured to trust the Step-CA.
+                # Therefore, the agent can be deployed without needing to mount certificates directly.
+                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes portainer/agent:latest"
 
                 if ! qm guest exec "$VMID" -- /bin/bash -c "$docker_command"; then
                     log_fatal "Failed to deploy Portainer agent on VM $VMID."
@@ -248,61 +241,6 @@ deploy_portainer_instances() {
         esac
     done
     log_success "Portainer server and agent instances deployment process completed."
-}
-
-# =====================================================================================
-# Function: generate_and_mount_agent_certs
-# Description: Generates client certificates for the Portainer agent from Step CA
-#              and mounts them into the agent VM.
-# Arguments:
-#   $1 - The VMID of the agent VM.
-#   $2 - The NFS mount point in the VM (e.g., /persistent-storage).
-#   $3 - The local CA directory in the VM (e.g., /usr/local/share/ca-certificates).
-#   $4 - The local CA certificate path in the VM (e.g., /usr/local/share/ca-certificates/step-ca.crt).
-# Returns:
-#   None. Exits with a fatal error if certificate generation or mounting fails.
-# =====================================================================================
-generate_and_mount_agent_certs() {
-    local VMID="$1"
-    local VM_MOUNT_POINT="$2"
-    local VM_LOCAL_CA_DIR="$3"
-    local VM_LOCAL_CA_PATH="$4"
-
-    local AGENT_HOSTNAME="drphoenix.internal.thinkheads.ai" # Use Traefik-managed hostname
-    local AGENT_CERT_PATH="${VM_MOUNT_POINT}/portainer/agent.crt"
-    local AGENT_KEY_PATH="${VM_MOUNT_POINT}/portainer/agent.key"
-
-    log_info "Generating client certificates for Portainer agent on VM $VMID from Step CA..."
-
-    # Ensure the directory for agent certs exists on the hypervisor's NFS share
-    local hypervisor_agent_certs_dir="${PHOENIX_BASE_DIR}/persistent-storage/portainer/agent_certs/${VMID}"
-    mkdir -p "$hypervisor_agent_certs_dir" || log_fatal "Failed to create hypervisor agent certs directory: $hypervisor_agent_certs_dir"
-
-    # Generate the agent certificate and key using step-cli on the hypervisor
-    # We need to ensure the step-cli is installed on the hypervisor for this.
-    # For now, we'll assume it is, or add a check/install step if needed.
-    log_info "Requesting agent certificate for ${AGENT_HOSTNAME} from Step CA..."
-    if ! step ca certificate "${AGENT_HOSTNAME}" "${hypervisor_agent_certs_dir}/agent.crt" "${hypervisor_agent_certs_dir}/agent.key" \
-        --ca-url "https://ca.internal.thinkheads.ai" --root "/etc/ssl/certs/step-ca.pem"; then
-        log_fatal "Failed to generate agent certificate for VM $VMID."
-    fi
-    log_success "Agent certificate generated successfully for VM $VMID."
-
-    # Copy the generated certs to the VM's persistent storage
-    log_info "Copying agent certificates to VM $VMID's persistent storage..."
-    if ! qm guest exec "$VMID" -- /bin/mkdir -p "$(dirname "$AGENT_CERT_PATH")"; then
-        log_fatal "Failed to create agent cert directory in VM $VMID."
-    fi
-    if ! qm guest push "$VMID" "${hypervisor_agent_certs_dir}/agent.crt" "$AGENT_CERT_PATH"; then
-        log_fatal "Failed to copy agent.crt to VM $VMID."
-    fi
-    if ! qm guest push "$VMID" "${hypervisor_agent_certs_dir}/agent.key" "$AGENT_KEY_PATH"; then
-        log_fatal "Failed to copy agent.key to VM $VMID."
-    fi
-    log_success "Agent certificates copied to VM $VMID's persistent storage."
-
-    # Ensure the certs directory is mounted into the Docker container
-    # This is handled by the docker run command in deploy_portainer_instances
 }
 
 # =====================================================================================
@@ -365,23 +303,22 @@ sync_all() {
     deploy_portainer_instances
 
     # 2. Wait for Portainer API to be responsive
-    local portainer_hostname="portainer.phoenix.local"
-    local portainer_server_port=$(get_global_config_value '.network.portainer_server_port')
-    local cert_path="${PHOENIX_BASE_DIR}/persistent-storage/ssl/portainer.phoenix.local.crt"
-
-    set +e # Temporarily disable exit on error
-    if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh" "$portainer_hostname" "$portainer_server_port" "$cert_path"; then
-        log_error "Portainer API health check failed. Proceeding with caution, but this may indicate a problem."
+    if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh"; then
+        log_fatal "Portainer API health check failed. The service is not available. Aborting synchronization."
     fi
-    set -e # Re-enable exit on error
     log_info "Portainer API is responsive."
 
     # 2.5. Setup Portainer Admin User if not already configured
+    local portainer_hostname=$(get_global_config_value '.portainer_api.portainer_hostname')
+    local portainer_server_port=$(get_global_config_value '.network.portainer_server_port')
     local PORTAINER_URL="https://${portainer_hostname}:${portainer_server_port}"
-    setup_portainer_admin_user "$PORTAINER_URL" "$cert_path"
+    local ca_cert_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+    setup_portainer_admin_user "$PORTAINER_URL" "$ca_cert_path"
 
     local JWT=$(get_portainer_jwt)
-    local CA_CERT_PATH="${PHOENIX_BASE_DIR}/persistent-storage/ssl/portainer.phoenix.local.crt"
+    local CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+    local SSL_DIR="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
+    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
 
     # 3. Process each agent VM to create/update environments (endpoints)
     local agent_vms_json
@@ -450,36 +387,72 @@ sync_all() {
         # Now, attempt to create the environment
         log_info "Creating environment for ${AGENT_NAME} (Portainer name: ${PORTAINER_ENVIRONMENT_NAME})..."
         
-        # Temporarily simplify ENDPOINT_URL to use IP address for debugging
-        local AGENT_IP=$(echo "$agent_vm" | jq -r '.network_config.ip' | cut -d'/' -f1)
-        local DEBUG_ENDPOINT_URL="tcp://${AGENT_IP}:${AGENT_PORT}"
-        log_warn "DEBUG: Using simplified ENDPOINT_URL for environment creation: ${DEBUG_ENDPOINT_URL}"
-
-        # Define paths for the agent's specific certificates
-        # Define paths for the Portainer server's certificates (client certificates for mTLS with agent)
-        local server_client_cert_path="${PORTAINER_SERVER_CRT}"
-        local server_client_key_path="${PORTAINER_SERVER_KEY}"
-
-        log_info "Using Portainer server's client certificate for API payload: ${server_client_cert_path}"
-        log_debug "Portainer server's client Key Path: ${server_client_key_path}"
-
-        if [ ! -f "$server_client_cert_path" ] || [ ! -f "$server_client_key_path" ]; then
-            log_fatal "Portainer server's client certificate or key not found at expected paths. Cannot proceed."
+        # Use the agent's name to construct the FQDN for the endpoint URL.
+        local domain_name=$(get_global_config_value '.network.domain_name')
+        if [ -z "$domain_name" ] || [ "$domain_name" == "null" ]; then
+            log_warn "Domain name not found in config, defaulting to 'phoenix.local'."
+            domain_name="phoenix.local"
         fi
+        local ENDPOINT_URL="tcp://${AGENT_NAME}.agent.${domain_name}:${AGENT_PORT}"
+        log_info "Using endpoint URL: ${ENDPOINT_URL}"
+
+        # --- BEGIN mTLS Certificate Generation ---
+        local client_cert_path="${SSL_DIR}/portainer-server-client.crt"
+        local client_key_path="${SSL_DIR}/portainer-server-client.key"
+        log_info "Generating client certificate for Portainer server inside LXC 103..."
+        
+        # Define paths as they will be seen *inside* the container
+        local container_cert_path="/tmp/portainer-server-client.crt"
+        local container_key_path="/tmp/portainer-server-client.key"
+        local container_password_path="/etc/step-ca/ssl/ca_password.txt"
+
+        # Command to be executed inside LXC 103 - simplified to essentials
+        local agent_fqdn="${AGENT_NAME}.agent.${domain_name}"
+        log_info "Generating client certificate for agent FQDN: ${agent_fqdn}"
+        local step_command="step ca certificate \"${agent_fqdn}\" \"${container_cert_path}\" \"${container_key_path}\" --provisioner admin@thinkheads.ai --password-file \"${container_password_path}\" --force"
+
+        # Execute the command inside the container
+        if ! pct exec 103 -- /bin/bash -c "$step_command"; then
+            log_fatal "Failed to generate client certificate inside LXC 103."
+        fi
+
+        # Extract only the client certificate from the bundled file
+        log_info "Extracting client certificate from bundled file..."
+        local unbundled_cert_path="/tmp/portainer-server-client.unbundled.crt"
+        local extract_command="awk 'BEGIN {p=1} /-----BEGIN CERTIFICATE-----/ {if(p==0) exit; p=0} {print}' ${container_cert_path} > ${unbundled_cert_path}"
+        if ! pct exec 103 -- /bin/bash -c "$extract_command"; then
+            log_fatal "Failed to extract client certificate in LXC 103."
+        fi
+
+        # Pull the generated files from the container to the host
+        log_info "Pulling generated certificate and key from LXC 103..."
+        if ! pct pull 103 "$unbundled_cert_path" "$client_cert_path"; then
+            log_fatal "Failed to pull certificate from LXC 103."
+        fi
+        if ! pct pull 103 "$container_key_path" "$client_key_path"; then
+            log_fatal "Failed to pull key from LXC 103."
+        fi
+
+        # Clean up the temporary files inside the container
+        pct exec 103 -- rm -f "$container_cert_path" "$container_key_path" "$unbundled_cert_path"
+        # --- END mTLS Certificate Generation ---
 
         local temp_payload_file=$(mktemp)
         jq -n \
             --arg name "${PORTAINER_ENVIRONMENT_NAME}" \
-            --arg url "${DEBUG_ENDPOINT_URL}" \
-            --arg cacert "$(cat "${SSL_DIR}/phoenix_ca.crt")" \
+            --arg url "${ENDPOINT_URL}" \
+            --rawfile cacert "${SSL_DIR}/phoenix_ca.crt" \
+            --rawfile clientcert "$client_cert_path" \
+            --rawfile clientkey "$client_key_path" \
             '{
-                Name: $name,
-                EndpointType: 2,
-                URL: $url,
-                TLSSkipVerify: false,
-                TLSConfig: {
-                    TLSCACert: $cacert
-                }
+                "Name": $name,
+                "Type": 3,
+                "URL": $url,
+                "TLS": true,
+                "TLSSkipVerify": false,
+                "TLSCACert": $cacert,
+                "TLSCert": $clientcert,
+                "TLSKey": $clientkey
             }' > "$temp_payload_file"
 
         log_debug "Portainer environment creation payload (from file): $(cat "$temp_payload_file")"

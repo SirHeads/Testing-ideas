@@ -158,6 +158,8 @@ guest_exists() {
 #   A space-separated string of IDs in the correct execution order.
 # -----------------------------------------------------------------------------
 resolve_dependencies() {
+    log_info "--- Starting Dependency Resolution ---"
+    log_info "Initial targets: $@"
     local targets=("$@")
     local lxc_config_file
     lxc_config_file=$(get_global_config_value ".core_paths.lxc_config_file")
@@ -195,9 +197,16 @@ resolve_dependencies() {
         # Add other VM dependency types here if they are introduced in the future.
     done
 
+    # --- Log the constructed graph ---
+    log_info "Constructed Dependency Graph:"
+    for key in "${!graph[@]}"; do
+        log_info "  ${key} -> ${graph[$key]}"
+    done
+
     # --- TOPOLOGICAL SORT (DFS) ---
     topological_sort_visit() {
         local node="$1"
+        log_info "  Visiting node: $node"
         visited["$node"]=true
         recursion_stack["$node"]=true
 
@@ -213,6 +222,7 @@ resolve_dependencies() {
 
         recursion_stack["$node"]=false
         sorted_list="$sorted_list $node"
+        log_info "  Finished node: $node. Current sorted list: $sorted_list"
     }
 
     # Visit each node in the initial target list.
@@ -237,6 +247,7 @@ resolve_dependencies() {
     done
 
     echo "$final_list"
+    log_info "--- Finished Dependency Resolution ---"
 }
 
 # -----------------------------------------------------------------------------

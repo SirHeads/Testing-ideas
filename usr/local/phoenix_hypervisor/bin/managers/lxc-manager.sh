@@ -46,37 +46,31 @@ local ca_password_file_on_host=""
 manage_ca_password_on_hypervisor() {
     local CTID="$1"
     log_info "Managing CA password for CTID $CTID on hypervisor..."
-    
-    # Define a temporary file path on the hypervisor
-    ca_password_file_on_host="/tmp/ca_password_${CTID}.txt"
 
-    log_debug "Attempting to manage CA password on hypervisor for CTID $CTID."
-    log_debug "Temporary CA password file on host: $ca_password_file_on_host"
-
-    # Check if the password file already exists in the *final* persistent location
-    # This check is now for idempotency across runs, not for initial creation.
     local final_ca_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
     local final_ca_password_file="${final_ca_password_dir}/ca_password.txt"
+    ca_password_file_on_host="$final_ca_password_file" # Set global variable to the final path
+
+    log_debug "Final CA password file path: $final_ca_password_file"
+
+    # Ensure the destination directory exists on the hypervisor
+    mkdir -p "$final_ca_password_dir" || log_fatal "Failed to create destination directory for CA password: $final_ca_password_dir."
 
     if [ -f "$final_ca_password_file" ]; then
-        log_info "CA password file already exists at $final_ca_password_file. Using existing password."
-        # Copy existing password to temporary file for pushing to container
-        cp "$final_ca_password_file" "$ca_password_file_on_host" || log_fatal "Failed to copy existing CA password to temporary file."
-        chmod 644 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file."
-        log_debug "Copied existing password to temporary file: $ca_password_file_on_host"
+        log_info "CA password file already exists at $final_ca_password_file. No action needed."
     else
-        log_info "CA password file not found at $final_ca_password_file. Generating a new password..."
-        # Generate a strong, random password directly to the temporary file
-        local new_password=$(openssl rand -base64 32)
-        echo "$new_password" > "$ca_password_file_on_host" || log_fatal "Failed to write new CA password to $ca_password_file_on_host."
-        log_debug "Generated and wrote new password to $ca_password_file_on_host."
+        log_info "CA password file not found. Generating a new password..."
+        local new_password
+        new_password=$(openssl rand -base64 32)
+        echo "$new_password" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
+        log_debug "Generated and wrote new password to $final_ca_password_file."
 
-        # Set permissions for the temporary file
-        chmod 644 "$ca_password_file_on_host" || log_fatal "Failed to set permissions for temporary CA password file on hypervisor."
-        log_debug "Set permissions of $ca_password_file_on_host to 644."
-        log_success "New CA password generated and stored temporarily at $ca_password_file_on_host."
+        # Set permissions for the final file
+        chmod 644 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
+        log_debug "Set permissions of $final_ca_password_file to 644."
+        log_success "New CA password generated and stored at $final_ca_password_file."
     fi
-    echo "$ca_password_file_on_host" # Return the path to the temporary file
+    echo "$final_ca_password_file" # Return the path to the final file
 }
 
 # =====================================================================================
@@ -852,7 +846,6 @@ run_application_script() {
         log_info "Creating tarball of Nginx configs at ${temp_tarball}"
         if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
             sites-available/gateway \
-            sites-available/internal_traefik_proxy \
             scripts \
             snippets \
             nginx.conf; then
@@ -1242,45 +1235,25 @@ main_lxc_orchestrator() {
                 # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
                 if [ "$ctid" -eq 103 ]; then
                     log_info "Handling CA password file for Step CA container (CTID 103)..."
-                    local temp_ca_password_file_on_host
-                    temp_ca_password_file_on_host=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the temporary file
+                    log_info "Handling CA password file for Step CA container (CTID 103)..."
+                    local final_ca_password_file
+                    final_ca_password_file=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the final file
 
                     local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
-                    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
-                    local ca_output_dir="${lxc_persistent_data_base_path}/${ctid}/ssl"
 
-                    # Ensure the destination directory exists on the hypervisor
-                    mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
-
-                    # Copy the password file from the temporary location on the host to the persistent shared location
-                    log_info "Copying CA password file to persistent shared storage on host..."
-                    local final_ca_password_file="${ca_output_dir}/ca_password.txt"
-                    if ! cp "$temp_ca_password_file_on_host" "$final_ca_password_file"; then
-                        log_fatal "Failed to copy CA password file to persistent storage on host."
-                    fi
-                    # Ensure the final file has the correct permissions
-                    if ! chmod 644 "$final_ca_password_file"; then
-                        log_fatal "Failed to set permissions for final CA password file on host."
-                    fi
-                    log_success "CA password file copied to persistent storage with correct permissions."
-
-                    # Copy the password file from the temporary location on the host to the container
-                    log_info "Pushing CA password file from host temp '$temp_ca_password_file_on_host' to container '$ctid:$container_ca_password_path'..."
-                    if ! pct push "$ctid" "$temp_ca_password_file_on_host" "$container_ca_password_path"; then
+                    # Push the password file from the definitive source on the host to the container
+                    log_info "Pushing CA password file from host '$final_ca_password_file' to container '$ctid:$container_ca_password_path'..."
+                    if ! pct push "$ctid" "$final_ca_password_file" "$container_ca_password_path"; then
                         log_fatal "Failed to push CA password file to container $ctid."
                     fi
                     log_success "CA password file pushed to container successfully."
 
                     # Set appropriate permissions inside the container
                     log_info "Setting permissions for CA password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 644 "$container_ca_password_path"; then
+                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
                         log_fatal "Failed to set permissions for CA password file inside container $ctid."
                     fi
                     log_success "Permissions set for CA password file inside container."
-
-                    # Clean up the temporary password file on the hypervisor
-                    log_info "Cleaning up temporary CA password file on hypervisor: $temp_ca_password_file_on_host"
-                    rm -f "$temp_ca_password_file_on_host" || log_warn "Failed to remove temporary CA password file from hypervisor."
                 fi
                 # --- END NEW HANDLING ---
 

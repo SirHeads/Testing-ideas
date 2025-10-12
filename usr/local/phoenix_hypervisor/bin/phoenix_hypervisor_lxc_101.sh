@@ -137,55 +137,47 @@ CONFIG_TARBALL="${TMP_DIR}/nginx_configs.tar.gz"
 echo "Extracting Nginx configurations from tarball..."
 tar -xzf "$CONFIG_TARBALL" -C "$TMP_DIR" || { echo "Failed to extract Nginx config tarball." >&2; exit 1; }
 
-# --- Config Copying from Temp Dir ---
+# --- Define Directories ---
 SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
 SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
 SCRIPTS_DIR="/etc/nginx/scripts"
 SNIPPETS_DIR="/etc/nginx/snippets"
 SSL_DIR="/etc/nginx/ssl"
+STREAM_CONF_DIR="/etc/nginx/stream.d"
 
-# Create directories
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SNIPPETS_DIR $SSL_DIR /var/cache/nginx
-# Set ownership for Nginx cache directory
+# --- Clean and Create Directories ---
+echo "Cleaning up and creating Nginx directory structure..."
+rm -rf $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SNIPPETS_DIR $STREAM_CONF_DIR /etc/nginx/conf.d/*
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SCRIPTS_DIR $SNIPPETS_DIR $SSL_DIR $STREAM_CONF_DIR /var/cache/nginx
 chown -R www-data:www-data /var/cache/nginx
 
-# Copy files (assume pushed by lxc-manager.sh)
-
+# --- Copy Core Configuration Files ---
+echo "Copying core Nginx configuration files..."
 cp "$TMP_DIR/sites-available/gateway" "$SITES_AVAILABLE_DIR/gateway" || { echo "Config file gateway missing in $TMP_DIR." >&2; exit 1; }
-cp "$TMP_DIR/sites-available/internal_traefik_proxy" "$SITES_AVAILABLE_DIR/internal_traefik_proxy" || { echo "Config file internal_traefik_proxy missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/scripts/http.js" "$SCRIPTS_DIR/http.js" || { echo "JS script missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/snippets/acme_challenge.conf" "$SNIPPETS_DIR/acme_challenge.conf" || { echo "ACME snippet missing in $TMP_DIR." >&2; exit 1; }
 cp "$TMP_DIR/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in $TMP_DIR." >&2; exit 1; }
 
-# Link enabled sites
-# Link the consolidated gateway configuration
+# --- Create Stream Gateway Configuration ---
+echo "Creating Nginx stream gateway configuration..."
+cat > "$STREAM_CONF_DIR/stream-gateway.conf" << 'EOF'
+server {
+    listen 9001;
+    proxy_pass 10.0.0.102:9001;
+}
+EOF
 
+# --- Link Enabled Site ---
+echo "Enabling the main gateway site..."
 ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
-ln -sf "$SITES_AVAILABLE_DIR/internal_traefik_proxy" "$SITES_ENABLED_DIR/internal_traefik_proxy"
 
-# Remove default site
-rm -f $SITES_ENABLED_DIR/default
-
-# Generate Nginx certificates for internal Traefik proxy
+# --- Certificate Generation and Trust ---
 generate_nginx_certs
-
-# --- Trust the Internal CA ---
 echo "Installing Step-CA root certificate into system trust store..."
 cp /etc/nginx/ssl/phoenix_ca.crt /usr/local/share/ca-certificates/phoenix_ca.crt
 update-ca-certificates
 echo "Step-CA root certificate installed."
-
-# Set correct permissions for the private key
 chmod 600 "/etc/nginx/ssl/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }
-
-# Remove invalid js_include from nginx.conf if present
-sed -i '/js_include/d' /etc/nginx/nginx.conf
-
-# Add NJS module configuration
-echo "Adding NJS module configuration..."
-cat > /etc/nginx/conf.d/njs.conf << 'EOF'
-js_import http from /etc/nginx/scripts/http.js;
-EOF
 
 
 # Overwrite vllm_gateway to ensure JS module usage. This is now handled by copying the file directly.

@@ -73,6 +73,31 @@ run_qm_command() {
 }
 
 # =====================================================================================
+# Function: wait_for_guest_agent
+# Description: Waits for the QEMU guest agent to be running and responsive inside the VM.
+# Arguments:
+#   $1 - The VMID of the VM.
+# Returns:
+#   None. Exits with a fatal error if the agent does not become responsive within the timeout.
+# =====================================================================================
+wait_for_guest_agent() {
+    local VMID="$1"
+    log_info "Waiting for guest agent on VM $VMID to become responsive..."
+    local timeout=300 # 5 minutes
+    local start_time=$SECONDS
+
+    while (( SECONDS - start_time < timeout )); do
+        if qm agent "$VMID" ping &> /dev/null; then
+            log_info "Guest agent on VM $VMID is responsive."
+            return 0
+        fi
+        sleep 5
+    done
+
+    log_fatal "Timeout reached while waiting for guest agent on VM $VMID."
+}
+
+# =====================================================================================
 # Function: orchestrate_vm
 # Description: The main state machine for VM provisioning. This function orchestrates the
 #              entire lifecycle of a VM, from creation and configuration to feature
@@ -127,6 +152,7 @@ orchestrate_vm() {
 
         log_info "Step 4: Starting VM template $VMID..."
         start_vm "$VMID"
+        wait_for_guest_agent "$VMID"
         log_info "Step 4: Completed."
 
         log_info "Step 5: Waiting for guest agent on VM template $VMID..."
@@ -134,7 +160,25 @@ orchestrate_vm() {
         log_info "Step 5: Completed."
 
         log_info "Step 6: Waiting for cloud-init to complete before proceeding in VM template $VMID..."
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 5; done"
+        local retries=3
+        local success=false
+        for ((i=1; i<=retries; i++)); do
+            local output
+            local exit_code=0
+            output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
+            
+            if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
+                log_info "Cloud-init has finished (Exit Code: $exit_code)."
+                success=true
+                break
+            else
+                log_warn "Waiting for cloud-init failed with unexpected exit code $exit_code (attempt $i/$retries). Retrying in 15 seconds..."
+                sleep 15
+            fi
+        done
+        if [ "$success" = false ]; then
+            log_fatal "Failed to wait for cloud-init completion in template VM $VMID after $retries attempts."
+        fi
         log_info "Step 6: Cloud-init completed in VM template $VMID."
 
         log_info "Step 7: Installing nfs-common in VM template $VMID..."
@@ -346,11 +390,16 @@ clone_vm() {
         ip=$(echo "$network_config" | jq -r '.ip // ""')
         local gw
         gw=$(echo "$network_config" | jq -r '.gw // ""')
+        local nameserver
+        nameserver=$(echo "$network_config" | jq -r '.nameserver // ""')
         if [ -z "$ip" ] || [ -z "$gw" ]; then
             log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
         fi
-        log_info "Applying initial network config: IP=${ip}, Gateway=${gw}"
+        log_info "Applying initial network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
         run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
+        if [ -n "$nameserver" ]; then
+            run_qm_command set "$VMID" --nameserver "$nameserver"
+        fi
     fi
     
     # Apply initial user configurations
@@ -442,11 +491,13 @@ apply_network_configurations() {
         else
             local gw
             gw=$(echo "$network_config" | jq -r '.gw // ""')
+            local nameserver="10.0.0.153" # Default to the internal DNS server
             if [ -z "$ip" ] || [ -z "$gw" ]; then
                 log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
             fi
-            log_info "Applying network config: IP=${ip}, Gateway=${gw}"
+            log_info "Applying network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
             run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
+            run_qm_command set "$VMID" --nameserver "$nameserver"
         fi
     else
         log_info "No network configurations to apply for VM $VMID."
@@ -485,7 +536,25 @@ apply_volumes() {
     fi
 
     log_info "Waiting for cloud-init to complete in VM $VMID before mounting volumes..."
-    run_qm_command guest exec "$VMID" -- /bin/bash -c "while [ ! -f /var/lib/cloud/instance/boot-finished ]; do echo 'Waiting for cloud-init...'; sleep 5; done"
+    local retries=3
+    local success=false
+    for ((i=1; i<=retries; i++)); do
+        local output
+        local exit_code=0
+        output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
+
+        if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
+            log_info "Cloud-init has finished (Exit Code: $exit_code)."
+            success=true
+            break
+        else
+            log_warn "Waiting for cloud-init failed with unexpected exit code $exit_code (attempt $i/$retries). Retrying in 15 seconds..."
+            sleep 15
+        fi
+    done
+    if [ "$success" = false ]; then
+        log_fatal "Failed to wait for cloud-init completion in VM $VMID after $retries attempts."
+    fi
 
     log_info "Configuring NFS mount for VM $VMID: ${server}:${path} -> ${mount_point}"
     run_qm_command guest exec "$VMID" -- /bin/bash -c "apt-get update && apt-get install -y nfs-common"
@@ -605,6 +674,24 @@ apply_vm_features() {
         # --- Definitive Fix: Copy Portainer config.json ---
         log_info "Copying Portainer config.json to VM's persistent storage..."
         cp "${PHOENIX_BASE_DIR}/etc/portainer/config.json" "${hypervisor_scripts_dir}/portainer_config.json"
+
+        # --- Definitive Fix: Copy Step-CA root certificate ---
+        log_info "Copying Step-CA root certificate to VM's persistent storage..."
+        local ca_cert_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+        if [ -f "$ca_cert_source_path" ]; then
+            cp "$ca_cert_source_path" "${hypervisor_scripts_dir}/phoenix_ca.crt"
+        else
+            log_warn "Step-CA root certificate not found at $ca_cert_source_path. Docker feature might fail if it needs to trust internal services."
+        fi
+
+        # --- Definitive Fix: Copy Step-CA password file ---
+        log_info "Copying Step-CA password file to VM's persistent storage..."
+        local ca_password_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/ca_password.txt"
+        if [ -f "$ca_password_source_path" ]; then
+            cp "$ca_password_source_path" "${hypervisor_scripts_dir}/ca_password.txt"
+        else
+            log_warn "Step-CA password file not found at $ca_password_source_path. Certificate generation for Portainer will fail."
+        fi
 
         local persistent_mount_point
         persistent_mount_point=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .mount_point" "$VM_CONFIG_FILE" | head -n 1)

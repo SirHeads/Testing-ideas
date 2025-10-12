@@ -18,8 +18,17 @@ FROM portainer/portainer-ce:latest
 # Copy the updated CA certificates from the builder stage
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-# Expose Portainer ports (optional, but good practice)
+# It's crucial to also update the certificates within the final image context
+# It's not necessary to run update-ca-certificates in the final stage,
+# as the certificate store is already updated in the builder stage.
+# The portainer/portainer-ce image is distroless and does not have a shell.
+
+# Expose Portainer ports
 EXPOSE 9000
 EXPOSE 9443
+
+# Add a healthcheck to verify Portainer is running
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-check-certificate -q -O - https://localhost:9443/api/status | grep -q 'Version' || exit 1
 
 # Command to run Portainer (default command from original image)

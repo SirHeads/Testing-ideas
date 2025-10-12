@@ -394,7 +394,8 @@
             "portainer_role": "infrastructure",
             "clone_from_ctid": "900",
             "features": [
-                "base_setup"
+                "base_setup",
+                "dns_server"
             ],
             "pct_options": [
                 "nesting=1"
