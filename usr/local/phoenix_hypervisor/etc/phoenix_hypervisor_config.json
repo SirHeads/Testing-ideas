@@ -20,17 +20,21 @@
     "timezone": "America/New_York",
     "network": {
         "external_registry_url": "docker.io/SirHeads",
-        "portainer_server_ip": "10.0.0.99",
+        "portainer_server_ip": "10.0.0.101",
         "portainer_server_port": 9443,
         "portainer_agent_port": 9001,
         "interfaces": {
             "name": "vmbr0",
             "address": "10.0.0.13/24",
             "gateway": "10.0.0.1",
-            "dns_nameservers": "8.8.8.8"
+            "dns_nameservers": [
+                "10.0.0.153",
+                "8.8.8.8"
+            ]
         },
         "default_subnet": "10.0.0.0/24",
-        "nfs_server": "10.0.0.13"
+        "nfs_server": "10.0.0.13",
+        "fallback_dns": "8.8.8.8"
     },
     "docker": {
         "portainer_server_image": "portainer/portainer-ce:latest",
@@ -40,6 +44,42 @@
         "exports": [
             {
                 "path": "/fastData/shared-bulk-data",
+                "clients": [
+                    "10.0.0.0/24"
+                ],
+                "options": [
+                    "rw",
+                    "sync",
+                    "no_subtree_check",
+                    "no_root_squash"
+                ]
+            },
+            {
+                "path": "/quickOS/shared-prod-data",
+                "clients": [
+                    "10.0.0.0/24"
+                ],
+                "options": [
+                    "rw",
+                    "sync",
+                    "no_subtree_check",
+                    "no_root_squash"
+                ]
+            },
+            {
+                "path": "/quickOS/shared-prod-data-sync",
+                "clients": [
+                    "10.0.0.0/24"
+                ],
+                "options": [
+                    "rw",
+                    "sync",
+                    "no_subtree_check",
+                    "no_root_squash"
+                ]
+            },
+            {
+                "path": "/quickOS/vm-persistent-data",
                 "clients": [
                     "10.0.0.0/24"
                 ],
@@ -129,14 +169,14 @@
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=standard,quota=600G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "rootdir"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-prod-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images,rootdir"
             },
             {
                 "name": "shared-prod-data-sync",
@@ -146,16 +186,16 @@
                 "proxmox_content_type": "images"
             },
             {
-                "name": "shared-prod-data-volumes",
-                "pool": "quickOS",
-                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
+                "name": "shared-test-data",
+                "pool": "fastData",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
                 "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images,rootdir"
             },
             {
-                "name": "shared-test-data",
+                "name": "shared-test-data-sync",
                 "pool": "fastData",
-                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
+                "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
                 "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images,rootdir"
             },
@@ -186,6 +226,20 @@
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
                 "proxmox_storage_type": "dir",
                 "proxmox_content_type": "iso,vztmpl"
+            },
+            {
+                "name": "vm-persistent-data",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "images,rootdir"
+            },
+            {
+                "name": "lxc-persistent-data",
+                "pool": "quickOS",
+                "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
+                "proxmox_storage_type": "zfspool",
+                "proxmox_content_type": "images,rootdir"
             }
         ]
     },
@@ -194,7 +248,7 @@
         "quickos_lxc": "quickOS-lxc-disks",
         "fastData_shared_backups": "fastData-shared-backups",
         "fastdata_iso": "fastData-shared-iso",
-        "quickos_volumes": "quickOS-shared-prod-data-volumes"
+        "quickos_lxc_persistent_data": "quickOS-lxc-persistent-data"
     },
     "mount_point_base": "/mnt/pve",
     "proxmox_defaults": {
@@ -278,7 +332,110 @@
         "firewall": {
             "enabled": true,
             "default_input_policy": "DROP",
-            "default_output_policy": "ACCEPT"
+            "default_output_policy": "ACCEPT",
+            "global_firewall_rules": [
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "80",
+                    "comment": "Allow HTTP traffic to Nginx gateway"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "443",
+                    "comment": "Allow HTTPS traffic to Nginx gateway"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "dest": "10.0.0.102",
+                    "proto": "tcp",
+                    "port": "9001",
+                    "comment": "Allow Portainer agent communication"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "2049",
+                    "comment": "Allow NFS traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "udp",
+                    "port": "2049",
+                    "comment": "Allow NFS traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "111",
+                    "comment": "Allow rpcbind traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "udp",
+                    "port": "111",
+                    "comment": "Allow rpcbind traffic"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "139",
+                    "comment": "Allow Samba NetBIOS"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "445",
+                    "comment": "Allow Samba SMB"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "udp",
+                    "port": "137",
+                    "comment": "Allow Samba NetBIOS Name Service"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "udp",
+                    "port": "138",
+                    "comment": "Allow Samba NetBIOS Datagram Service"
+                },
+                {
+                    "type": "out",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "dest": "0.0.0.0/0",
+                    "port": "53",
+                    "comment": "Allow outbound DNS traffic from all guests"
+                },
+                {
+                    "type": "out",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "dest": "0.0.0.0/0",
+                    "port": "53",
+                    "comment": "Allow outbound DNS traffic (TCP) from all guests"
+                }
+            ]
         }
+    },
+    "portainer_api": {
+        "admin_user": "admin",
+        "admin_password": "NewKick@$$2025",
+        "portainer_hostname": "portainer.phoenix.local"
     }
 }

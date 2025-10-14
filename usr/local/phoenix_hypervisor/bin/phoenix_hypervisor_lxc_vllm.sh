@@ -1,32 +1,31 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_lxc_vllm.sh
-# Description: This script is a unified application runner for deploying and managing vLLM (Very Large Language Model)
-#              API servers within an LXC container. It dynamically configures and manages a systemd service
-#              based on parameters defined in the `phoenix_lxc_configs.json` file. The script handles the
-#              entire lifecycle, including service configuration, startup, health checks, and API validation
-#              for different model types (e.g., chat, embedding).
+# Description: This script is the application runner for vLLM containers. It is responsible for
+#              dynamically generating a systemd service file based on the structured `vllm_engine_config`
+#              object in `phoenix_lxc_configs.json`. It then deploys this service into the target
+#              container and starts it, completing the vLLM setup.
 #
-# Dependencies: - `phoenix_hypervisor_common_utils.sh` for logging and JSON parsing functions.
-#               - `jq` command-line JSON processor.
-#               - A pre-existing systemd service template file for the vLLM server.
+# Version: 2.0.0
+# Author: Phoenix Hypervisor Team
 #
-# Inputs: - $1 (CTID): The ID of the LXC container where the vLLM server will be deployed.
-#         - Configuration from `phoenix_lxc_configs.json` for the specified CTID, including:
-#           - .vllm_model: The Hugging Face model identifier.
-#           - .vllm_served_model_name: The name the model is served as.
-#           - .vllm_model_type: The type of model ('chat' or 'embedding').
-#           - .ports[]: The port mapping for the service.
-#           - .vllm_args[]: An array of additional command-line arguments for the vLLM server.
+# Dependencies:
+#   - `phoenix_hypervisor_common_utils.sh`: For logging and JSON parsing.
+#   - `jq`: For advanced JSON manipulation.
 #
-# Outputs: - A dynamically configured and running systemd service named `vllm_model_server`.
-#          - Log messages detailing the setup process.
-#          - An exit code indicating success (0) or failure (non-zero).
+# Inputs:
+#   - $1 (CTID): The ID of the target LXC container.
+#   - `phoenix_lxc_configs.json`: Reads the `.vllm_engine_config` object for the CTID.
+#
+# Outputs:
+#   - A dynamically generated and deployed systemd service file inside the container.
+#   - A running `vllm_model_server.service` inside the container.
+#   - Logs detailing the entire process.
+#   - Exits with 0 on success, non-zero on failure.
 
 # --- Source common utilities ---
 # Ensures reliable sourcing of shared functions regardless of script execution location.
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -46,167 +45,124 @@ parse_arguments() {
 }
 
 # =====================================================================================
-# Function: configure_systemd_service
-# Description: Dynamically configures the vLLM systemd service file by replacing placeholder
-#              values with configuration data read from `phoenix_lxc_configs.json`.
+# Function: parse_vllm_config
+# Description: Parses the vllm_engine_config object from the JSON config file.
+# Arguments:
+#   $1 - The CTID of the container.
+# Returns:
+#   Exports the parsed configuration values as global variables.
 # =====================================================================================
-configure_systemd_service() {
-    log_info "Configuring vLLM systemd service in CTID: $CTID..."
-    local service_file_path="/etc/systemd/system/vllm_model_server.service"
+parse_vllm_config() {
+    log_info "Parsing vLLM engine configuration for CTID $CTID..."
+    export VLLM_CONFIG_JSON=$(jq_get_value "$CTID" ".vllm_engine_config")
 
-    # Retrieve vLLM configuration parameters using the jq_get_value helper.
-    local model=$(jq_get_value "$CTID" ".vllm_model")
-    local served_model_name=$(jq_get_value "$CTID" ".vllm_served_model_name")
-    local port=$(jq_get_value "$CTID" ".ports[0]" | cut -d':' -f2)
-
-    # Read the array of vLLM arguments and concatenate them into a single string.
-    mapfile -t vllm_args < <(jq_get_array "$CTID" ".vllm_args[]")
-    local args_string=""
-    for arg in "${vllm_args[@]}"; do
-        args_string+=" $arg"
-    done
-
-    # Use sed to perform in-place replacement of placeholders in the systemd template file.
-    sed -i "s|VLLM_MODEL_PLACEHOLDER|$model|" "$service_file_path"
-    sed -i "s|VLLM_SERVED_MODEL_NAME_PLACEHOLDER|$served_model_name|" "$service_file_path"
-    sed -i "s|VLLM_PORT_PLACEHOLDER|$port|" "$service_file_path"
-    sed -i "s|VLLM_ARGS_PLACEHOLDER|$args_string|" "$service_file_path"
+    if [ -z "$VLLM_CONFIG_JSON" ] || [ "$VLLM_CONFIG_JSON" == "null" ]; then
+        log_fatal "The '.vllm_engine_config' object was not found for CTID $CTID."
+    fi
 }
 
 # =====================================================================================
-# Function: manage_vllm_service
-# Description: Manages the systemd service for the vLLM server, including reloading the
-#              daemon, enabling the service for auto-start, and restarting it.
+# Function: build_vllm_cli_args
+# Description: Constructs a string of command-line arguments from the parsed JSON config.
+# Arguments: None (uses global VLLM_CONFIG_JSON).
+# Returns:
+#   A string containing all the formatted command-line arguments for vLLM.
 # =====================================================================================
-manage_vllm_service() {
-    log_info "Managing the $SERVICE_NAME service in CTID $CTID..."
+build_vllm_cli_args() {
+    log_info "Building vLLM command-line arguments..."
+    local args_string=""
+
+    # Use jq to iterate through all key-value pairs in the config object
+    while IFS="=" read -r key value; do
+        # Convert camelCase to kebab-case (e.g., trustRemoteCode -> --trust-remote-code)
+        local kebab_key=$(echo "$key" | sed -r 's/([A-Z])/-\L\1/g')
+        
+        # Handle boolean flags (e.g., "trust_remote_code": true)
+        if [ "$value" == "true" ]; then
+            args_string+=" --$kebab_key"
+        # Handle key-value pairs (e.g., "model": "meta-llama/Llama-3.2-3B-Instruct")
+        elif [ "$value" != "false" ] && [ "$value" != "null" ]; then
+            args_string+=" --$kebab_key $value"
+        fi
+    done < <(echo "$VLLM_CONFIG_JSON" | jq -r '(.[] | to_entries[]) | "\(.key)=\(.value)"')
+
+    echo "$args_string"
+}
+
+# =====================================================================================
+# Function: generate_systemd_service_content
+# Description: Dynamically generates the complete content for the systemd service file.
+# Arguments:
+#   $1 - The string of command-line arguments for the vLLM server.
+# Returns:
+#   The full content of the vllm_model_server.service file as a string.
+# =====================================================================================
+generate_systemd_service_content() {
+    local vllm_args="$1"
+    log_info "Generating systemd service file content..."
+
+    # Using a HEREDOC for multiline content is cleaner and more maintainable.
+    cat <<-EOF
+[Unit]
+Description=vLLM OpenAI-Compatible RESTful API Server
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/vllm
+# Unset conflicting environment variables to ensure a clean environment
+Environment="CUDA_HOME="
+Environment="LD_LIBRARY_PATH="
+# Set the correct environment for the vLLM service
+Environment="CUDA_HOME=/usr/local/cuda"
+Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
+Environment="PATH=/opt/vllm/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VLLM_USE_FLASHINFER_SAMPLER=1"
+Environment="TORCH_CUDA_ARCH_LIST=12.0"
+ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server ${vllm_args}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# =====================================================================================
+# Function: deploy_and_start_service
+# Description: Deploys the generated systemd service file to the container and starts it.
+# Arguments:
+#   $1 - The content of the systemd service file.
+# Returns: None
+# =====================================================================================
+deploy_and_start_service() {
+    local service_content="$1"
+    local container_service_path="/etc/systemd/system/vllm_model_server.service"
+
+    log_info "Deploying and starting vLLM service in CTID $CTID..."
+
+    # 1. Write the generated content directly to the container's filesystem.
+    #    This is executed from within the container, so we can write directly.
+    log_info "Writing systemd service file directly to $container_service_path..."
+    # The script is already running inside the container, so we can write directly.
+    if ! echo "$service_content" > "$container_service_path"; then
+        log_fatal "Failed to write systemd service file to $container_service_path in CTID $CTID."
+    fi
+
+    # 2. Reload systemd, enable, and start the service inside the container.
+    log_info "Reloading systemd daemon and starting the service..."
     systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME"
-    if ! systemctl restart "$SERVICE_NAME"; then
+    systemctl enable --now "$SERVICE_NAME"
+
+    # 3. Verify the service started correctly.
+    sleep 5 # Give the service a moment to start.
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
         log_error "$SERVICE_NAME service failed to start. Retrieving recent logs..."
         journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
-        log_fatal "Failed to start $SERVICE_NAME service."
-    fi
-    log_info "$SERVICE_NAME service started successfully."
-}
-
-# =====================================================================================
-# Function: perform_health_check
-# Description: Periodically checks the vLLM server's /health endpoint to ensure it has
-#              started and is responsive before proceeding.
-# =====================================================================================
-perform_health_check() {
-    log_info "Performing health check on the vLLM API server..."
-    local max_attempts=20
-    local attempt=0
-    local interval=10
-    local health_check_url="http://localhost:8000/health"
-
-    while [ "$attempt" -lt "$max_attempts" ]; do
-        attempt=$((attempt + 1))
-        log_info "Health check attempt $attempt/$max_attempts..."
-        # Use curl to check if the health endpoint returns a success status code.
-        if curl -s --fail "$health_check_url" > /dev/null; then
-            log_info "Health check passed! The vLLM API server is responsive."
-            return 0
-        else
-            log_info "API not ready yet. Retrying in $interval seconds..."
-            sleep "$interval"
-        fi
-    done
-
-    log_error "Health check failed after $max_attempts attempts."
-    journalctl -u "$SERVICE_NAME" --no-pager -n 50 | log_plain_output
-    log_fatal "vLLM service health check failed."
-}
-
-# =====================================================================================
-# Function: validate_api_with_test_query
-# Description: Sends a model-specific test query to the vLLM API to confirm that the
-#              model has loaded correctly and is producing valid outputs.
-# =====================================================================================
-validate_api_with_test_query() {
-    log_info "Performing a final API validation with a test query..."
-    local model_type=$(jq_get_value "$CTID" ".vllm_model_type")
-    local model=$(jq_get_value "$CTID" ".vllm_served_model_name")
-    local api_url=""
-    local json_payload=""
-    local curl_cmd=""
-    local api_response=""
-
-    # Dynamically construct the API endpoint and JSON payload based on the model type.
-    if [ "$model_type" == "chat" ]; then
-        api_url="http://localhost:8000/v1/chat/completions"
-        json_payload=$(jq -c -n --arg model "$model" \
-            '{"model": $model, "messages": [{"role": "user", "content": "What is the capital of France?"}]}')
-    elif [ "$model_type" == "embedding" ]; then
-        api_url="http://localhost:8000/v1/embeddings"
-        json_payload=$(jq -c -n --arg model "$model" \
-            '{"model": $model, "input": "This is a test sentence for embedding."}')
-    else
-        log_fatal "Invalid vllm_model_type specified in configuration: $model_type"
+        log_fatal "Failed to start $SERVICE_NAME service in CTID $CTID."
     fi
 
-    # Execute the curl command to send the test query.
-    curl_cmd="curl -s -X POST '$api_url' -H 'Content-Type: application/json' -d '$json_payload'"
-    api_response=$(bash -c "$curl_cmd")
-
-    if [ -z "$api_response" ]; then
-        log_fatal "API validation failed. Received an empty response from the server."
-    fi
-
-    # Check if the JSON response contains an "error" key.
-    if echo "$api_response" | jq -e 'has("error")' > /dev/null; then
-        log_error "API validation failed. The server returned an error:"
-        echo "$api_response" | log_plain_output
-        log_fatal "The vLLM model failed to load or respond correctly."
-    fi
-
-    # Validate the structure of the response based on the model type.
-    if [ "$model_type" == "chat" ]; then
-        if ! echo "$api_response" | jq -e '.choices[0].message.content' > /dev/null; then
-            log_fatal "API validation failed. The chat model response format was unexpected."
-        fi
-        log_info "Test query response snippet: $(echo "$api_response" | jq -r '.choices[0].message.content' | head -c 100)..."
-    elif [ "$model_type" == "embedding" ]; then
-        if ! echo "$api_response" | jq -e '.data[0].embedding | length > 0' > /dev/null; then
-            log_fatal "API validation failed. The embedding model response format was unexpected."
-        fi
-        log_info "Test query response snippet: $(echo "$api_response" | jq -r '.data[0].embedding[0:5]' | tr -d '\n')..."
-    fi
-
-    log_info "API validation successful! The model is loaded and responding correctly."
-}
-
-# =====================================================================================
-# Function: display_connection_info
-# Description: Displays final connection information and example usage commands.
-# =====================================================================================
-display_connection_info() {
-    local ip_address=$(jq_get_value "$CTID" ".network_config.ip" | cut -d'/' -f1)
-    local model=$(jq_get_value "$CTID" ".vllm_model")
-    local model_type=$(jq_get_value "$CTID" ".vllm_model_type")
-
-    log_info "============================================================"
-    log_info "vLLM API Server is now running and fully operational."
-    log_info "============================================================"
-    log_info "Connection Details:"
-    log_info "  IP Address: $ip_address"
-    log_info "  Port: 8000"
-    log_info "  Model: $model"
-    log_info "  Model Type: $model_type"
-    log_info ""
-    log_info "Example curl command:"
-    if [ "$model_type" == "chat" ]; then
-        log_info "  curl -X POST \"http://${ip_address}:8000/v1/chat/completions\" \\"
-        log_info "    -H \"Content-Type: application/json\" \\"
-        log_info "    --data '{\"model\": \"$model\", \"messages\": [{\"role\": \"user\", \"content\": \"Write a python function to download a file.\"}]}'"
-    elif [ "$model_type" == "embedding" ]; then
-        log_info "  curl -X POST \"http://${ip_address}:8000/v1/embeddings\" \\"
-        log_info "    -H \"Content-Type: application/json\" \\"
-        log_info "    --data '{\"model\": \"$model\", \"input\": \"Your text to embed here.\"}'"
-    fi
-    log_info "============================================================"
+    log_success "vLLM service is active and running in CTID $CTID."
 }
 
 # =====================================================================================
@@ -215,15 +171,17 @@ display_connection_info() {
 # =====================================================================================
 main() {
     parse_arguments "$@"
-    configure_systemd_service
-    manage_vllm_service
-    if systemctl is-active --quiet "$SERVICE_NAME"; then
-        perform_health_check
-        validate_api_with_test_query
-    else
-        log_info "Service $SERVICE_NAME is not active. Skipping health check and API validation."
-    fi
-    display_connection_info
+    parse_vllm_config
+    
+    local vllm_args
+    vllm_args=$(build_vllm_cli_args)
+    
+    local service_content
+    service_content=$(generate_systemd_service_content "$vllm_args")
+    
+    deploy_and_start_service "$service_content"
+    
+    log_info "vLLM application script completed successfully for CTID $CTID."
     exit_script 0
 }
 

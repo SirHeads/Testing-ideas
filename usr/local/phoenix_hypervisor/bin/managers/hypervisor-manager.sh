@@ -34,6 +34,10 @@
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
+# --- Script Variables ---
+WIPE_DISKS=false # Flag to enable destructive disk operations during ZFS setup.
+CONFIG_FILE=""   # Path to the hypervisor configuration file.
+
 # --- SOURCE COMMON UTILITIES ---
 # Sources the common utilities script, which provides a centralized library of functions for logging,
 # error handling, and other common tasks, ensuring consistency across the system.
@@ -42,6 +46,38 @@ source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 # --- Script Variables ---
 WIPE_DISKS=false # Flag to enable destructive disk operations during ZFS setup.
 CONFIG_FILE=""   # Path to the hypervisor configuration file.
+
+# =====================================================================================
+# Function: create_global_symlink
+# Description: Creates a symbolic link to the phoenix-global wrapper script in /usr/local/bin,
+#              making the 'phoenix' command globally accessible. This function is called at the
+#              end of a successful hypervisor setup.
+#
+# Arguments:
+#   None.
+#
+# Returns:
+#   None. The function will call log_fatal and exit if the symlink creation fails.
+# =====================================================================================
+create_global_symlink() {
+    log_info "Creating global symlink for the phoenix command..."
+    local source_path="${PHOENIX_BASE_DIR}/bin/phoenix-global"
+    local target_path="/usr/local/bin/phoenix"
+
+    if [ -L "$target_path" ]; then
+        log_info "Symlink already exists at $target_path. Removing it to ensure it's up-to-date."
+        if ! rm "$target_path"; then
+            log_fatal "Failed to remove existing symlink at $target_path."
+        fi
+    fi
+
+    log_info "Creating new symlink from $source_path to $target_path..."
+    if ! ln -s "$source_path" "$target_path"; then
+        log_fatal "Failed to create symlink. Please ensure you have the necessary permissions."
+    fi
+
+    log_info "Phoenix command is now globally accessible."
+}
 
 # =====================================================================================
 # Function: setup_hypervisor
@@ -88,6 +124,7 @@ setup_hypervisor() {
         "hypervisor_feature_fix_apparmor_tunables.sh"
     )
 
+
     # Iterate through the setup scripts and execute them.
     for script in "${setup_scripts[@]}"; do
         local script_path="${PHOENIX_BASE_DIR}/bin/hypervisor_setup/${script}"
@@ -108,7 +145,18 @@ setup_hypervisor() {
         fi
     done
 
+    # Set the hypervisor's DNS to the fallback DNS
+    local fallback_dns
+    fallback_dns=$(get_global_config_value ".network.fallback_dns")
+    if [ -n "$fallback_dns" ]; then
+        log_info "Setting hypervisor's DNS to fallback DNS: $fallback_dns"
+        echo "nameserver $fallback_dns" > /etc/resolv.conf || log_fatal "Failed to update hypervisor's /etc/resolv.conf."
+    fi
+
     log_info "Hypervisor setup completed successfully."
+
+    # As the final step, create the global symlink to make the phoenix command accessible.
+    create_global_symlink
 }
 
 # =====================================================================================

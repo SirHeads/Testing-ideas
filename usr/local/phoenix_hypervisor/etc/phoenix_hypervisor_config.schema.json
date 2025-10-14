@@ -61,6 +61,11 @@
                     "minLength": 1,
                     "description": "Path to the JSON schema for validating the LXC configuration."
                 },
+                "vm_config_file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Path to the main VM configuration JSON file."
+                },
                 "hf_token_file": {
                     "type": "string",
                     "minLength": 1,
@@ -90,13 +95,13 @@
             "required": [
                 "lxc_config_file",
                 "lxc_config_schema_file",
+                "vm_config_file",
                 "hf_token_file",
                 "docker_token_file",
                 "docker_images_path",
                 "hypervisor_marker_dir",
                 "hypervisor_marker"
-            ],
-            "additionalProperties": false
+            ]
         },
         "network": {
             "type": "object",
@@ -135,7 +140,10 @@
                             "type": "string"
                         },
                         "dns_nameservers": {
-                            "type": "string"
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
                         }
                     },
                     "required": [
@@ -150,6 +158,9 @@
                 },
                 "nfs_server": {
                     "type": "string"
+                },
+                "fallback_dns": {
+                    "type": "string"
                 }
             },
             "required": [
@@ -159,9 +170,9 @@
                 "portainer_agent_port",
                 "interfaces",
                 "default_subnet",
-                "nfs_server"
-            ],
-            "additionalProperties": true
+                "nfs_server",
+                "fallback_dns"
+            ]
         },
         "docker": {
             "type": "object",
@@ -181,8 +192,7 @@
             "required": [
                 "portainer_server_image",
                 "portainer_agent_image"
-            ],
-            "additionalProperties": false
+            ]
         },
         "nfs": {
             "type": "object",
@@ -263,278 +273,6 @@
                 "shares"
             ]
         },
-        "proxmox_defaults": {
-            "type": "object",
-            "description": "Default settings for Proxmox LXC creation, overridable by individual LXC configs.",
-            "properties": {
-                "zfs_lxc_pool": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "ZFS pool for LXC container storage."
-                },
-                "lxc": {
-                    "type": "object",
-                    "properties": {
-                        "cores": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "Default CPU cores for LXC containers."
-                        },
-                        "memory_mb": {
-                            "type": "integer",
-                            "minimum": 512,
-                            "description": "Default memory (RAM) in MB for LXC containers."
-                        },
-                        "network_config": {
-                            "type": "string",
-                            "minLength": 1,
-                            "description": "Default network configuration string for 'pct' commands."
-                        },
-                        "features": {
-                            "type": "string",
-                            "pattern": "^[a-z]+=([0-1])(,[a-z]+=([0-1]))*$",
-                            "description": "Default LXC features (e.g., 'nesting=1,keyctl=1')."
-                        },
-                        "security": {
-                            "type": "string",
-                            "enum": [
-                                "default",
-                                "unconfined"
-                            ],
-                            "description": "Default container security profile."
-                        },
-                        "nesting": {
-                            "type": "integer",
-                            "enum": [
-                                0,
-                                1
-                            ],
-                            "description": "Default value for container nesting (1 for enabled)."
-                        }
-                    },
-                    "required": [
-                        "cores",
-                        "memory_mb",
-                        "network_config",
-                        "features",
-                        "security",
-                        "nesting"
-                    ],
-                    "additionalProperties": false
-                }
-            },
-            "required": [
-                "zfs_lxc_pool",
-                "lxc"
-            ],
-            "additionalProperties": false
-        },
-        "vm_defaults": {
-            "type": "object",
-            "description": "Default settings for VM creation, overridable by individual VM configs.",
-            "properties": {
-                "template": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Default VM template to use."
-                },
-                "cores": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Default CPU cores for VMs."
-                },
-                "memory_mb": {
-                    "type": "integer",
-                    "minimum": 512,
-                    "description": "Default memory (RAM) in MB for VMs."
-                },
-                "disk_size_gb": {
-                    "type": "integer",
-                    "minimum": 10,
-                    "description": "Default disk size in GB for VMs."
-                },
-                "storage_pool": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Default storage pool for VM disks."
-                },
-                "network_bridge": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Default network bridge for VMs."
-                }
-            },
-            "required": [
-                "template",
-                "cores",
-                "memory_mb",
-                "disk_size_gb",
-                "storage_pool",
-                "network_bridge"
-            ],
-            "additionalProperties": false
-        },
-        "vms": {
-            "type": "array",
-            "description": "Array of VM configurations.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "vmid": {
-                        "type": "integer",
-                        "description": "The unique ID for the VM."
-                    },
-                    "name": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The friendly name and hostname for the VM."
-                    },
-                    "cores": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "description": "The number of CPU cores."
-                    },
-                    "memory_mb": {
-                        "type": "integer",
-                        "minimum": 512,
-                        "description": "The memory allocation in megabytes."
-                    },
-                    "disk_size_gb": {
-                        "type": "integer",
-                        "minimum": 10,
-                        "description": "The size of the root disk in gigabytes."
-                    },
-                    "storage_pool": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The Proxmox storage pool for the root disk."
-                    },
-                    "template_image": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The full path to the base VM template image."
-                    },
-                    "network_bridge": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "The network bridge (e.g., `vmbr0`)."
-                    },
-                    "network_config": {
-                        "type": "object",
-                        "description": "Network configuration for the VM.",
-                        "properties": {
-                            "ip": {
-                                "type": "string",
-                                "description": "The static IPv4 address in CIDR format (e.g., 10.0.0.101/24)."
-                            },
-                            "gw": {
-                                "type": "string",
-                                "description": "The gateway IPv4 address."
-                            }
-                        },
-                        "required": [
-                            "ip",
-                            "gw"
-                        ]
-                    },
-                    "user_config": {
-                        "type": "object",
-                        "description": "User account configuration for the VM.",
-                        "properties": {
-                            "username": {
-                                "type": "string",
-                                "description": "The username for the default user."
-                            },
-                            "password_hash": {
-                                "type": "string",
-                                "description": "The hashed password for the user."
-                            },
-                            "ssh_public_key": {
-                                "type": "string",
-                                "description": "The SSH public key for the user."
-                            }
-                        },
-                        "required": [
-                            "username",
-                            "ssh_public_key"
-                        ]
-                    },
-                    "clone_from_vmid": {
-                        "type": "integer",
-                        "description": "The VMID of an existing VM to clone from."
-                    },
-                    "template_snapshot_name": {
-                        "type": "string",
-                        "description": "The name of the snapshot to create after provisioning."
-                    },
-                    "features": {
-                        "type": "array",
-                        "description": "An array of feature scripts to apply to the VM.",
-                        "items": {
-                            "type": "string"
-                        }
-                    }
-                },
-                "required": [
-                    "vmid",
-                    "name",
-                    "cores",
-                    "memory_mb",
-                    "disk_size_gb",
-                    "storage_pool",
-                    "template_image",
-                    "network_bridge"
-                ],
-                "additionalProperties": true
-            }
-        },
-        "behavior": {
-            "type": "object",
-            "description": "Runtime behavior flags for the scripts.",
-            "properties": {
-                "rollback_on_failure": {
-                    "type": "boolean",
-                    "description": "If true, scripts attempt to rollback failed LXC creations."
-                },
-                "debug_mode": {
-                    "type": "boolean",
-                    "description": "If true, skips validation and logs detailed output for troubleshooting."
-                }
-            },
-            "required": [
-                "rollback_on_failure",
-                "debug_mode"
-            ],
-            "additionalProperties": false
-        },
-        "nvidia_driver": {
-            "type": "object",
-            "properties": {
-                "install": {
-                    "type": "boolean"
-                },
-                "version": {
-                    "type": "string"
-                },
-                "runfile_url": {
-                    "type": "string"
-                },
-                "cuda_version": {
-                    "type": "string"
-                },
-                "install_vllm_libs": {
-                    "type": "boolean"
-                }
-            },
-            "required": [
-                "install",
-                "version",
-                "runfile_url",
-                "cuda_version",
-                "install_vllm_libs"
-            ],
-            "additionalProperties": false
-        },
         "zfs": {
             "type": "object",
             "properties": {
@@ -612,46 +350,200 @@
                 "quickos_lxc": {
                     "type": "string"
                 },
-                "fastdata_backup": {
+                "fastData_shared_backups": {
                     "type": "string"
                 },
                 "fastdata_iso": {
+                    "type": "string"
+                },
+                "quickos_lxc_persistent_data": {
                     "type": "string"
                 }
             },
             "required": [
                 "quickos_vm",
                 "quickos_lxc",
-                "fastdata_backup",
-                "fastdata_iso"
+                "fastData_shared_backups",
+                "fastdata_iso",
+                "quickos_lxc_persistent_data"
             ]
         },
         "mount_point_base": {
             "type": "string"
         },
-        "shared_zfs_volumes": {
+        "proxmox_defaults": {
             "type": "object",
-            "description": "Defines shared ZFS volumes that can be mounted into multiple LXC containers.",
-            "patternProperties": {
-                "^[a-zA-Z0-9_-]+$": {
+            "description": "Default settings for Proxmox LXC creation, overridable by individual LXC configs.",
+            "properties": {
+                "zfs_lxc_pool": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "ZFS pool for LXC container storage."
+                },
+                "lxc": {
                     "type": "object",
                     "properties": {
-                        "pool": {
-                            "type": "string",
-                            "description": "The ZFS storage pool to create the volume in."
-                        },
-                        "size_gb": {
+                        "cores": {
                             "type": "integer",
                             "minimum": 1,
-                            "description": "The size of the shared volume in gigabytes."
+                            "description": "Default CPU cores for LXC containers."
                         },
-                        "mount_point": {
+                        "memory_mb": {
+                            "type": "integer",
+                            "minimum": 512,
+                            "description": "Default memory (RAM) in MB for LXC containers."
+                        },
+                        "network_config": {
                             "type": "string",
-                            "description": "The absolute path on the host where the volume will be mounted."
+                            "minLength": 1,
+                            "description": "Default network configuration string for 'pct' commands."
+                        },
+                        "features": {
+                            "type": "string",
+                            "pattern": "^[a-z]+=([0-1])(,[a-z]+=([0-1]))*$",
+                            "description": "Default LXC features (e.g., 'nesting=1,keyctl=1')."
+                        },
+                        "security": {
+                            "type": "string",
+                            "enum": [
+                                "default",
+                                "unconfined"
+                            ],
+                            "description": "Default container security profile."
+                        },
+                        "nesting": {
+                            "type": "integer",
+                            "enum": [
+                                0,
+                                1
+                            ],
+                            "description": "Default value for container nesting (1 for enabled)."
+                        }
+                    },
+                    "required": [
+                        "cores",
+                        "memory_mb",
+                        "network_config",
+                        "features",
+                        "security",
+                        "nesting"
+                    ]
+                }
+            },
+            "required": [
+                "zfs_lxc_pool",
+                "lxc"
+            ]
+        },
+        "tests": {
+            "type": "object",
+            "properties": {
+                "system_validation": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "type": {
+                                "type": "string"
+                            },
+                            "path": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "type",
+                            "path"
+                        ]
+                    }
+                },
+                "hypervisor_health_.check": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "type": {
+                                "type": "string"
+                            },
+                            "path": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "type",
+                            "path"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "system_validation",
+                "hypervisor_health_.check"
+            ]
+        },
+        "nvidia_driver": {
+            "type": "object",
+            "properties": {
+                "install": {
+                    "type": "boolean"
+                },
+                "version": {
+                    "type": "string"
+                },
+                "runfile_url": {
+                    "type": "string"
+                },
+                "cuda_version": {
+                    "type": "string"
+                },
+                "install_vllm_libs": {
+                    "type": "boolean"
+                }
+            },
+            "required": [
+                "install",
+                "version",
+                "runfile_url",
+                "cuda_version",
+                "install_vllm_libs"
+            ]
+        },
+        "behavior": {
+            "type": "object",
+            "description": "Runtime behavior flags for the scripts.",
+            "properties": {
+                "rollback_on_failure": {
+                    "type": "boolean",
+                    "description": "If true, scripts attempt to rollback failed LXC creations."
+                },
+                "debug_mode": {
+                    "type": "boolean",
+                    "description": "If true, skips validation and logs detailed output for troubleshooting."
+                }
+            },
+            "required": [
+                "rollback_on_failure",
+                "debug_mode"
+            ]
+        },
+        "shared_volumes": {
+            "type": "object",
+            "properties": {
+                "ssl_certs": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
                         },
                         "mounts": {
                             "type": "object",
-                            "description": "A map of container IDs to their in-container mount paths.",
                             "patternProperties": {
                                 "^[0-9]+$": {
                                     "type": "string"
@@ -660,68 +552,215 @@
                         }
                     },
                     "required": [
-                        "pool",
-                        "size_gb",
-                        "mount_point",
+                        "host_path",
                         "mounts"
                     ]
-                }
-            }
-        },
-        "firewall": {
-            "type": "object",
-            "description": "Global firewall settings for the hypervisor.",
-            "properties": {
-                "enabled": {
-                    "type": "boolean",
-                    "description": "Whether to enable the firewall at the datacenter level."
                 },
-                "default_input_policy": {
-                    "type": "string",
-                    "enum": [
-                        "ACCEPT",
-                        "DROP",
-                        "REJECT"
-                    ],
-                    "description": "Default policy for incoming traffic."
+                "nginx_sites": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
                 },
-                "default_output_policy": {
-                    "type": "string",
-                    "enum": [
-                        "ACCEPT",
-                        "DROP",
-                        "REJECT"
-                    ],
-                    "description": "Default policy for outgoing traffic."
+                "nginx_logs": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
+                },
+                "ollama_models": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
+                },
+                "llamacpp_models": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
+                },
+                "vllm_models": {
+                    "type": "object",
+                    "properties": {
+                        "host_path": {
+                            "type": "string"
+                        },
+                        "mounts": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[0-9]+$": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "required": [
+                        "host_path",
+                        "mounts"
+                    ]
+                },
+                "firewall": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "default_input_policy": {
+                            "type": "string"
+                        },
+                        "default_output_policy": {
+                            "type": "string"
+                        },
+                        "global_firewall_rules": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "type": {
+                                        "type": "string"
+                                    },
+                                    "action": {
+                                        "type": "string"
+                                    },
+                                    "proto": {
+                                        "type": "string"
+                                    },
+                                    "port": {
+                                        "type": "string"
+                                    },
+                                    "comment": {
+                                        "type": "string"
+                                    },
+                                    "dest": {
+                                        "type": "string"
+                                    },
+                                    "source": {
+                                        "type": "string"
+                                    }
+                                },
+                                "required": [
+                                    "type",
+                                    "action",
+                                    "proto",
+                                    "port",
+                                    "comment"
+                                ]
+                            }
+                        }
+                    },
+                    "required": [
+                        "enabled",
+                        "default_input_policy",
+                        "default_output_policy",
+                        "global_firewall_rules"
+                    ]
                 }
             },
             "required": [
-                "enabled",
-                "default_input_policy",
-                "default_output_policy"
+                "ssl_certs",
+                "nginx_sites",
+                "nginx_logs",
+                "ollama_models",
+                "llamacpp_models",
+                "vllm_models",
+                "firewall"
+            ]
+        },
+        "portainer_api": {
+            "type": "object",
+            "properties": {
+                "admin_user": {
+                    "type": "string"
+                },
+                "admin_password": {
+                    "type": "string"
+                },
+                "portainer_hostname": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "admin_user",
+                "admin_password",
+                "portainer_hostname"
             ]
         }
     },
     "required": [
         "version",
         "author",
-        "timezone",
         "users",
         "core_paths",
+        "timezone",
         "network",
         "docker",
         "nfs",
         "samba",
-        "proxmox_defaults",
-        "vm_defaults",
-        "vms",
-        "behavior",
-        "nvidia_driver",
         "zfs",
         "proxmox_storage_ids",
         "mount_point_base",
-        "shared_zfs_volumes",
-        "firewall"
-    ],
-    "additionalProperties": false
+        "proxmox_defaults",
+        "tests",
+        "nvidia_driver",
+        "behavior",
+        "shared_volumes",
+        "portainer_api"
+    ]
 }

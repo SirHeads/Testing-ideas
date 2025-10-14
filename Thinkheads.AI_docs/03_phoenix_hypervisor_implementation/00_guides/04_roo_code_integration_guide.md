@@ -26,9 +26,9 @@ This document provides a comprehensive guide to integrating the Roo Code extensi
 
 The integration relies on three key LXC containers:
 
-*   **LXC 951 (vLLM Embedding Service):** Hosts the `ibm-granite/granite-embedding-english-r2` model, providing an OpenAI-compatible API endpoint for text vectorization.
-*   **LXC 952 (Qdrant Vector Database):** Stores and indexes the vectorized embeddings, enabling efficient similarity searches.
-*   **LXC 953 (Nginx API Gateway):** Acts as a reverse proxy, providing a single, stable entry point for the vLLM service.
+*   **VM 1002 (Dr-Phoenix):** Hosts the qdrant vector database and other Dockerized services.
+*   **LXC 101 (Nginx API Gateway):** Acts as the external-facing reverse proxy.
+*   **LXC 102 (Traefik Internal Proxy):** Manages the internal service mesh and routes traffic to the appropriate services.
 
 ```mermaid
 graph TD
@@ -37,14 +37,14 @@ graph TD
     end
 
     subgraph "Phoenix Hypervisor"
-        C[LXC 953: Nginx Gateway <br> 10.0.0.153]
-        B[LXC 951: vLLM Embedding Service <br> 10.0.0.151:8000]
-        D[LXC 952: Qdrant Vector DB <br> 10.0.0.152:6333]
+        B[LXC 101: Nginx Gateway]
+        C[LXC 102: Traefik Internal Proxy]
+        D["VM 1002: Dr-Phoenix <br> qdrant.internal.thinkheads.ai"]
     end
 
-    A -- "API Request (http://10.0.0.153/v1)" --> C
-    C -- "Proxy Pass" --> B
-    A -- "Vector Search/Storage (http://10.0.0.152:6333)" --> D
+    A -- "API Request (https://api.internal.thinkheads.ai/v1)" --> B
+    B -- Routes to --> C
+    C -- Routes to --> D
 ```
 
 ## 2. Step-by-Step Configuration Guide
@@ -60,16 +60,15 @@ graph TD
 
 3.  **Configure the Embedder Settings:**
     *   Find the **RooCode: Embedder** section.
-    *   Set the **Api Base** to the Nginx Gateway URL: `http://10.0.0.153/v1`.
+    *   Set the **Api Base** to the new internal API endpoint: `https://api.internal.thinkheads.ai/v1`.
     *   Set the **Api Key** to `fake-key` (this is required by the extension but not validated by the server).
     *   Set the **Model Name** to `ibm-granite/granite-embedding-english-r2`.
     *   Set the **Model Dimension** to `768`.
 
 4.  **Configure the Vector Store (Qdrant) Settings:**
     *   Find the **RooCode: Vector Store** section.
-    *   Set the **Url** to your Qdrant instance URL: `http://10.0.0.152:6333`.
+    *   Set the **Url** to your Qdrant instance URL: `https://qdrant.internal.thinkheads.ai`.
     *   Leave the **Api Key** field **blank**.
-
 5.  **Save and Reload:**
     *   Your changes should save automatically.
     *   To ensure the new settings are applied, you can restart VSCode by closing and reopening it, or by running the `Developer: Reload Window` command from the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
@@ -78,12 +77,12 @@ graph TD
 
 | Setting                  | Section             | Value                                           |
 | :----------------------- | :------------------ | :---------------------------------------------- |
-| **Api Base**             | `RooCode: Embedder` | `http://10.0.0.153/v1`                          |
+| **Api Base**             | `RooCode: Embedder` | `https://api.internal.thinkheads.ai/v1`         |
 | **Api Key**              | `RooCode: Embedder` | `fake-key`                                      |
 | **Model Dimension**      | `RooCode: Embedder` | `768`                                           |
 | **Model Name**           | `RooCode: Embedder` | `ibm-granite/granite-embedding-english-r2`      |
 | **Api Key**              | `RooCode: Vector Store` | *(Leave this field blank)*                      |
-| **Url**                  | `RooCode: Vector Store` | `http://10.0.0.152:6333`                        |
+| **Url**                  | `RooCode: Vector Store` | `https://qdrant.internal.thinkheads.ai`         |
 
 ## 4. Advanced Configuration
 

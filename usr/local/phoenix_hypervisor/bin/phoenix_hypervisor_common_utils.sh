@@ -29,32 +29,6 @@
 # --- Shell Settings ---
 set -e # Exit immediately if a command exits with a non-zero status.
 set -o pipefail # Return the exit status of the last command in the pipe that failed.
-
-# --- Global Constants ---
-export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
-export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
-export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
-export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.schema.json"
-export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
-
-# --- Dynamic LXC_CONFIG_FILE Path ---
-# This logic allows the script to be used both on the host and inside a container's temporary execution environment.
-# It dynamically sets the path to the LXC configuration file based on the script's execution context.
-SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
-
-if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
-    # We are running inside the container's temporary execution environment.
-    export LXC_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_lxc_configs.json"
-else
-    # We are running on the host. Use the standard absolute path.
-    export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
-fi
-
-# --- Environment Setup ---
-export LANG="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
-export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
-
 # --- Color Codes ---
 COLOR_GREEN='\033[0;32m'
 COLOR_RED='\033[0;31m'
@@ -188,6 +162,201 @@ setup_logging() {
     touch "$log_file" || log_fatal "Failed to create log file: $log_file"
 }
  
+ # --- Exit Function ---
+ exit_script() {
+    local exit_code=$1
+    if [ "$exit_code" -eq 0 ]; then
+        log_info "Script completed successfully."
+    else
+        log_error "Script failed with exit code $exit_code."
+    fi
+    exit "$exit_code"
+}
+
+# --- Global Constants ---
+export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
+export LXC_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.schema.json"
+export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
+export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.schema.json"
+export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
+export PHOENIX_DEBUG="true" # Set to "true" to enable debug logging and 'set -x' in feature scripts
+
+# --- Dynamic LXC_CONFIG_FILE Path ---
+# This logic allows the script to be used both on the host and inside a container's temporary execution environment.
+# It dynamically sets the path to the LXC configuration file based on the script's execution context.
+SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+
+if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+    # We are running inside the container's temporary execution environment.
+    export LXC_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_lxc_configs.json"
+else
+    # We are running on the host. Use the standard absolute path.
+    export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+fi
+
+# --- Environment Setup ---
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
+
+
+# --- Logging Functions ---
+# =====================================================================================
+# Function: log_debug
+# Description: Logs a debug message to stdout and the main log file. This function is only
+#              active when the `PHOENIX_DEBUG` environment variable is set to "true".
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_debug() {
+    # Check if debug mode is enabled
+    if [ "$PHOENIX_DEBUG" == "true" ]; then
+        # Log the debug message with timestamp and script name
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    fi
+}
+
+# =====================================================================================
+# Function: log_info
+# Description: Logs an informational message to stdout and the main log file. This is the
+#              standard logging function for general-purpose messages.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_info() {
+    # Log the informational message with timestamp and script name
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_success
+# Description: Logs a success message to stdout and the main log file. This is used to
+#              indicate that a significant operation has completed successfully.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_success() {
+    # Log the success message with timestamp and script name
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_warn
+# Description: Logs a warning message to stderr and the main log file. This is used for
+#              non-fatal issues that should be brought to the user's attention.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_warn() {
+	# Log the warning message with timestamp and script name to stderr
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_error
+# Description: Logs an error message to stderr and the main log file. This is used for
+#              recoverable errors that do not require the script to exit.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   None.
+# =====================================================================================
+log_error() {
+    # Log the error message with timestamp and script name to stderr
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+}
+
+# =====================================================================================
+# Function: log_fatal
+# Description: Logs a fatal error message to stderr and the main log file, and then exits
+#              the script with a status code of 1. This is used for unrecoverable errors.
+#
+# Arguments:
+#   $@ - The message to log.
+#
+# Returns:
+#   Exits the script with status 1.
+# =====================================================================================
+log_fatal() {
+    # Log the fatal message with timestamp and script name to stderr
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    # Exit the script due to a fatal error
+    exit 1
+}
+
+# =====================================================================================
+# Function: setup_logging
+# Description: Ensures that the log directory exists and that the log file is available for
+#              writing. This function is called at the beginning of the main orchestrator script.
+#
+# Arguments:
+#   $1 - The full path to the log file.
+#
+# Returns:
+#   None. The function will exit with a fatal error if the log directory or file cannot be created.
+# =====================================================================================
+setup_logging() {
+    local log_file="$1"
+    local log_dir
+    log_dir=$(dirname "$log_file")
+
+    if [ ! -d "$log_dir" ]; then
+        # Create the log directory if it doesn't exist
+        mkdir -p "$log_dir" || log_fatal "Failed to create log directory: $log_dir"
+    fi
+    # Touch the log file to ensure it exists
+    touch "$log_file" || log_fatal "Failed to create log file: $log_file"
+}
+ 
+# =====================================================================================
+# Function: update_etc_hosts
+# Description: Adds or updates an entry in /etc/hosts for a given hostname and IP address.
+#              This function is idempotent, ensuring the correct entry exists and
+#              removing any old entries for the same hostname.
+#
+# Arguments:
+#   $1 - The IP address to map.
+#   $2 - The hostname to map.
+#
+# Returns:
+#   None. Exits with a fatal error if /etc/hosts cannot be updated.
+# =====================================================================================
+update_etc_hosts() {
+    local ip_address="$1"
+    local hostname="$2"
+    local hosts_file="/etc/hosts"
+
+    log_info "Ensuring /etc/hosts entry for ${hostname} (${ip_address})..."
+
+    # Remove any existing entries for the hostname
+    if grep -q "\s${hostname}$" "$hosts_file"; then
+        log_info "Removing old /etc/hosts entry for ${hostname}."
+        sed -i "/\s${hostname}$/d" "$hosts_file" || log_fatal "Failed to remove old entry from ${hosts_file}."
+    fi
+
+    # Add the new entry
+    echo "${ip_address} ${hostname}" >> "$hosts_file" || log_fatal "Failed to add new entry to ${hosts_file}."
+    log_success "/etc/hosts updated: ${ip_address} ${hostname}"
+}
+
 # =====================================================================================
 # Function: log_plain_output
 # Description: Logs multi-line output from a variable or command while preserving its
@@ -268,6 +437,41 @@ pct_exec() {
     fi
     return 0
 }
+# =====================================================================================
+# Function: pct_exec_silent
+# Description: Executes a command inside a specified LXC container without any logging
+#              or output. This function is designed for silent checks where only the
+#              exit code is needed.
+#
+# Arguments:
+#   $1 - The CTID of the container.
+#   $@ - The command and its arguments to execute inside the container.
+#
+# Returns:
+#   The exit code of the executed command.
+# =====================================================================================
+pct_exec_silent() {
+    local ctid="$1"
+    shift
+
+    if [[ "$1" == "--" ]]; then
+        shift
+    fi
+
+    local cmd_args=("$@")
+
+    # Context-aware execution
+    if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+        # When inside the container, execute directly and suppress output
+        "${cmd_args[@]}" >/dev/null 2>&1
+        return $?
+    else
+        # When on the host, use 'pct exec' and suppress output
+        pct exec "$ctid" -- "${cmd_args[@]}" >/dev/null 2>&1
+        return $?
+    fi
+}
+
 # =====================================================================================
 # FUNCTION: get_global_config_value
 # DESCRIPTION: Retrieves a global configuration value from the hypervisor config file.
@@ -389,6 +593,8 @@ run_pct_command() {
    if [ $exit_code -ne 0 ]; then
        if [[ "${pct_args[0]}" == "resize" && "$output" == *"disk is already at specified size"* ]]; then
            log_info "Ignoring non-fatal error for 'pct resize': $output"
+       elif [[ "${pct_args[0]}" == "start" && "$output" == *"already running"* ]]; then
+           log_info "Ignoring non-fatal error for 'pct start': container is already running."
        elif [[ "${pct_args[0]}" == "start" && "$output" == *"explicitly configured lxc.apparmor.profile"* ]]; then
            log_error "AppArmor profile conflict detected for CTID ${pct_args[1]}."
            log_error "Output:\n$output"
@@ -440,18 +646,26 @@ run_pct_push() {
         
         local output
         local exit_code=0
-        output=$(pct push "$ctid" "$host_path" "$container_path" 2>&1) || exit_code=$?
+        
+        # Context-aware execution: check if running inside the container's temp dir
+        if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
+            # Inside the container, use 'cp'
+            output=$(cp "$host_path" "$container_path" 2>&1) || exit_code=$?
+        else
+            # On the host, use 'pct push'
+            output=$(pct push "$ctid" "$host_path" "$container_path" 2>&1) || exit_code=$?
+        fi
 
         if [ $exit_code -eq 0 ]; then
-            log_info "File push command succeeded. Verifying file existence in container..."
+            log_info "File push/copy command succeeded. Verifying file existence in container..."
             if pct_exec "$ctid" test -f "$container_path"; then
-                log_success "File successfully pushed and verified in CTID $ctid."
+                log_success "File successfully pushed/copied and verified in CTID $ctid."
                 return 0
             else
-                log_warn "File push command succeeded, but verification failed. File not found at '$container_path'."
+                log_warn "File push/copy command succeeded, but verification failed. File not found at '$container_path'."
             fi
         else
-            log_error "File push command failed with exit code $exit_code."
+            log_error "File push/copy command failed with exit code $exit_code."
             log_error "Output:\n$output"
         fi
 
@@ -462,7 +676,7 @@ run_pct_push() {
         ((attempt++))
     done
 
-    log_fatal "Failed to push file to CTID $ctid after $max_attempts attempts."
+    log_fatal "Failed to push/copy file to CTID $ctid after $max_attempts attempts."
     return 1
 }
 
@@ -872,6 +1086,7 @@ zfs_dataset_exists() {
 # =====================================================================================
 # Function: is_command_available
 # Description: Checks if a command is available inside a specified LXC container.
+#              This function is designed to be silent and is used for idempotent checks.
 #
 # Arguments:
 #   $1 - The CTID of the container.
@@ -884,26 +1099,20 @@ is_command_available() {
     local CTID="$1"
     local command_name="$2"
     
-    log_debug "Checking for command '$command_name' in CTID $CTID..."
-    
-    # First, try the standard 'command -v' which is fast and checks the PATH
-    if pct_exec "$CTID" command -v "$command_name" >/dev/null 2>&1; then
-        log_debug "Command '$command_name' found in PATH for CTID $CTID."
+    # Use the silent executor to check if the command is in the PATH
+    if pct_exec_silent "$CTID" command -v "$command_name"; then
         return 0
     fi
     
-    # If not found in PATH, check for the file's existence in common locations using 'test -f'
-    log_debug "Command '$command_name' not in PATH. Checking common locations with 'test -f' in CTID $CTID..."
+    # If not in PATH, check common locations
     local search_paths=("/usr/bin" "/usr/sbin" "/bin" "/sbin" "/usr/local/bin" "/usr/local/sbin" "/opt/bin" "/usr/local/cuda/bin" "/usr/local/cuda-12.8/bin")
     
     for path in "${search_paths[@]}"; do
-        if pct_exec "$CTID" test -f "${path}/${command_name}"; then
-            log_debug "Command '$command_name' found at ${path}/${command_name} in CTID $CTID."
+        if pct_exec_silent "$CTID" test -f "${path}/${command_name}"; then
             return 0
         fi
     done
 
-    log_debug "Command '$command_name' not found in CTID $CTID after full search."
     return 1
 }
 

@@ -1,0 +1,90 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Phoenix Docker Stacks Configuration Schema",
+    "description": "Schema for defining Docker application stacks and their environment-specific configurations.",
+    "type": "object",
+    "properties": {
+        "docker_stacks": {
+            "type": "object",
+            "description": "A collection of Docker application stack definitions.",
+            "patternProperties": {
+                "^[a-zA-Z0-9_-]+$": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "A brief description of the Docker stack."
+                        },
+                        "compose_file_path": {
+                            "type": "string",
+                            "description": "The relative path to the docker-compose.yml file on the hypervisor."
+                        },
+                        "environments": {
+                            "type": "object",
+                            "description": "Environment-specific configurations for the stack.",
+                            "patternProperties": {
+                                "^[a-zA-Z0-9_-]+$": {
+                                    "type": "object",
+                                    "properties": {
+                                        "variables": {
+                                            "type": "array",
+                                            "description": "Environment variables to inject into the stack.",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "value": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "name",
+                                                    "value"
+                                                ]
+                                            }
+                                        },
+                                        "files": {
+                                            "type": "array",
+                                            "description": "Configuration files to create as Portainer Configs and mount into the stack.",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "source": {
+                                                        "type": "string",
+                                                        "description": "Path to the source file on the hypervisor."
+                                                    },
+                                                    "destination_in_container": {
+                                                        "type": "string",
+                                                        "description": "Destination path inside the container."
+                                                    }
+                                                },
+                                                "required": [
+                                                    "source",
+                                                    "destination_in_container"
+                                                ]
+                                            }
+                                        }
+                                    },
+                                    "additionalProperties": false
+                                }
+                            },
+                            "additionalProperties": false
+                        }
+                    },
+                    "required": [
+                        "compose_file_path",
+                        "environments"
+                    ],
+                    "additionalProperties": false
+                }
+            },
+            "additionalProperties": false
+        }
+    },
+    "required": [
+        "docker_stacks"
+    ],
+    "additionalProperties": false
+}

@@ -4,21 +4,55 @@
     "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
     "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
     "lxc_configs": {
+        "905": {
+            "name": "NAT-Gateway-Template",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 1024,
+            "cores": 1,
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 8,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.205/24",
+                "gw": "10.0.0.1",
+                "nameservers": "8.8.8.8"
+            },
+            "mac_address": "52:54:00:AA:BB:C9",
+            "gpu_assignment": "none",
+            "portainer_role": "none",
+            "unprivileged": true,
+            "features": [
+                "base_setup",
+                "nat_gateway"
+            ],
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
+            "template_snapshot_name": "final-form",
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true
+        },
         "900": {
-            "name": "Template-Base",
+            "name": "Copy-Base",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
-            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
+            "clone_from_ctid": "905",
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
                 "ip": "10.0.0.200/24",
-                "gw": "10.0.0.1"
+                "gw": "10.0.0.1",
+                "nameservers": "10.0.0.205"
             },
             "mac_address": "52:54:00:AA:BB:CC",
             "gpu_assignment": "none",
@@ -30,19 +64,20 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
-            "template_snapshot_name": "pre-configured",
+            "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true
         },
         "901": {
-            "name": "Template-GPU",
+            "name": "Copy-Cuda12.8",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -53,188 +88,27 @@
             "gpu_assignment": "0, 1",
             "portainer_role": "none",
             "unprivileged": true,
-            "clone_from_ctid": "900",
+            "clone_from_ctid": "905",
             "features": [
                 "nvidia"
             ],
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
-            "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
-        },
-        "902": {
-            "name": "Template-Docker",
-            "start_at_boot": false,
-            "boot_order": 0,
-            "boot_delay": 0,
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.202/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:CE",
-            "gpu_assignment": "none",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "900",
-            "features": [
-                "docker"
-            ],
-            "pct_options": [
-                "nesting=1",
-                "keyctl=1",
-                "mknod=1"
-            ],
-            "lxc_options": [
-                "lxc.cgroup2.devices.allow=a",
-                "lxc.mount.entry=/dev/fuse dev/fuse none bind,create=file"
-            ],
-            "template_snapshot_name": "pre-configured",
+            "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
-            "tests": {
-                "health_checks": [
-                    {
-                        "name": "Check Docker Service",
-                        "type": "script",
-                        "path": "docker/check_docker_service.sh"
-                    },
-                    {
-                        "name": "Check Network Access",
-                        "type": "script",
-                        "path": "docker/check_network_access.sh"
-                    },
-                    {
-                        "name": "Check DNS Resolution",
-                        "type": "script",
-                        "path": "docker/check_dns_resolution.sh"
-                    }
-                ],
-                "integration_tests": [
-                    {
-                        "name": "Test Docker Hello World",
-                        "type": "script",
-                        "path": "docker/test_docker_hello_world.sh"
-                    },
-                    {
-                        "name": "Test Docker Storage Driver",
-                        "type": "script",
-                        "path": "docker/test_docker_storage_driver.sh"
-                    },
-                    {
-                        "name": "Test AppArmor Confinement",
-                        "type": "script",
-                        "path": "docker/test_apparmor_confinement.sh"
-                    }
-                ]
-            }
-        },
-        "903": {
-            "name": "Template-Docker-GPU",
-            "start_at_boot": false,
-            "boot_order": 0,
-            "boot_delay": 0,
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.203/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:CF",
-            "gpu_assignment": "0,1",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "901",
-            "features": [
-                "docker"
-            ],
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ],
-            "template_snapshot_name": "pre-configured",
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "enable_lifecycle_snapshots": true
         },
         "910": {
-            "name": "Portainer",
-            "memory_mb": 32768,
-            "cores": 6,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.99/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:67:89:99",
-            "gpu_assignment": "none",
-            "portainer_role": "server",
-            "unprivileged": true,
-            "clone_from_ctid": "902",
-            "features": [
-                "docker"
-            ],
-            "firewall": {
-                "enabled": true,
-                "rules": [
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "9443"
-                    }
-                ]
-            },
-            "ports": [
-                "9443:9443",
-                "9001:9001"
-            ],
-            "dependencies": [
-                "953"
-            ],
-            "volumes": [
-                {
-                    "name": "portainer_data",
-                    "pool": "quickOS-shared-prod-data-volumes",
-                    "size_gb": 10,
-                    "mount_point": "/data"
-                }
-            ],
-            "start_at_boot": true,
-            "boot_order": 4,
-            "boot_delay": 5,
-            "pct_options": [
-                "nesting=1",
-                "keyctl=1"
-            ],
-            "apparmor_profile": "lxc-phoenix-v2",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.mount.auto=sys:rw"
-            ]
-        },
-        "920": {
-            "name": "Template-VLLM",
+            "name": "Copy-VLLM-GPUx2",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
             "memory_mb": 72000,
             "cores": 10,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 64,
+            "storage_size_gb": 128,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
@@ -250,16 +124,139 @@
                 "nvidia",
                 "vllm"
             ],
-            "pct_options": [],
-            "template_snapshot_name": "pre-configured",
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 4096
+                },
+                "CacheConfig": {
+                    "quantization": "awq_marlin",
+                    "gpu_memory_utilization": 0.50
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 2
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2.5-7b-awq"
+                }
+            },
+            "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "950": {
-            "name": "vllm-qwen2.5-7b-awq",
+        "911": {
+            "name": "Copy-VLLM-GPU0",
+            "clone_from_ctid": "901",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 72000,
+            "cores": 10,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 64,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.221/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:D2",
+            "gpu_assignment": "0",
+            "features": [
+                "nvidia",
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2-7B-Instruct",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 8192
+                },
+                "CacheConfig": {
+                    "quantization": "fp8",
+                    "gpu_memory_utilization": 0.9
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2-7b-fp8"
+                }
+            },
+            "template_snapshot_name": "final-form",
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
+        },
+        "912": {
+            "name": "Copy-VLLM-GPU1",
+            "clone_from_ctid": "901",
+            "start_at_boot": false,
+            "boot_order": 0,
+            "boot_delay": 0,
+            "memory_mb": 72000,
+            "cores": 10,
+            "storage_pool": "quickOS-lxc-disks",
+            "storage_size_gb": 64,
+            "network_config": {
+                "name": "eth0",
+                "bridge": "vmbr0",
+                "ip": "10.0.0.222/24",
+                "gw": "10.0.0.1"
+            },
+            "mac_address": "52:54:00:AA:BB:D3",
+            "gpu_assignment": "1",
+            "features": [
+                "nvidia",
+                "vllm"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen2-7B-Instruct",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 8192
+                },
+                "CacheConfig": {
+                    "quantization": "fp8",
+                    "gpu_memory_utilization": 0.9
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "qwen2-7b-fp8"
+                }
+            },
+            "template_snapshot_name": "final-form",
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
+        },
+        "801": {
+            "name": "granite-embedding",
             "memory_mb": 72000,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -267,14 +264,14 @@
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.150/24",
+                "ip": "10.0.0.141/24",
                 "gw": "10.0.0.1"
             },
-            "mac_address": "52:54:00:67:89:B0",
+            "mac_address": "52:54:00:67:89:A1",
             "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "920",
+            "clone_from_ctid": "911",
             "features": [
                 "vllm"
             ],
@@ -282,44 +279,26 @@
             "ports": [
                 "8000:8000"
             ],
-            "vllm_model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
-            "vllm_quantization": "awq_marlin",
-            "vllm_max_model_len": 32768,
-            "vllm_gpu_memory_utilization": 0.85,
-            "vllm_tensor_parallel_size": 1,
-            "vllm_served_model_name": "qwen2.5-7b-awq",
-            "vllm_model_type": "chat",
-            "vllm_port": 8000,
-            "vllm_trust_remote_code": true,
-            "vllm_parameters": {
-                "dtype": "float16",
-                "kv_cache_dtype": "auto",
-                "max_model_len": 32768,
-                "gpu_memory_utilization": 0.85,
-                "max_num_batched_tokens": 8192,
-                "max_num_seqs": 1
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "ibm-granite/granite-embedding-english-r2",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 1024
+                },
+                "CacheConfig": {
+                    "gpu_memory_utilization": 0.1
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "ibm-granite/granite-embedding-english-r2"
+                }
             },
-            "vllm_args": [
-                "--quantization",
-                "awq_marlin",
-                "--max-model-len",
-                "32768",
-                "--gpu-memory-utilization",
-                "0.85",
-                "--tensor-parallel-size",
-                "1",
-                "--served-model-name",
-                "qwen2.5-7b-awq",
-                "--trust-remote-code",
-                "--dtype",
-                "float16",
-                "--kv-cache-dtype",
-                "auto",
-                "--max-num-batched-tokens",
-                "8192",
-                "--max-num-seqs",
-                "1"
-            ],
+            "pct_options": [],
             "firewall": {
                 "enabled": true,
                 "rules": [
@@ -333,115 +312,7 @@
                 ]
             },
             "dependencies": [
-                "953"
-            ],
-            "start_at_boot": true,
-            "boot_order": 3,
-            "boot_delay": 5,
-            "integration_tests": {
-                "script": "run_vllm_integration_tests.sh"
-            },
-            "run_integration_tests": true,
-            "zfs_volumes": [
-                {
-                    "name": "vllm_models",
-                    "pool": "fastData-shared-bulk-data",
-                    "size_gb": 50,
-                    "mount_point": "/vllm_models"
-                }
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ],
-            "tests": {
-                "health_checks": [
-                    {
-                        "name": "Dummy Pass",
-                        "type": "script",
-                        "path": "health_checks/dummy_pass.sh"
-                    },
-                    {
-                        "name": "Dummy Fail",
-                        "type": "script",
-                        "path": "health_checks/dummy_fail.sh"
-                    }
-                ],
-                "integration_tests": [
-                    {
-                        "name": "vLLM Context Window Test",
-                        "type": "script",
-                        "path": "vllm/test_vllm_context_window.py"
-                    },
-                    {
-                        "name": "vLLM Responsiveness Test",
-                        "type": "script",
-                        "path": "vllm/test_vllm_responsiveness.py"
-                    }
-                ]
-            },
-            "vllm": [
-                {
-                    "name": "vLLM Integration Tests",
-                    "type": "script",
-                    "path": "run_vllm_integration_tests.sh"
-                }
-            ]
-        },
-        "951": {
-            "name": "vllm-granite-embed-r2",
-            "memory_mb": 72000,
-            "cores": 6,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 128,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.151/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:67:89:B1",
-            "gpu_assignment": "0",
-            "unprivileged": true,
-            "portainer_role": "none",
-            "clone_from_ctid": "920",
-            "features": [
-                "vllm"
-            ],
-            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
-            "ports": [
-                "8000:8000"
-            ],
-            "vllm_model": "ibm-granite/granite-embedding-english-r2",
-            "vllm_served_model_name": "ibm-granite/granite-embedding-english-r2",
-            "vllm_model_type": "embedding",
-            "vllm_tensor_parallel_size": 1,
-            "vllm_gpu_memory_utilization": 0.1,
-            "vllm_max_model_len": 1024,
-            "pct_options": [],
-            "vllm_args": [
-                "--tensor-parallel-size",
-                "1",
-                "--gpu-memory-utilization",
-                "0.10",
-                "--max-model-len",
-                "1024"
-            ],
-            "firewall": {
-                "enabled": true,
-                "rules": [
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "8000"
-                    }
-                ]
-            },
-            "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 3,
@@ -474,73 +345,72 @@
                 ]
             }
         },
-        "952": {
-            "name": "qdrant-VSCodeRag",
-            "memory_mb": 2048,
-            "cores": 2,
+        "802": {
+            "name": "granite-3.3-8b-fp8",
+            "memory_mb": 72000,
+            "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 128,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.152/24",
+                "ip": "10.0.0.142/24",
                 "gw": "10.0.0.1"
             },
-            "mac_address": "52:54:00:67:89:B2",
-            "gpu_assignment": "none",
+            "mac_address": "52:54:00:67:89:A2",
+            "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "902",
+            "clone_from_ctid": "911",
             "features": [
-                "docker"
+                "vllm"
             ],
-            "application_script": "phoenix_hypervisor_lxc_952.sh",
+            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
             "ports": [
-                "6333:6333",
-                "6334:6334"
+                "8001:8000"
             ],
-            "health_check": {
-                "command": "curl -s --fail http://localhost:6333",
-                "retries": 5,
-                "interval": 5
-            },
-            "pct_options": [
-                "keyctl=1",
-                "nesting=1",
-                "mknod=1"
-            ],
-            "firewall": {
-                "enabled": true,
-                "rules": [
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "6333"
-                    }
-                ]
-            },
-            "dependencies": [
-                "953"
-            ],
-            "volumes": [
-                {
-                    "name": "qdrant_data",
-                    "pool": "quickOS-shared-prod-data-volumes",
-                    "size_gb": 20,
-                    "mount_point": "/qdrant/storage"
+            "vllm_engine_config": {
+                "ModelConfig": {
+                    "model": "Qwen/Qwen3-4B-Thinking-2507-FP8",
+                    "trust_remote_code": true,
+                    "dtype": "auto",
+                    "max_model_len": 2048
+                },
+                "CacheConfig": {
+                    "quantization": "fp8",
+                    "gpu_memory_utilization": 0.85
+                },
+                "ParallelConfig": {
+                    "tensor_parallel_size": 1
+                },
+                "ServerConfig": {
+                    "host": "0.0.0.0",
+                    "port": 8000,
+                    "served_model_name": "Qwen3-4B-FP8"
                 }
-            ],
+            },
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
+            "dependencies": [
+                "101"
+            ],
+            "zfs_volumes": [
+                {
+                    "name": "vllm_models",
+                    "pool": "fastData-shared-bulk-data",
+                    "size_gb": 50,
+                    "mount_point": "/vllm_models"
+                }
+            ],
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": false,
-            "lxc_options": []
+            "apparmor_manages_nesting": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ]
         },
-        "953": {
-            "name": "Nginx-VscodeRag",
+        "101": {
+            "name": "Nginx-Phoenix",
             "memory_mb": 4096,
             "swap_mb": 512,
             "cores": 4,
@@ -550,7 +420,8 @@
                 "name": "eth0",
                 "bridge": "vmbr0",
                 "ip": "10.0.0.153/24",
-                "gw": "10.0.0.1"
+                "gw": "10.0.0.1",
+                "nameservers": "10.0.0.153"
             },
             "mac_address": "52:54:00:67:89:B3",
             "gpu_assignment": "none",
@@ -558,87 +429,64 @@
             "portainer_role": "infrastructure",
             "clone_from_ctid": "900",
             "features": [
-                "base_setup"
-            ],
-            "pct_options": [
-                "nesting=1"
-            ],
-            "application_script": "phoenix_hypervisor_lxc_953.sh",
-            "firewall": {
-                "enabled": true
-            },
-            "start_at_boot": true,
-            "boot_order": 1,
-            "boot_delay": 5,
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ]
-        },
-        "954": {
-            "name": "n8n-phoenix",
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.154/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:67:89:B4",
-            "gpu_assignment": "none",
-            "unprivileged": true,
-            "portainer_role": "none",
-            "clone_from_ctid": "902",
-            "features": [],
-            "application_script": "phoenix_hypervisor_lxc_954.sh",
-            "ports": [
-                "5678:5678"
+                "base_setup",
+                "dns_server",
+                "trusted_ca"
             ],
             "pct_options": [
                 "nesting=1"
             ],
             "lxc_options": [
-                "lxc.cgroup2.devices.allow=a",
-                "lxc.cap.keep=sys_admin,mknod,sys_chroot",
-                "lxc.mount.auto=proc:rw sys:rw",
-                "lxc.apparmor.allow_nesting=1",
-                "lxc.apparmor.profile=unconfined"
+                "lxc.mount.auto:sys:rw"
             ],
+            "application_script": "phoenix_hypervisor_lxc_101.sh",
             "firewall": {
                 "enabled": true,
                 "rules": [
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "5678"
+                        "port": "80"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "443"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.101",
+                        "proto": "tcp",
+                        "port": "9443"
                     }
                 ]
             },
-            "dependencies": [
-                "953"
-            ],
-            "volumes": [
-                {
-                    "name": "n8n_data",
-                    "pool": "quickOS-shared-prod-data-volumes",
-                    "size_gb": 10,
-                    "mount_point": "/home/node/.n8n"
-                }
-            ],
+            "dependencies": [],
             "start_at_boot": true,
-            "boot_order": 3,
+            "boot_order": 1,
             "boot_delay": 5,
             "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "apparmor_manages_nesting": true,
+            "zfs_volumes": [
+                {
+                    "name": "nginx_logs",
+                    "pool": "quickOS-lxc-persistent-data",
+                    "size_gb": 1,
+                    "mount_point": "/logs/nginx"
+                }
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/nginx/ssl"
+                }
+            ]
         },
-        "955": {
-            "name": "ollama-oWUI",
+        "914": {
+            "name": "ollama-gpu0",
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -664,7 +512,7 @@
             ],
             "pct_options": [],
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 2,
@@ -675,45 +523,8 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "956": {
-            "name": "openWebUI-phoenix",
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.156/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:67:89:B6",
-            "gpu_assignment": "none",
-            "unprivileged": true,
-            "portainer_role": "none",
-            "clone_from_ctid": "902",
-            "features": [
-                "docker"
-            ],
-            "application_script": "phoenix_hypervisor_lxc_956.sh",
-            "ports": [
-                "8080:8080"
-            ],
-            "dependencies": [
-                "953",
-                "955"
-            ],
-            "start_at_boot": true,
-            "boot_order": 3,
-            "boot_delay": 5,
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ]
-        },
-        "957": {
-            "name": "llamacpp",
+        "917": {
+            "name": "llamacpp-gpu0",
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -725,7 +536,7 @@
                 "gw": "10.0.0.1"
             },
             "mac_address": "52:54:00:67:89:B7",
-            "gpu_assignment": "1",
+            "gpu_assignment": "0",
             "unprivileged": true,
             "portainer_role": "none",
             "clone_from_ctid": "901",
@@ -737,7 +548,7 @@
                 "8081:8081"
             ],
             "dependencies": [
-                "953"
+                "101"
             ],
             "start_at_boot": true,
             "boot_order": 2,
@@ -748,235 +559,116 @@
                 "lxc.apparmor.profile=unconfined"
             ]
         },
-        "960": {
-            "name": "monitoring-stack",
-            "memory_mb": 4096,
-            "cores": 4,
+        "103": {
+            "name": "Step-CA",
+            "start_at_boot": true,
+            "boot_order": 1,
+            "boot_delay": 5,
+            "memory_mb": 1024,
+            "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 64,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.160/24",
-                "gw": "10.0.0.1"
+                "ip": "10.0.0.10/24",
+                "gw": "10.0.0.1",
+                "nameservers": "8.8.8.8"
             },
-            "mac_address": "52:54:00:67:89:C0",
+            "mac_address": "52:54:00:AA:BB:CA",
             "gpu_assignment": "none",
-            "unprivileged": true,
             "portainer_role": "none",
-            "clone_from_ctid": "903",
+            "unprivileged": true,
+            "clone_from_ctid": "900",
             "features": [
-                "docker"
+                "base_setup",
+                "step_ca"
             ],
-            "application_script": "phoenix_hypervisor_lxc_960.sh",
-            "ports": [
-                "3000:3000",
-                "9090:9090"
-            ],
-            "dependencies": [
-                "953"
-            ],
-            "start_at_boot": true,
-            "boot_order": 4,
-            "boot_delay": 5,
+            "application_script": "phoenix_hypervisor_lxc_103.sh",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
-        },
-        "101": {
-            "name": "test-base-setup",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 1024,
-            "cores": 1,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.101/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A1",
-            "gpu_assignment": "none",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "900",
-            "features": [
-                "base_setup"
             ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
+            "zfs_volumes": [
+                {
+                    "name": "step_ca_ssl",
+                    "pool": "quickOS-lxc-persistent-data",
+                    "size_gb": 1,
+                    "mount_point": "/etc/step-ca/ssl"
+                }
+            ]
         },
         "102": {
-            "name": "test-docker",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
+            "name": "Traefik-Internal",
+            "start_at_boot": true,
+            "boot_order": 2,
+            "boot_delay": 5,
             "memory_mb": 2048,
             "cores": 2,
             "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
+            "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
                 "bridge": "vmbr0",
-                "ip": "10.0.0.102/24",
-                "gw": "10.0.0.1"
+                "ip": "10.0.0.12/24",
+                "gw": "10.0.0.1",
+                "nameservers": "10.0.0.153"
             },
-            "mac_address": "52:54:00:AA:BB:A2",
+            "mac_address": "52:54:00:AA:BB:CB",
             "gpu_assignment": "none",
             "portainer_role": "none",
             "unprivileged": true,
             "clone_from_ctid": "900",
             "features": [
-                "docker"
+                "base_setup",
+                "traefik",
+                "trusted_ca"
+            ],
+            "application_script": "phoenix_hypervisor_lxc_102.sh",
+            "dependencies": [
+                "103"
             ],
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
-            "pct_options": [
-                "nesting=1",
-                "keyctl=1"
+            "enable_lifecycle_snapshots": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "443"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "80"
+                    }
+                ]
+            },
+            "zfs_volumes": [
+                {
+                    "name": "traefik_config",
+                    "pool": "quickOS-lxc-persistent-data",
+                    "size_gb": 1,
+                    "mount_point": "/etc/traefik"
+                }
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/traefik/ssl"
+                }
             ]
-        },
-        "103": {
-            "name": "test-nvidia",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 4096,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.103/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A3",
-            "gpu_assignment": "0",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "901",
-            "features": [
-                "nvidia"
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
-        },
-        "104": {
-            "name": "test-ollama",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 8192,
-            "cores": 4,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 64,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.104/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A4",
-            "gpu_assignment": "0",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "901",
-            "features": [
-                "nvidia",
-                "ollama"
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
-        },
-        "105": {
-            "name": "test-portainer",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.105/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A5",
-            "gpu_assignment": "none",
-            "portainer_role": "server",
-            "unprivileged": true,
-            "clone_from_ctid": "902",
-            "features": [
-                "docker"
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "pct_options": [
-                "nesting=1",
-                "keyctl=1"
-            ]
-        },
-        "106": {
-            "name": "test-python-api",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 2048,
-            "cores": 2,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 32,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.106/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A6",
-            "gpu_assignment": "none",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "900",
-            "features": [
-                "python_api_service"
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
-        },
-        "107": {
-            "name": "test-vllm",
-            "start_at_boot": false,
-            "boot_order": 99,
-            "boot_delay": 0,
-            "memory_mb": 16384,
-            "cores": 8,
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 128,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.107/24",
-                "gw": "10.0.0.1"
-            },
-            "mac_address": "52:54:00:AA:BB:A7",
-            "gpu_assignment": "0",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "clone_from_ctid": "901",
-            "features": [
-                "nvidia",
-                "python_api_service",
-                "vllm"
-            ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true
         }
     }
 }

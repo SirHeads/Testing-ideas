@@ -13,9 +13,11 @@ tags:
   - "vLLM"
   - "Qdrant"
   - "Nginx"
+  - "Traefik"
+  - "Step-CA"
   - "Ollama"
   - "n8n"
-review_cadence: "Annual"
+  review_cadence: "Annual"
 last_reviewed: "2025-09-29"
 ---
 
@@ -27,46 +29,42 @@ This document provides a single, authoritative, and RAG-optimized overview of al
 
 ## 2. System Architecture
 
-The LXC containers operate within a unified network bridge (`vmbr0`) and are fronted by a central NGINX API Gateway (CTID 953). This architecture simplifies service discovery, centralizes access control, and provides a consistent interface for all backend services.
+The LXC containers operate within a unified network bridge (`vmbr0`) and are part of a three-tiered networking model. This model consists of an Nginx gateway for external traffic, a Traefik proxy for the internal service mesh, and a Step-CA for automated certificate management.
 
 ### High-Level Interaction Diagram
 
 ```mermaid
 graph TD
-    subgraph "External Access"
-        User[User/Client]
+    subgraph "External Network"
+        A[Client]
     end
 
-    subgraph "Network Infrastructure"
-        API_Gateway[LXC 953: NGINX API Gateway]
+    subgraph "Phoenix Hypervisor"
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
+        end
+
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
+
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+            F[VM 1002: Dr-Phoenix]
+            G[Other Services]
+        end
     end
 
-    subgraph "Core AI/ML Services"
-        VLLM_Chat[LXC 950: vLLM Chat Service]
-        VLLM_Embed[LXC 951: vLLM Embedding Service]
-        Qdrant[LXC 952: Qdrant Vector DB]
-        Ollama[LXC 955: Ollama Service]
-        LlamaCPP[LXC 957: Llama.cpp Service]
-    end
-
-    subgraph "Supporting Services"
-        N8N[LXC 954: n8n Workflow Automation]
-        WebUI[LXC 956: Open WebUI]
-        Portainer[LXC 910: Portainer]
-    end
-
-    User -- HTTPS --> API_Gateway
-    API_Gateway -- Routes to --> VLLM_Chat
-    API_Gateway -- Routes to --> VLLM_Embed
-    API_Gateway -- Routes to --> Qdrant
-    API_Gateway -- Routes to --> Ollama
-    API_Gateway -- Routes to --> LlamaCPP
-    API_Gateway -- Routes to --> N8N
-    API_Gateway -- Routes to --> WebUI
-    API_Gateway -- Routes to --> Portainer
-
-    WebUI -- Interacts with --> Ollama
-    VLLM_Embed -- Stores embeddings in --> Qdrant
+    A -- HTTPS --> B
+    B -- Routes Traffic --> C
+    C -- Routes to --> E
+    C -- Routes to --> F
+    C -- Routes to --> G
+    D -- Issues Certificates --> C
+    C -- Provides Certificates --> E
+    C -- Provides Certificates --> F
+    C -- Provides Certificates --> G
 ```
 
 ---
@@ -75,57 +73,24 @@ graph TD
 
 This section provides a detailed breakdown of each container's purpose, key software, resource allocation, and configuration details, sourced directly from `phoenix_lxc_configs.json`.
 
-### Container 950: vLLM Chat Service (`vllm-qwen2.5-7b-awq`)
+### VM 1002: Dr-Phoenix
 
-*   **Purpose**: Hosts a vLLM instance serving the `Qwen/Qwen2.5-7B-Instruct-AWQ` model for high-performance chat completions.
-*   **Key Software**: vLLM
+*   **Purpose**: Hosts all Dockerized services, which are now managed as declarative stacks.
+*   **Key Software**: Docker
+*   **Declarative Stacks**: This VM is configured to run a variety of Docker stacks, as defined in `phoenix_vm_configs.json` and `phoenix_stacks_config.json`. These stacks include services such as Qdrant, vLLM, Ollama, and n8n.
 *   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 72000 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
+    *   **CPU**: 4 cores
+    *   **Memory**: 4096 MB
+    *   **Storage**: 64 GB
 *   **Configuration Details**:
-    *   **IP Address**: `10.0.0.150`
-    *   **Port**: `8000`
-    *   **Model**: `Qwen/Qwen2.5-7B-Instruct-AWQ`
-    *   **Quantization**: `awq_marlin`
-    *   **Max Model Length**: 32768
-    *   **GPU Memory Utilization**: 0.85
-    *   **Tensor Parallel Size**: 1
+    *   **IP Address**: `10.0.0.102`
+    *   **Data Persistence**: Data is managed by Docker volumes within the stacks.
 
-### Container 951: Embedding Service (`vllm-granite-embed-r2`)
+---
 
-*   **Purpose**: Hosts a vLLM instance serving the `ibm-granite/granite-embedding-english-r2` model for generating text embeddings.
-*   **Key Software**: vLLM
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 72000 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.151`
-    *   **Port**: `8000`
-    *   **Model**: `ibm-granite/granite-embedding-english-r2`
-    *   **Max Model Length**: 1024
-    *   **GPU Memory Utilization**: 0.10
-    *   **Tensor Parallel Size**: 1
+### LXC 101: Nginx Gateway
 
-### Container 952: Vector Database (`qdrant-VSCodeRag`)
-
-*   **Purpose**: Provides a high-performance, scalable vector database for storing and searching text embeddings.
-*   **Key Software**: Qdrant (via Docker)
-*   **Resource Allocation**:
-    *   **CPU**: 2 cores
-    *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.152`
-    *   **Port**: `6333`
-    *   **Data Persistence**: Data is stored in a dedicated 20GB volume mounted at `/qdrant/storage`.
-
-### Container 953: API Gateway (`Nginx-VscodeRag`)
-
-*   **Purpose**: Functions as a high-performance reverse proxy and API gateway, serving as the central, secure entry point for all backend services.
+*   **Purpose**: Acts as the primary external-facing Nginx reverse proxy and API gateway.
 *   **Key Software**: Nginx
 *   **Resource Allocation**:
     *   **CPU**: 4 cores
@@ -133,57 +98,41 @@ This section provides a detailed breakdown of each container's purpose, key soft
     *   **Storage**: 32 GB
 *   **Configuration Details**:
     *   **IP Address**: `10.0.0.153`
-    *   **Functionality**: Routes requests to backend services based on hostname and request path. Manages SSL termination.
+    *   **Data Persistence**: Logs are stored in a dedicated ZFS volume.
 
-### Container 954: Workflow Automation (`n8n-phoenix`)
+### LXC 102: Traefik Internal Proxy
 
-*   **Purpose**: Hosts an n8n instance for workflow automation and service integration.
-*   **Key Software**: n8n (via Docker)
+*   **Purpose**: Acts as an internal service mesh and reverse proxy, with automatic certificate management.
+*   **Key Software**: Traefik
 *   **Resource Allocation**:
     *   **CPU**: 2 cores
     *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
+    *   **Storage**: 16 GB
 *   **Configuration Details**:
-    *   **IP Address**: `10.0.0.154`
-    *   **Port**: `5678`
-    *   **Data Persistence**: Data is stored in a dedicated 10GB volume mounted at `/home/node/.n8n`.
+    *   **IP Address**: `10.0.0.12`
+    *   **Data Persistence**: Configuration is stored in a dedicated ZFS volume.
 
-### Container 955: Ollama Service (`ollama-oWUI`)
+### LXC 103: Step-CA
 
-*   **Purpose**: Provides a standardized, GPU-accelerated base for running Ollama models.
-*   **Key Software**: Ollama
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 32768 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `0`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.155`
-    *   **Port**: `11434`
-
-### Container 956: Web Interface (`openWebUI-phoenix`)
-
-*   **Purpose**: Provides a web-based user interface for interacting with the Ollama API.
-*   **Key Software**: Open WebUI (via Docker)
+*   **Purpose**: Hosts a Smallstep Step-CA instance, which serves as the internal certificate authority.
+*   **Key Software**: Step-CA
 *   **Resource Allocation**:
     *   **CPU**: 2 cores
-    *   **Memory**: 2048 MB
-    *   **Storage**: 32 GB
+    *   **Memory**: 1024 MB
+    *   **Storage**: 16 GB
 *   **Configuration Details**:
-    *   **IP Address**: `10.0.0.156`
-    *   **Port**: `8080`
-    *   **Backend**: Connects to the Ollama service at `10.0.0.155:11434`.
+    *   **IP Address**: `10.0.0.10`
+    *   **Data Persistence**: SSL certificates and other CA data are stored in a dedicated ZFS volume.
 
-### Container 957: Llama.cpp Service (`llamacpp`)
+---
 
-*   **Purpose**: Provides a GPU-accelerated environment for compiling and running models with `llama.cpp`.
-*   **Key Software**: `llama.cpp`
-*   **Resource Allocation**:
-    *   **CPU**: 6 cores
-    *   **Memory**: 32768 MB
-    *   **Storage**: 128 GB
-    *   **GPU**: Passthrough of GPU `1`
-*   **Configuration Details**:
-    *   **IP Address**: `10.0.0.157`
-    *   **Port**: `8081` (if server is run)
-    *   **Compilation**: Compiled with cuBLAS support for NVIDIA GPUs.
+## 4. Advanced Configuration Patterns
+
+### 4.1. The Application Script Pattern
+
+A key architectural pattern in the Phoenix Hypervisor is the use of an `application_script` defined in `phoenix_lxc_configs.json`. This pattern separates the installation of a feature's dependencies from its runtime configuration and execution.
+
+*   **Feature Script (`lxc_setup/`)**: Responsible for installing the necessary software and libraries (e.g., `phoenix_hypervisor_feature_install_vllm.sh` installs vLLM, PyTorch, etc.). This script prepares the container with all the required tools.
+*   **Application Script (`bin/`)**: Responsible for taking the declarative configuration from `phoenix_lxc_configs.json` and dynamically generating the runtime environment. For example, `phoenix_hypervisor_lxc_vllm.sh` reads the `vllm_engine_config` object, generates a systemd service file, and starts the vLLM server.
+
+This separation of concerns ensures that our feature scripts are modular and reusable, while the application scripts provide a powerful mechanism for declarative, runtime configuration. The recent refactoring of the vLLM deployment serves as the canonical example of this pattern.

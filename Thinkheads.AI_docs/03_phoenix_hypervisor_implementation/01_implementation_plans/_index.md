@@ -91,7 +91,7 @@ This section details the implementation plans for the core components and featur
 
 ### 7.1. ZFS Dataset Structure and Configuration
 
-This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization for the `quickOS` and `fastData` pools.
+This plan incorporates detailed requirements for ZFS dataset configuration, focusing on performance, data integrity, and NVMe optimization for the `quickOS` and `fastData` pools. For a comprehensive overview of the entire storage architecture, please refer to the **[Phoenix Hypervisor Storage Architecture Guide](../00_guides/14_storage_architecture_guide.md)**.
 
 #### 7.1.1. Proposed ZFS Dataset Structure
 
@@ -183,10 +183,9 @@ This section outlines the new snapshot and boot order features that have been ad
 
 #### 7.3.1. Snapshotting
 
-*   **"pre-configured" Snapshot:** A snapshot named `pre-configured` is now automatically created for every container immediately before its application script is executed.
-*   **"final form" Snapshot:** A snapshot named `final-form` is now automatically created for every container at the end of its orchestration process.
+*   **`final-form` Snapshot:** A snapshot named `final-form` is now automatically created for every container at the end of its orchestration process. This snapshot represents the fully provisioned state of the container and is used for cloning new containers from templates.
 
-A new `reconfigure` command has been added to the `phoenix` CLI to allow restoring a container to its "pre-configured" state.
+A new `reconfigure` command has been added to the `phoenix` CLI to allow restoring a container to its `final-form` state.
 
 #### 7.3.2. Boot Order
 
@@ -202,28 +201,10 @@ The following parameters have been added to the `phoenix_lxc_configs.json` file 
 
 This section provides detailed implementation plans for specific LXC containers within the Phoenix Hypervisor ecosystem.
 
-#### 7.4.1. LXC 951: vllm-granite-embed
 
-This plan outlines the deployment, refactoring, and enhancement of LXC container 951, which is dedicated to serving the `ibm-granite/granite-embedding-english-r2` model.
+#### 7.4.2. LXC 101: api-gateway-lxc
 
-**Deployment and Refactoring:**
-
-*   **Unified Application Script:** The deployment process has been refactored to use a single, unified application script, `phoenix_hypervisor_lxc_vllm.sh`, for all vLLM containers.
-*   **Model Type Configuration:** A `vllm_model_type` field has been added to `phoenix_lxc_configs.json` to differentiate between `chat` and `embedding` models, allowing the unified script to adapt its validation logic accordingly.
-
-**Enhancement Plan: Microservices Architecture**
-
-To enhance responsiveness and context-checking, the single-container architecture will be evolved into a microservices-based approach with the following components:
-
-*   **API Gateway:** A single entry point for all incoming requests.
-*   **Load Balancer:** Distributes traffic across multiple service instances.
-*   **Request Queue:** Manages traffic bursts and decouples request ingestion from processing.
-*   **Context Validation Service:** A new microservice to validate the semantic relevance of input data.
-*   **Auto-scaling Group of vLLM Instances:** A pool of `lxc 951` containers that can be automatically scaled.
-
-#### 7.4.2. LXC 953: api-gateway-lxc
-
-This plan details the transformation of LXC container 953 into a dedicated Nginx reverse proxy and API gateway.
+This plan details the transformation of LXC container 101 into a dedicated Nginx reverse proxy and API gateway.
 
 *   **Core Functionality:** The container is provisioned with Nginx and configured to act as a reverse proxy with caching, load balancing, and SSL/TLS termination.
 *   **Security Hardening:** The implementation includes robust security measures, such as rate limiting, security headers, and the integration of ModSecurity (WAF) and Fail2ban.
@@ -233,14 +214,14 @@ This plan details the transformation of LXC container 953 into a dedicated Nginx
 This plan outlines the complete integration and operationalization of the Ollama service within LXC container 955.
 
 *   **Service Management:** A `systemd` service is created to ensure the Ollama process starts automatically on boot and is managed consistently.
-*   **Nginx Reverse Proxy:** The Ollama API is securely exposed to the host network via a reverse proxy configuration in the `api-gateway-lxc` (953).
+*   **Nginx Reverse Proxy:** The Ollama API is securely exposed to the host network via a reverse proxy configuration in the `api-gateway-lxc` (101).
 
 #### 7.4.4. LXC Embedding Setup with Qdrant and vLLM
 
 This plan details the setup for a complete semantic search solution, leveraging high-quality embeddings.
 
 *   **Core Components:**
-    *   **vLLM:** Serves the `Qwen/Qwen3-Embedding-8B-GGUF:Q8_0` model to generate embeddings.
+    *   **vLLM:** Serves a high-performance embedding model, configured declaratively via the `vllm_engine_config` object.
     *   **Qdrant:** Runs in a separate LXC container to store and retrieve embeddings.
     *   **Roocode:** A Python-based application that processes documents, generates embeddings, and interacts with Qdrant.
 *   **Implementation:** The plan provides detailed configuration for vLLM, a setup script for the Qdrant LXC container, and a comprehensive Python integration script for `roocode`.

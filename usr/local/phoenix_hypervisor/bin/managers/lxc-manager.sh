@@ -15,11 +15,63 @@
 # Author: Phoenix Hypervisor Team
 
 # --- Determine script's absolute directory ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
 # --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
+
+# =====================================================================================
+# Function: manage_ca_password_on_hypervisor
+# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
+#              If the file does not exist, a new strong password is generated and stored.
+# Arguments:
+#   $1 - The CTID of the container (expected to be 103).
+# Returns:
+#   None. Exits with a fatal error if directory or file operations fail.
+# =====================================================================================
+ca_password_file_on_host=""
+
+# =====================================================================================
+# Function: manage_ca_password_on_hypervisor
+# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
+#              If the file does not exist, a new strong password is generated and stored
+#              in a temporary location.
+# Arguments:
+#   $1 - The CTID of the container (expected to be 103).
+# Returns:
+#   The path to the temporary password file on the hypervisor. Exits with a fatal error
+#   if file operations fail.
+# =====================================================================================
+manage_ca_password_on_hypervisor() {
+    local CTID="$1"
+    log_info "Managing CA password for CTID $CTID on hypervisor..."
+
+    local final_ca_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
+    local final_ca_password_file="${final_ca_password_dir}/ca_password.txt"
+    ca_password_file_on_host="$final_ca_password_file" # Set global variable to the final path
+
+    log_debug "Final CA password file path: $final_ca_password_file"
+
+    # Ensure the destination directory exists on the hypervisor
+    mkdir -p "$final_ca_password_dir" || log_fatal "Failed to create destination directory for CA password: $final_ca_password_dir."
+
+    if [ -f "$final_ca_password_file" ]; then
+        log_info "CA password file already exists at $final_ca_password_file. No action needed."
+    else
+        log_info "CA password file not found. Generating a new password..."
+        local new_password
+        new_password=$(openssl rand -base64 32)
+        echo "$new_password" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
+        log_debug "Generated and wrote new password to $final_ca_password_file."
+
+        # Set permissions for the final file
+        chmod 644 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
+        log_debug "Set permissions of $final_ca_password_file to 644."
+        log_success "New CA password generated and stored at $final_ca_password_file."
+    fi
+    echo "$final_ca_password_file" # Return the path to the final file
+}
 
 # =====================================================================================
 # Function: validate_inputs
@@ -156,8 +208,9 @@ create_container_from_template() {
     local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
+    local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
-
+ 
     # --- Build the pct create command array ---
     # Using an array for the command arguments is a best practice that avoids issues with word splitting and quoting.
     local pct_create_cmd=(
@@ -206,11 +259,9 @@ clone_container() {
     # These checks ensure that the source container and snapshot are available before proceeding.
     if ! pct status "$source_ctid" > /dev/null 2>&1; then
         log_warn "Source container $source_ctid does not exist yet. Will retry."
-        return 1
     fi
     if ! pct listsnapshot "$source_ctid" | grep -q "$source_snapshot_name"; then
         log_warn "Snapshot '$source_snapshot_name' not found on source container $source_ctid yet. Will retry."
-        return 1
     fi
 
     local hostname=$(jq_get_value "$CTID" ".name") # New hostname for the cloned container
@@ -324,9 +375,58 @@ apply_configurations() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+    local internal_dns_server="10.0.0.153"
+    local fallback_dns
+    fallback_dns=$(get_global_config_value ".network.fallback_dns")
 
-    # Apply network configuration
+    # Dynamic DNS Resolution Logic
+    if pct status 101 > /dev/null 2>&1; then
+        log_info "Internal DNS server (101) is available. Using internal DNS."
+        nameservers="$internal_dns_server"
+    else
+        log_info "Internal DNS server (101) is not available. Using fallback DNS."
+        nameservers="$fallback_dns"
+    fi
+ 
+     # Apply network configuration
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+    if [ -n "$nameservers" ]; then
+        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    fi
+
+    # --- Apply GPU Passthrough Configuration ---
+    # This is a critical step for containers that require GPU access.
+    # By applying this configuration here, we ensure that the container is created
+    # with the correct hardware access from the very beginning, avoiding the need
+    # for a restart later in the provisioning process.
+    local gpu_assignment
+    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment" || echo "none")
+    if [ -n "$gpu_assignment" ] && [ "$gpu_assignment" != "none" ]; then
+        log_info "Applying GPU passthrough configuration for CTID: $CTID"
+        local cgroup_entries=(
+            "lxc.cgroup2.devices.allow: c 195:* rwm"
+            "lxc.cgroup2.devices.allow: c 243:* rwm"
+        )
+        local mount_entries=(
+            "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
+            "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
+            "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
+        )
+        IFS=',' read -ra gpus <<< "$gpu_assignment"
+        for gpu_idx in "${gpus[@]}"; do
+            gpu_idx=$(echo "$gpu_idx" | xargs)
+            local nvidia_device="/dev/nvidia${gpu_idx}"
+            mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
+        done
+
+        for entry in "${mount_entries[@]}" "${cgroup_entries[@]}"; do
+            if ! grep -qF "$entry" "$conf_file"; then
+                echo "$entry" >> "$conf_file" || log_fatal "Failed to add GPU passthrough entry to $conf_file: $entry"
+            fi
+        done
+    fi
+
     log_info "Configurations applied successfully for CTID $CTID."
 }
 
@@ -462,10 +562,88 @@ apply_dedicated_volumes() {
 }
 
 # =====================================================================================
+# Function: apply_mount_points
+# Description: Mounts shared host directories into the container as defined in the
+#              container's specific configuration.
+# =====================================================================================
+apply_mount_points() {
+    local CTID="$1"
+    log_info "Applying host path mount points for CTID: $CTID..."
+
+    local mounts
+    mounts=$(jq_get_value "$CTID" ".mount_points // [] | .[]" || echo "")
+    if [ -z "$mounts" ]; then
+        log_info "No host path mount points to apply for CTID $CTID."
+        return 0
+    fi
+
+    local volume_index=0
+    # Find the next available mount point index
+    while pct config "$CTID" | grep -q "mp${volume_index}:"; do
+        volume_index=$((volume_index + 1))
+    done
+
+    for mount_config in $(echo "$mounts" | jq -c '.'); do
+        local host_path=$(echo "$mount_config" | jq -r '.host_path')
+        local container_path=$(echo "$mount_config" | jq -r '.container_path')
+        local mount_id="mp${volume_index}"
+        local mount_string="${host_path},mp=${container_path}"
+
+        # Idempotency Check
+        if ! pct config "$CTID" | grep -q "mp.*: ${mount_string}"; then
+            log_info "Verifying host path '$host_path' before applying mount..."
+            # --- BEGIN DIAGNOSTIC LOGGING ---
+            log_debug "Checking if host path '$host_path' exists."
+            if [ ! -e "$host_path" ]; then
+                log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
+                # Optionally, you could make this a fatal error to stop the process immediately
+                # log_fatal "Host path '$host_path' does not exist."
+            else
+                log_debug "Host path '$host_path' found."
+            fi
+            # --- END DIAGNOSTIC LOGGING ---
+
+            log_info "Applying mount: ${host_path} -> ${container_path}"
+            run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
+            log_debug "Mount command executed for ${host_path} -> ${container_path} with ID ${mount_id}."
+            volume_index=$((volume_index + 1))
+        else
+            log_info "Mount point ${host_path} -> ${container_path} already configured."
+            log_debug "Skipping mount as it's already configured."
+        fi
+    done
+
+    # --- Special Handling for Nginx Gateway SSL Certificates ---
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Applying special mount for Nginx gateway (CTID 101) SSL certificates..."
+        local ssl_host_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl" # Corrected path to match where CA cert is exported
+        local ssl_container_path="/etc/nginx/ssl"
+        local ssl_mount_id="mp${volume_index}"
+        local ssl_mount_string="${ssl_host_path},mp=${ssl_container_path}"
+
+        log_debug "Checking if central SSL directory exists on host: $ssl_host_path"
+        if [ ! -d "$ssl_host_path" ]; then
+            log_warn "Central SSL directory not found at $ssl_host_path. Nginx may fail if certs are expected."
+        else
+            log_debug "Central SSL directory found on host: $ssl_host_path"
+        fi
+
+        if ! pct config "$CTID" | grep -q "mp.*: ${ssl_mount_string}"; then
+            log_info "Applying Nginx SSL mount: ${ssl_host_path} -> ${ssl_container_path}"
+            run_pct_command set "$CTID" --"${ssl_mount_id}" "$ssl_mount_string" || log_fatal "Failed to apply Nginx SSL mount."
+            log_debug "Nginx SSL mount command executed for ${ssl_host_path} -> ${ssl_container_path} with ID ${ssl_mount_id}."
+        else
+            log_info "Nginx SSL mount point already configured."
+            log_debug "Skipping Nginx SSL mount as it's already configured."
+        fi
+    fi
+}
+
+# =====================================================================================
 # Function: ensure_container_disk_size
 # Description: Ensures that the container's root disk size matches the size specified in the
 #              configuration file. The `pct resize` command is idempotent, so this function
-#              can be run multiple times without causing issues.
+# #              can be run multiple times without causing issues.
 #
 # Arguments:
 #   $1 - The CTID of the container.
@@ -549,7 +727,6 @@ apply_features() {
     log_info "Applying features for CTID: $CTID"
     local features
     features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
-
     if [ -z "$features" ]; then
         log_info "No features to apply for CTID $CTID."
         return 0
@@ -638,7 +815,7 @@ run_application_script() {
         return 0
     fi
 
-    local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path
+    local app_script_path="${PHOENIX_BASE_DIR}/bin/${app_script_name}" # Construct full script path from PHOENIX_BASE_DIR
     log_info "Executing application script inside container: $app_script_name ($app_script_path)"
 
     # Check if the application script exists
@@ -667,10 +844,6 @@ run_application_script() {
     log_info "Temporary directory verified successfully."
 
     # 2. Copy common_utils.sh to the container
-    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
-    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
-        log_fatal "Failed to copy common_utils.sh to container $CTID."
-    fi
 
     # 3. Copy the application script to the container
     log_info "Copying application script to $CTID:$app_script_dest_path..."
@@ -678,30 +851,55 @@ run_application_script() {
         log_fatal "Failed to copy application script to container $CTID."
     fi
 
-    # 3b. Copy http.js if it exists and the app script is for nginx
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
-        local http_js_source_path="${PHOENIX_BASE_DIR}/etc/nginx/scripts/http.js"
-        local http_js_dest_path="${temp_dir_in_container}/http.js"
-        if [ -f "$http_js_source_path" ]; then
-            log_info "Copying http.js to $CTID:$http_js_dest_path..."
-            if ! pct push "$CTID" "$http_js_source_path" "$http_js_dest_path"; then
-                log_fatal "Failed to copy http.js to container $CTID."
+    # --- START OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
+    # If the application script is for the Nginx gateway (101) or Traefik (102), push the necessary configs.
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]] || [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
+        log_info "Packaging and pushing configuration files for $app_script_name..."
+        
+        if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
+            local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
+            local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
+
+            # Create a tarball of the nginx configs on the host
+            log_info "Creating tarball of Nginx configs at ${temp_tarball}"
+            if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
+                sites-available/gateway \
+                scripts \
+                snippets \
+                nginx.conf; then
+                log_fatal "Failed to create Nginx config tarball."
+            fi
+
+            # Push the single tarball to the container
+            if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
+                log_fatal "Failed to push Nginx config tarball to container $CTID."
+            fi
+            
+            # Clean up the temporary tarball on the host
+            rm -f "$temp_tarball"
+        fi
+
+        if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
+            local traefik_config_path="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
+            if [ -f "$traefik_config_path" ]; then
+                if ! pct push "$CTID" "$traefik_config_path" "${temp_dir_in_container}/dynamic_conf.yml"; then
+                    log_fatal "Failed to push Traefik dynamic config to container $CTID."
+                fi
+            else
+                log_warn "Traefik dynamic configuration not found at $traefik_config_path. Skipping."
             fi
         fi
+    fi
+    # --- END OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
+
+    # This block is now redundant and has been removed.
+
+    # 2. Copy common_utils.sh to the container
+    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
+    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
+        log_fatal "Failed to copy common_utils.sh to container $CTID."
     fi
     
-    # 3c. Copy the vllm_gateway config file if it exists and the app script is for nginx
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_953.sh" ]]; then
-        local vllm_gateway_source_path="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/vllm_gateway"
-        local vllm_gateway_dest_path="${temp_dir_in_container}/vllm_gateway"
-        if [ -f "$vllm_gateway_source_path" ]; then
-            log_info "Copying vllm_gateway to $CTID:$vllm_gateway_dest_path..."
-            if ! pct push "$CTID" "$vllm_gateway_source_path" "$vllm_gateway_dest_path"; then
-                log_fatal "Failed to copy vllm_gateway to container $CTID."
-            fi
-        fi
-    fi
-
     # 3d. Copy the LXC config file to the container's temp directory
     local lxc_config_dest_path="${temp_dir_in_container}/phoenix_lxc_configs.json"
     log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
@@ -1035,17 +1233,108 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
-            ensure_container_defined "$ctid"
-            apply_configurations "$ctid"
-            apply_zfs_volumes "$ctid"
-            apply_dedicated_volumes "$ctid"
-            ensure_container_disk_size "$ctid"
-            start_container "$ctid"
-            apply_features "$ctid"
-            run_application_script "$ctid"
-            run_health_check "$ctid"
-            create_template_snapshot "$ctid"
-            log_info "'create' workflow completed for CTID $ctid."
+            if [ "$ctid" -eq 103 ]; then
+                manage_ca_password_on_hypervisor "$ctid"
+            fi
+
+            if ensure_container_defined "$ctid"; then
+                # Ensure the container is stopped before applying configurations that require a restart
+                run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
+                
+                apply_configurations "$ctid"
+                apply_zfs_volumes "$ctid"
+                apply_dedicated_volumes "$ctid"
+                ensure_container_disk_size "$ctid"
+                
+                apply_mount_points "$ctid"
+                # Now, start the container *after* all hardware configurations are applied
+                start_container "$ctid"
+
+                # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
+                if [ "$ctid" -eq 103 ]; then
+                    log_info "Handling CA password file for Step CA container (CTID 103)..."
+                    log_info "Handling CA password file for Step CA container (CTID 103)..."
+                    local final_ca_password_file
+                    final_ca_password_file=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the final file
+
+                    local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
+
+                    # Push the password file from the definitive source on the host to the container
+                    log_info "Pushing CA password file from host '$final_ca_password_file' to container '$ctid:$container_ca_password_path'..."
+                    if ! pct push "$ctid" "$final_ca_password_file" "$container_ca_password_path"; then
+                        log_fatal "Failed to push CA password file to container $ctid."
+                    fi
+                    log_success "CA password file pushed to container successfully."
+
+                    # Set appropriate permissions inside the container
+                    log_info "Setting permissions for CA password file inside container $ctid..."
+                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
+                        log_fatal "Failed to set permissions for CA password file inside container $ctid."
+                    fi
+                    log_success "Permissions set for CA password file inside container."
+                fi
+                # --- END NEW HANDLING ---
+
+                local enable_lifecycle_snapshots
+                enable_lifecycle_snapshots=$(jq_get_value "$ctid" ".enable_lifecycle_snapshots" || echo "false")
+
+                if [ "$enable_lifecycle_snapshots" == "true" ]; then
+                    create_pre_configured_snapshot "$ctid"
+                fi
+
+                # Force set DNS before applying features
+                local fallback_dns
+                fallback_dns=$(get_global_config_value ".network.fallback_dns")
+                if [ -n "$fallback_dns" ]; then
+                    log_info "Forcing DNS to fallback DNS: $fallback_dns"
+                    # Remove Proxmox comments and set DNS
+                    pct exec "$ctid" -- bash -c "sed -i '/# --- BEGIN PVE ---/,/# --- END PVE ---/d' /etc/resolv.conf && echo 'nameserver $fallback_dns' > /etc/resolv.conf" || log_fatal "Failed to force DNS update in container."
+                fi
+
+                apply_features "$ctid"
+                run_application_script "$ctid"
+                run_health_check "$ctid"
+                create_template_snapshot "$ctid"
+
+                if [ "$enable_lifecycle_snapshots" == "true" ]; then
+                    create_final_form_snapshot "$ctid"
+                fi
+
+                # --- Special Handling for Step CA (CTID 103) to Export Root Certificate ---
+                if [ "$ctid" -eq 103 ]; then
+                    log_info "Step CA container (CTID 103) created. Exporting root CA certificate to hypervisor shared storage..."
+                    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
+                    local ca_output_dir="${lxc_persistent_data_base_path}/${ctid}/ssl"
+                    
+                    # Ensure the destination directory exists on the hypervisor
+                    mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
+
+                    local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
+                    local ca_root_cert_dest_path="${ca_output_dir}/phoenix_ca.crt"
+                    if ! pct pull "$ctid" "$ca_root_cert_source_path" "$ca_root_cert_dest_path"; then
+                        log_fatal "Failed to pull root CA certificate from CTID 103 to $ca_root_cert_dest_path."
+                    fi
+                    log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
+
+                    # Set correct ownership for the shared SSL directory for unprivileged containers
+                    log_info "Setting ownership of shared SSL directory for unprivileged access..."
+                    if ! chown -R 100000:100000 "$ca_output_dir"; then
+                        log_fatal "Failed to set ownership of shared SSL directory."
+                    fi
+                    log_success "Ownership of shared SSL directory set successfully."
+                fi
+
+                log_info "'create' workflow completed for CTID $ctid."
+
+                # --- Special Handling for Nginx Gateway (CTID 101) to update hypervisor DNS ---
+                if [ "$ctid" -eq 101 ]; then
+                    log_info "Updating hypervisor's /etc/resolv.conf to use container 101 as the DNS server..."
+                    if ! echo "nameserver 10.0.0.153" > /etc/resolv.conf; then
+                        log_fatal "Failed to update hypervisor's /etc/resolv.conf."
+                    fi
+                    log_success "Hypervisor's DNS updated successfully."
+                fi
+            fi
             ;;
         start)
             log_info "Starting 'start' workflow for CTID $ctid..."
@@ -1077,6 +1366,6 @@ main_lxc_orchestrator() {
 }
 
 # If the script is executed directly, call the main orchestrator
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if [[ "${BASH_SOURCE}" == "${0}" ]]; then
     main_lxc_orchestrator "$@"
 fi

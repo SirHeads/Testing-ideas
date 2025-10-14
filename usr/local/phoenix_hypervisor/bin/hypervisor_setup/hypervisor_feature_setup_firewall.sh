@@ -33,30 +33,52 @@ source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # --- Main Logic ---
 main() {
+    local HYPERVISOR_CONFIG_FILE="$1"
     log_info "Configuring global firewall settings..."
 
     # Read the desired firewall state from the declarative configuration file.
-    local firewall_enabled=$(jq -r '.firewall.enabled' "$HYPERVISOR_CONFIG_FILE")
+    local firewall_enabled=$(jq -r '.shared_volumes.firewall.enabled' "$HYPERVISOR_CONFIG_FILE")
     if [ "$firewall_enabled" != "true" ]; then
         log_info "Firewall is not enabled in the global config. Disabling..."
         pve-firewall stop
         return 0
     fi
 
-    log_info "Enabling Proxmox firewall..."
+    # Ensure the firewall configuration directory exists
+    mkdir -p /etc/pve/firewall
+
+    # Start the firewall service to ensure it's running before we apply rules.
     pve-firewall start
 
-    # Read the default policies for inbound and outbound traffic.
-    local input_policy=$(jq -r '.firewall.default_input_policy' "$HYPERVISOR_CONFIG_FILE")
-    local output_policy=$(jq -r '.firewall.default_output_policy' "$HYPERVISOR_CONFIG_FILE")
+    # Read the desired firewall state from the declarative configuration file.
+    local input_policy=$(jq -r '.shared_volumes.firewall.default_input_policy' "$HYPERVISOR_CONFIG_FILE")
+    local output_policy=$(jq -r '.shared_volumes.firewall.default_output_policy' "$HYPERVISOR_CONFIG_FILE")
 
-    # Apply the default input policy to the entire cluster.
-    log_info "Setting default input policy to: $input_policy"
-    pve-firewall set /cluster/firewall/options -policy_in "$input_policy"
+    # Create a temporary file for the new firewall configuration
+    TMP_FW_CONFIG=$(mktemp)
 
-    # Apply the default output policy to the entire cluster.
-    log_info "Setting default output policy to: $output_policy"
-    pve-firewall set /cluster/firewall/options -policy_out "$output_policy"
+    # Write the [OPTIONS] section to the temporary file
+    log_info "Generating firewall configuration..."
+    cat <<EOF > "$TMP_FW_CONFIG"
+[OPTIONS]
+enable: 1
+policy_in: $input_policy
+policy_out: $output_policy
+EOF
+
+    # Append the [RULES] section to the temporary file
+    echo "" >> "$TMP_FW_CONFIG"
+    echo "[RULES]" >> "$TMP_FW_CONFIG"
+    jq -r '.shared_volumes.firewall.global_firewall_rules[] | "\(.type|ascii_upcase) \(.action) -p \(.proto)" + (if .source and .source != "" and .source != "null" then " -source \(.source)" else "" end) + (if .dest and .dest != "" and .dest != "null" then " -dest \(.dest)" else "" end) + " -dport \(.port) # \(.comment)"' "$HYPERVISOR_CONFIG_FILE" >> "$TMP_FW_CONFIG"
+
+    # Replace the existing firewall configuration with the new one
+    log_info "Applying new firewall configuration from temporary file..."
+    cat "$TMP_FW_CONFIG" > /etc/pve/firewall/cluster.fw
+    rm "$TMP_FW_CONFIG"
+
+    # Restart the firewall to apply all changes at once
+    log_info "Restarting Proxmox firewall to apply all changes..."
+    pve-firewall restart
 
     log_info "Global firewall settings configured successfully."
 }

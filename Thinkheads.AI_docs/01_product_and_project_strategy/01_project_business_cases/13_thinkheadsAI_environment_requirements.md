@@ -92,69 +92,35 @@ Rumple is the public-facing web server.
 - **Docker Installation**: Standard setup; use Docker Compose for stack management.
 - **Networking/Security**: No public ports except via Cloudflare Tunnel; HTTPS via Let's Encrypt.
 
-### 3. Docker Stack Configuration
-All four environments (Rumple + mirrors) are 100% Docker-based. Use Docker Compose for deployment.
+### 3. Declarative Stack Management
+The deployment of Docker-based services has been re-architected to a fully declarative model, managed by the `phoenix-cli` CLI and orchestrated by the Portainer API.
+
 - **Core Principles**:
-  - Modularity: One service per container.
-  - Persistence: Named volumes for data (e.g., DBs, documents).
-  - Networking: Internal Docker network; expose only Nginx/Cloudflare.
-  - Environment Variables: For secrets/config (e.g., API keys, Phoenix endpoints).
-- **Recommended Services/Containers**:
-  | Category | Service | Docker Image | Purpose | Configuration Notes |
-  |----------|---------|--------------|---------|---------------------|
-  | Web Proxy | Nginx | `nginx:latest` | Reverse proxy for subdomains, static files, HTTPS. | Config: `/etc/nginx/nginx.conf` volume; routes to services (e.g., chat -> Open WebUI). |
-  | LLM Chat | Open WebUI | `ghcr.io/open-webui/open-webui:main` | AI chat interface; calls Phoenix APIs. | Env: Phoenix API endpoint; subdomain `chat.example.com`. |
-  | Workflows | n8n | `n8nio/n8n:latest` | Automation (e.g., AI pipelines, integrations). | Port 5678; integrate with Phoenix APIs; subdomain `workflows.example.com`. |
-  | Database | PostgreSQL | `postgres:latest` | Data storage (chat history, workflows). | Env: Password; volume `pgdata`; optional pgAdmin (`dpage/pgadmin4`). |
-  | Caching | Redis | `redis:latest` | Session caching, queues. | Minimal config; used by n8n/Open WebUI. |
-  | Monitoring | Prometheus | `prom/prometheus:latest` | Metrics collection. | Config for Docker/host scraping. |
-  | Monitoring | Grafana | `grafana/grafana:latest` | Dashboards/visualization. | Data source: Prometheus; subdomain `monitoring.example.com`. |
-  | Security/CDN | Cloudflare Tunnel | `cloudflare/cloudflared:latest` | Secure exposure without open ports. | Sidecar; tunnel to Nginx; zero-trust auth. |
-  | Video Streaming | Nginx-RTMP | `alfg/nginx-rtmp:latest` | Low-volume video streams. | Integrate with Phoenix for AI-generated content; subdomain `video.example.com`. |
-  | Documents | Nextcloud or Paperless-ngx | `nextcloud:latest` or `ghcr.io/paperless-ngx/paperless-ngx:latest` | File serving/OCR. | Volume for files; AI integration via Phoenix; subdomain `docs.example.com`. |
-  | Management (Optional) | Portainer Agent | `portainer/agent:latest` | Remote management hook. | For Rumple; TLS-secured Docker API. |
-- **Example Docker Compose (`docker-compose.yml`)**:
-  ```yaml
-  version: '3.8'
-  services:
-    nginx:
-      image: nginx:latest
-      ports:
-        - "80:80"
-        - "443:443"
-      volumes:
-        - ./nginx.conf:/etc/nginx/nginx.conf
-    open-webui:
-      image: ghcr.io/open-webui/open-webui:main
-      environment:
-        - OPENAI_API_BASE=http://phoenix:8000/v1  # Example Phoenix integration
-    postgres:
-      image: postgres:latest
-      environment:
-        POSTGRES_PASSWORD: securepassword
-      volumes:
-        - pgdata:/var/lib/postgresql/data
-    n8n:
-      image: n8nio/n8n:latest
-      ports:
-        - "5678:5678"
-    redis:
-      image: redis:latest
-    prometheus:
-      image: prom/prometheus:latest
-      volumes:
-        - ./prometheus.yml:/etc/prometheus/prometheus.yml
-    grafana:
-      image: grafana/grafana:latest
-      ports:
-        - "3000:3000"
-    cloudflared:
-      image: cloudflare/cloudflared:latest
-      command: tunnel --url http://nginx:80
-  volumes:
-    pgdata:
+  - **Declarative Configuration**: The desired state of all Docker services is defined in `phoenix_stacks_config.json`. This file acts as a centralized catalog of all our applications.
+  - **Version Control as the Source of Truth**: Each stack in the configuration file points to a Git repository that contains the `docker-compose.yml` file. This ensures that our deployments are version-controlled and reproducible.
+  - **Automated Deployment**: The `vm-manager.sh` script reads the `docker_stacks` array in `phoenix_vm_configs.json` and uses the Portainer API to automatically deploy the specified stacks to the target VM.
+
+- **Example `phoenix_stacks_config.json`**:
+  ```json
+  {
+    "docker_stacks": [
+      {
+        "name": "web-services",
+        "git_repo": "https://github.com/your-org/web-services-stack.git",
+        "env": []
+      },
+      {
+        "name": "monitoring",
+        "git_repo": "https://github.com/your-org/monitoring-stack.git",
+        "env": [
+          { "name": "GRAFANA_ADMIN_USER", "value": "admin" }
+        ]
+      }
+    ]
+  }
   ```
-  - Deployment: `docker compose up -d`; version via Git for CI/CD.
+
+- **Deployment**: To deploy the `web-services` stack to a VM, you would simply add `"web-services"` to the `docker_stacks` array in that VM's definition in `phoenix_vm_configs.json` and run `phoenix-cli create <VM_ID>`.
 
 ### 4. Integrations and Workflows
 - **Phoenix-Rumple Communication**: REST APIs (e.g., FastAPI on Phoenix) for AI tasks; secure with API keys or OAuth.
@@ -162,26 +128,13 @@ All four environments (Rumple + mirrors) are 100% Docker-based. Use Docker Compo
 - **n8n Workflows**: Automate e.g., document OCR via Phoenix, video generation, chat escalations.
 - **Data Persistence**: Backups via provider snapshots or Docker volumes to S3 (add MinIO if needed: `minio/minio:latest`).
 
-### 5. Portainer Management
-Portainer centralizes control in a dedicated LXC on Phoenix.
-- **LXC Setup**: Ubuntu 24.04; 1 vCPU, 1-2 GB RAM, 10 GB storage; install Docker.
-- **Installation**:
-  ```bash
-  docker volume create portainer_data
-  docker run -d -p 9000:9000 --name portainer --restart always \
-    -v /var/run/docker.sock:/var/run/docker.sock \
-    -v portainer_data:/data \
-    portainer/portainer-ce:latest
-  ```
-- **Environment Connections**:
-  - Local: Add Phoenix VMs via socket.
-  - Remote: Add Rumple via agent (`portainer/agent:latest` on Rumple; TLS TCP).
-- **Features Utilization**:
-  - Stacks: Deploy Compose files across envs.
-  - Monitoring: Container stats, logs.
-  - API: For n8n automation (e.g., `/api/endpoints`).
-  - Security: Behind Cloudflare Tunnel; subdomain access.
-- **GPU Management**: If passed through, monitor GPU containers.
+### 5. Portainer as a Deployment Engine
+Portainer has been elevated from a management UI to the core engine of our declarative stack deployment system.
+
+- **Centralized Control**: Portainer remains the central point of control for all Docker environments, but its role is now primarily driven by the API.
+- **API-Driven Orchestration**: The `vm-manager.sh` script uses the `portainer_api_setup.sh` utility to interact with the Portainer API. This script is responsible for authenticating with Portainer, creating the necessary endpoints, and deploying the stacks from their Git repositories.
+- **Secure Credential Management**: The Portainer API credentials are now securely stored in the `portainer_api` object in `phoenix_hypervisor_config.json`, ensuring that they are not hardcoded in scripts.
+- **Declarative Deployment**: The entire process is now declarative. The `phoenix-cli` CLI reads the desired state from the configuration files and uses the Portainer API to make the live system match that state.
 
 ### 6. Security, Monitoring, and Maintenance
 - **Security**: Cloudflare WAF/DDoS; Let's Encrypt HTTPS; env vars for secrets; minimal exposed ports.

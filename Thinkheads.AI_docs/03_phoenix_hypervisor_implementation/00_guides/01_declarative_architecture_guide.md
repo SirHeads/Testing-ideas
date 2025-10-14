@@ -28,7 +28,7 @@ The orchestrator's primary function is to transform the desired state, defined i
 
 In the context of the Phoenix Hypervisor, our architectural principles are defined as follows:
 
-*   **Declarative State**: We define *what* the system should look like, not *how* to get it there. The JSON configuration files (`phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json`) are the single source of truth for the entire system's desired state. The orchestrator's job is to make the live system match this declaration.
+*   **Declarative State**: We define *what* the system should look like, not *how* to get it there. The JSON configuration files (`phoenix_hypervisor_config.json`, `phoenix_lxc_configs.json`, `phoenix_vm_configs.json`, and `phoenix_stacks_config.json`) are the single source of truth for the entire system's desired state. The orchestrator's job is to make the live system match this declaration.
 *   **Idempotency**: Actions can be repeated multiple times with the same outcome. The `phoenix` CLI can be run safely at any time, and it will only make changes if there is a difference between the desired state and the current state. This is crucial for automation and recovery.
 *   **Convergent Design**: The system is designed to be self-healing. The orchestrator actively works to converge the *current state* of the system with the *desired state* defined in the configuration. If configuration drift occurs, the next run of the orchestrator will detect and correct it.
 
@@ -122,24 +122,13 @@ apply_shared_volumes() {
 }
 ```
 
-## 4. The Main Orchestration Flow
+## 4. The Main Orchestration Flows
 
-The entire process is orchestrated by the state machine in `lxc-manager.sh`. This function defines the sequence of operations that ensures a container is brought from a non-existent state to a fully configured and running state, respecting the principles of idempotency and convergence at each step.
+The orchestration process is divided into two main flows: one for LXC containers and one for VMs. Both are designed to be idempotent and convergent.
 
-The sequence of states is as follows:
-1.  `validate_inputs`
-2.  `ensure_container_defined`
-3.  `apply_configurations`
-4.  `apply_shared_volumes`
-5.  `apply_dedicated_volumes`
-6.  `ensure_container_disk_size`
-7.  `start_container`
-8.  `apply_features`
-9.  `run_application_script`
-10. `run_health_check`
-11. `create_template_snapshot`
+### 4.1. LXC Container Orchestration
 
-### 4.1. Main State Machine Diagram
+The `lxc-manager.sh` script orchestrates the entire lifecycle of an LXC container, from creation to feature application.
 
 ```mermaid
 graph TD
@@ -156,4 +145,32 @@ graph TD
     K --> L[create_template_snapshot];
     L --> M[End];
 ```
+
+### 4.2. VM and Declarative Stack Orchestration
+
+The `vm-manager.sh` script has been enhanced to support declarative stack management through the Portainer API. This new workflow represents a significant step forward in our automation capabilities.
+
+```mermaid
+graph TD
+    A[Run `phoenix create <VM_ID>`] --> B{Read VM, Stack, and Hypervisor Configs};
+    B --> C{Create or Verify VM};
+    C --> D{Install Docker};
+    D --> E{Invoke portainer_api_setup.sh};
+    E --> F{Authenticate with Portainer API};
+    F --> G{For each stack in `docker_stacks`};
+    G --> H{Create Portainer Stack from Git Repo};
+    H --> I[Stack Deployed];
+    I --> J[End];
+```
+
 This structured, stateful approach ensures that the orchestration is predictable, repeatable, and resilient to failure.
+
+## 5. Declarative Stack Management Deep Dive
+
+The introduction of declarative stack management is a major architectural enhancement. It decouples the definition of our Dockerized services from the VMs that run them, leading to a more modular and reusable system.
+
+*   **`phoenix_stacks_config.json`**: This file is the catalog of all our Docker services. Each entry defines a stack's name, its Git repository, and any necessary environment variables. This allows us to manage our services as code, with all the benefits of version control.
+*   **`phoenix_vm_configs.json`**: The `docker_stacks` array in this file is the link between a VM and the services it should run. By simply adding a stack's name to this array, we are declaratively stating that the service should be deployed to that VM.
+*   **`vm-manager.sh` and `portainer_api_setup.sh`**: These scripts are the engine that turns the declarative configuration into a running system. The `vm-manager.sh` script is responsible for the high-level orchestration, while `portainer_api_setup.sh` handles the low-level details of interacting with the Portainer API.
+
+This new model is a powerful example of our core principles in action. It is declarative, idempotent, and convergent, and it provides a solid foundation for the future of our platform.

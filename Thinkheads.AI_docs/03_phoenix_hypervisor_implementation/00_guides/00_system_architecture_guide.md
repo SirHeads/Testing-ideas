@@ -24,12 +24,12 @@ last_reviewed: "2025-09-30"
 
 The Phoenix Hypervisor project is a robust, declarative, and feature-based system for orchestrating the creation and configuration of LXC containers and Virtual Machines (VMs) on Proxmox. It is specifically tailored for AI and machine learning workloads.
 
-The core of the project is the `phoenix` CLI, an idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
+The core of the project is the `phoenix-cli` CLI, an idempotent orchestrator that manages the entire lifecycle of a virtualized resource based on central JSON configuration files.
 
 ### 1.1. Key Architectural Concepts
 
--   **Unified Orchestration**: The `phoenix` CLI provides a single point of entry for managing the hypervisor, LXC containers, and QEMU/KVM VMs.
--   **Declarative Configuration:** All hypervisor, VM, and container specifications are defined in `phoenix_hypervisor_config.json`, `phoenix_vm_configs.json`, and `phoenix_lxc_configs.json`. This provides a clear, version-controllable definition of the desired system state.
+-   **Unified Orchestration**: The `phoenix-cli` CLI provides a single point of entry for managing the hypervisor, LXC containers, and QEMU/KVM VMs.
+-   **Declarative Configuration:** All hypervisor, VM, and container specifications are defined in `phoenix-cli_hypervisor_config.json`, `phoenix-cli_vm_configs.json`, and `phoenix-cli_lxc_configs.json`. This provides a clear, version-controllable definition of the desired system state.
 -   **Idempotent Orchestration:** The CLI is designed to be stateless and idempotent, ensuring that running it multiple times produces the same result, making deployments resilient and repeatable.
 -   **Hierarchical Templating:** The system uses a hierarchical, snapshot-based template structure to optimize the creation of both VMs and LXCs.
 -   **Modular Feature Installation:** Customization is handled through a series of modular, reusable "feature" scripts (e.g., for installing NVIDIA drivers, Docker, or vLLM).
@@ -46,31 +46,26 @@ graph TD
         T900[900: Template-Base]
         T901[901: Template-GPU]
         T902[902: Template-Docker]
+        T920[920: Template-VLLM]
     end
 
-    subgraph "Application VMs & Containers"
-        VM8001[8001: Docker VM]
-        C950[950: vllm-qwen]
-        C952[952: qdrant]
-        C955[955: ollama]
+    subgraph "Application VMs"
+        VM1001["VM 1001: Portainer"]
+        VM1002["VM 1002: Dr-Phoenix"]
     end
 
-    T8000 -- Cloned to --> VM8001
-    T900 -- Cloned to --> T901
-    T900 -- Cloned to --> T902
-    T901 -- Cloned to --> C955
-    T902 -- Cloned to --> C952
-    T901 -- Cloned to --> C950
+    T8000 -- Cloned to --> VM1001
+    T8000 -- Cloned to --> VM1002
 ```
 ## 2. Orchestration Workflow
 
-The `phoenix` CLI is the single entry point for all provisioning tasks. It acts as a dispatcher, parsing the user's command and routing it to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, or `vm-manager.sh`).
+The `phoenix-cli` CLI is the single entry point for all provisioning tasks. It acts as a dispatcher, parsing the user's command and routing it to the appropriate manager script (`hypervisor-manager.sh`, `lxc-manager.sh`, or `vm-manager.sh`).
 
 ### 2.1. Main Orchestration Flow
 
 ```mermaid
 graph TD
-    A[Start: phoenix <command> <ID>] --> B{Parse Command};
+    A[Start: phoenix-cli <command> <ID>] --> B{Parse Command};
     B -->|setup| C[hypervisor-manager.sh];
     B -->|create, delete, etc.| D{Resource Type?};
     D -->|LXC| E[lxc-manager.sh];
@@ -82,47 +77,40 @@ graph TD
 
 ### 2.2. Key LXC Orchestration Steps (lxc-manager.sh)
 
-1.  **`ensure_container_defined`**: Checks if the container exists. If not, it either creates it from a base template or clones it from a parent template's snapshot.
-2.  **`apply_configurations`**: Sets the container's core resources, such as CPU cores, memory, and network settings.
-3.  **`apply_shared_volumes`**: Mounts shared storage volumes into the container.
-4.  **`start_container`**: Starts the container.
-5.  **`apply_features`**: Executes modular feature scripts inside the container.
-6.  **`run_application_script`**: Executes a final, application-specific script.
-7.  **`run_health_check`**: Performs a health check to verify the service is running correctly.
-8.  **`create_template_snapshot`**: If the container is a template, it creates a ZFS snapshot.
+1.  **`ensure_container_defined`**: Checks if the container exists. If not, it creates it from a base template or clones it from a parent template's snapshot.
+2.  **`apply_configurations`**: Sets the container's core resources (CPU, memory), network settings, AppArmor profile, and other pct/lxc options.
+3.  **`apply_zfs_volumes` / `apply_dedicated_volumes`**: Creates and attaches dedicated storage volumes.
+4.  **`ensure_container_disk_size`**: Resizes the container's root disk to the specified size.
+5.  **`start_container`**: Starts the container, with retry logic.
+6.  **`apply_features`**: Executes modular feature scripts inside the container (e.g., for Docker, NVIDIA).
+7.  **`run_application_script`**: Copies and executes a final, application-specific script inside the container.
+8.  **`run_health_check`**: Performs health checks to verify services are running correctly.
+9.  **`create_template_snapshot`**: If the container is a template, it creates a ZFS snapshot.
 
 ### 2.3. Key VM Orchestration Steps (vm-manager.sh)
 
-1.  **`ensure_vm_defined`**: Checks if the VM exists. If not, it clones it from a master template.
-2.  **`apply_vm_configurations`**: Sets the VM's core resources and generates dynamic Cloud-Init configurations for networking and user setup.
-3.  **`start_vm`**: Starts the VM.
-4.  **`wait_for_guest_agent`**: Waits for the QEMU Guest Agent to become responsive.
-5.  **Feature Application**: Features are applied via Cloud-Init on the first boot.
-6.  **`create_vm_snapshot`**: If the VM is a template, it creates a snapshot.
+1.  **Parse Configuration**: Reads the `phoenix-cli_vm_configs.json` file and locates the specified VM definition.
+2.  **Apply Defaults**: Merges the `vm_defaults` with the specific VM configuration.
+3.  **Clone Template**: Clones the base template to create a new VM.
+4.  **Configure Hardware**: Applies the hardware settings, such as CPU cores, memory, and disk size.
+5.  **Create NFS Directory**: Creates a dedicated directory for the VM on an NFS share.
+6.  **Copy Feature Scripts**: Copies the feature scripts to the VM's NFS directory.
+7.  **Boot VM**: Starts the VM for the first time. The `base_setup` feature, executed by `cloud-init`, installs `nfs-common` and mounts the NFS share.
+8.  **Execute Feature Scripts**: Executes any specified feature scripts from the mounted NFS share to install software and apply configurations.
 
 ## 3. Configuration Reference
 
 The entire system is driven by three central JSON configuration files.
 
-### 3.1. `phoenix_hypervisor_config.json`
+### 3.1. `phoenix-cli_hypervisor_config.json`
 
 This file contains global settings for the hypervisor environment, including storage, networking, users, and shared resources.
 
-### 3.2. `phoenix_vm_configs.json`
+### 3.2. `phoenix-cli_vm_configs.json`
 
-This file contains the specific definitions for each QEMU/KVM Virtual Machine, keyed by its `vmid`.
+This file contains the declarative definitions for all Virtual Machines. For a comprehensive guide to all the available options, please refer to the **[Comprehensive Guide to VM Creation](vm_creation_guide.md)**.
 
-| Key | Type | Description |
-| --- | --- | --- |
-| `vmid` | Number | The unique ID of the VM. |
-| `name` | String | The hostname of the VM. |
-| `clone_from_vmid` | Number | The VMID of the master template to clone from. |
-| `cores` / `memory_mb` | Number | CPU and RAM allocation. |
-| `network_config` | Object | Defines the VM's network interface, including IP address and gateway. |
-| `user_config` | Object | Defines the default user, password hash, and SSH key. |
-| `features` | Array | A list of feature scripts to be embedded in the Cloud-Init configuration. |
-
-### 3.3. `phoenix_lxc_configs.json`
+### 3.3. `phoenix-cli_lxc_configs.json`
 
 This file contains the specific definitions for each LXC container, keyed by its Container ID (CTID).
 
@@ -133,3 +121,9 @@ This file contains the specific definitions for each LXC container, keyed by its
 | `template_snapshot_name`| String | If this container is a template, this defines the snapshot name. |
 | `features` | Array | A list of modular features to install (e.g., "base_setup", "nvidia", "docker"). |
 | `application_script` | String | The final script to run to start the container's primary application. |
+| `dependencies` | Array | A list of other container IDs that must be created before this one. |
+| `gpu_assignment` | String | The GPU(s) to assign to the container. |
+| `volumes` / `zfs_volumes` | Array | A list of dedicated storage volumes to attach to the container. |
+| `vllm_*` | String/Number | Parameters for configuring vLLM, such as the model, quantization, and port. |
+| `apparmor_profile` | String | The AppArmor profile to apply to the container. |
+| `pct_options` / `lxc_options` | Array | A list of Proxmox-specific or low-level LXC options to apply. |

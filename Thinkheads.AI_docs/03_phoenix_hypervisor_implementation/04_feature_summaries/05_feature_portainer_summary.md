@@ -1,6 +1,6 @@
 ---
 title: 'Feature: Portainer'
-summary: The `portainer` feature automates the deployment of Portainer Server or Agent as a Docker container, based on the container's assigned `portainer_role`.
+summary: The Portainer integration is now managed by the dedicated `portainer-manager.sh` script, which orchestrates the deployment of the Portainer server and agents, and drives the declarative stack management system via the Portainer API.
 document_type: "Feature Summary"
 status: "Approved"
 version: "1.0.0"
@@ -14,27 +14,19 @@ review_cadence: "Annual"
 last_reviewed: "2025-09-30"
 ---
 
-The `portainer` feature automates the deployment of Portainer within a Docker-enabled LXC container. It provides a centralized web UI for managing Docker environments across the hypervisor.
+The Portainer integration is now a core component of the declarative environment management layer, orchestrated by `portainer-manager.sh`. It is no longer just a management UI, but the engine that drives the entire stack deployment workflow.
 
 ## Key Actions
 
-The script's behavior is determined by the `portainer_role` defined in the container's configuration (`phoenix_lxc_configs.json`):
+1.  **Portainer Instance Deployment**: The `portainer-manager.sh` deploys the `portainer/portainer-ce:latest` Docker container as the server in a dedicated VM (typically VM 1001) and `portainer/agent:latest` containers as agents on other Docker-enabled VMs.
+2.  **API-Driven Environment Management**: The `portainer-manager.sh` authenticates with the Portainer API to create and manage environments (endpoints) for each agent-enabled VM.
+3.  **Declarative Stack Orchestration**: The `portainer-manager.sh` reads the desired state of Docker stacks from configuration files and uses the Portainer API to deploy, update, or remove stacks on the configured environments.
 
-1.  **Role-Based Deployment:**
-    *   If `portainer_role` is `server`, it deploys the `portainer/portainer-ce:latest` Docker container.
-    *   If `portainer_role` is `agent`, it deploys the `portainer/agent` Docker container.
-    *   If `portainer_role` is `none` or not specified, the script takes no action.
+## Architectural Shift: VM-Based Deployment
 
-2.  **Server Configuration:** When deploying the server, the script:
-    *   Exposes ports `9443` (for the UI/API) and `9001` (for the agent).
-    *   Mounts the host's Docker socket (`/var/run/docker.sock`) to manage the local environment.
-    *   Creates a persistent named volume (`portainer_data`) for Portainer's database.
-    *   Mounts SSL certificates from a shared volume (`/certs`) for secure access.
+Originally, Portainer was deployed inside an LXC container. Due to stability and security concerns related to running Docker in a nested, unprivileged container, the architecture has been updated. The standard practice is now to deploy all Docker-dependent services, including Portainer, into a dedicated VM.
 
-3.  **Agent Configuration:** When deploying the agent, the script:
-    *   Exposes port `9001`.
-    *   Mounts the host's Docker socket and volumes directory.
-    *   Configures the agent to connect to the Portainer server using the `AGENT_CLUSTER_ADDR` environment variable.
+This architectural shift is critical for system stability and is documented in the **[Docker-in-LXC Deprecation Plan](../00_guides/12_docker_lxc_issue_mitigation_plan.md)**, which outlines the formal deprecation of running Docker inside LXC containers.
 
 ## Idempotency
 
@@ -42,4 +34,4 @@ The script is idempotent. Before deploying a container, it checks if a container
 
 ## Usage
 
-This feature is applied to containers designated for Docker management. It has a hard dependency on the `docker` feature, which must be installed and running before this script is executed.
+The Portainer environment is a foundational component of the declarative environment management layer. It is deployed and managed by the `portainer-manager.sh` script, which is invoked by the `phoenix-cli sync portainer` command or automatically as part of the `phoenix-cli LetsGo` workflow. The `docker` feature is a prerequisite for any VM hosting Portainer instances.

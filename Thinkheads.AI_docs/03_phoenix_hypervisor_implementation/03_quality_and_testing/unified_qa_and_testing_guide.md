@@ -26,7 +26,7 @@ Our quality assurance strategy is built upon the same core principles that guide
 
 ### 1.1. Declarative Testing
 
-Just as we define the desired state of our infrastructure in configuration files, we also define our tests declaratively. The `tests` objects within [`phoenix_hypervisor_config.json`](/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json:211) and [`phoenix_lxc_configs.json`](/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json:102) define the health checks and integration tests to be run for the hypervisor and for each container, respectively. This approach ensures that our testing strategy is version-controlled, transparent, and tightly integrated with the infrastructure it validates.
+Just as we define the desired state of our infrastructure in configuration files, we also define our tests declaratively. The `tests` objects within [`phoenix-cli_hypervisor_config.json`](/usr/local/phoenix-cli_hypervisor/etc/phoenix-cli_hypervisor_config.json:211) and [`phoenix-cli_lxc_configs.json`](/usr/local/phoenix-cli_hypervisor/etc/phoenix-cli_lxc_configs.json:102) define the health checks and integration tests to be run for the hypervisor and for each container, respectively. This approach ensures that our testing strategy is version-controlled, transparent, and tightly integrated with the infrastructure it validates.
 
 ### 1.2. Idempotency
 
@@ -55,20 +55,20 @@ graph TD
 
 ## 2. Testing Framework
 
-The testing framework is designed to be modular and extensible, mirroring the dispatcher-manager architecture of the `phoenix` CLI.
+The testing framework is designed to be modular and extensible, mirroring the dispatcher-manager architecture of the `phoenix-cli` CLI.
 
 ### 2.1. Test Runners
 
-The core of the framework consists of a set of test runners located in [`/usr/local/phoenix_hypervisor/bin/tests/`](/usr/local/phoenix_hypervisor/bin/tests/). These runners are responsible for executing the tests defined in the configuration files.
+The core of the framework consists of a set of test runners located in [`/usr/local/phoenix-cli_hypervisor/bin/tests/`](/usr/local/phoenix-cli_hypervisor/bin/tests/). These runners are responsible for executing the tests defined in the configuration files.
 
-*   [`hypervisor_test_runner.sh`](/usr/local/phoenix_hypervisor/bin/tests/hypervisor_test_runner.sh): Executes tests for the hypervisor itself.
-*   [`test_runner.sh`](/usr/local/phoenix_hypervisor/bin/tests/test_runner.sh): Executes tests for LXC containers and VMs.
+*   [`hypervisor_test_runner.sh`](/usr/local/phoenix-cli_hypervisor/bin/tests/hypervisor_test_runner.sh): Executes tests for the hypervisor itself.
+*   [`test_runner.sh`](/usr/local/phoenix-cli_hypervisor/bin/tests/test_runner.sh): Executes tests for LXC containers and VMs.
 
 ### 2.2. Configuration-Driven Tests
 
 The tests to be executed are defined in the `tests` objects in the JSON configuration files. This allows us to easily add, remove, or modify tests without changing the test runner scripts.
 
-**Example from `phoenix_lxc_configs.json`:**
+**Example from `phoenix-cli_lxc_configs.json`:**
 ```json
 "tests": {
     "health_checks": [
@@ -90,14 +90,14 @@ The tests to be executed are defined in the `tests` objects in the JSON configur
 
 ## 3. Test Execution
 
-All tests can be executed via the `phoenix` CLI.
+All tests can be executed via the `phoenix-cli` CLI.
 
 ### 3.1. Running All Tests
 
 To run all tests for the entire environment, use the `test` command:
 
 ```bash
-phoenix test
+phoenix-cli test
 ```
 
 ### 3.2. Running Tests for a Specific Guest
@@ -105,7 +105,7 @@ phoenix test
 To run tests for a specific LXC container or VM, provide the guest ID:
 
 ```bash
-phoenix test 950
+phoenix-cli test 1002
 ```
 
 ### 3.3. Interpreting Results
@@ -116,7 +116,7 @@ The test runner will output the results of each test, indicating whether it pass
 
 Adding new tests to the framework is a straightforward process.
 
-1.  **Create a new test script:** The script should be placed in the appropriate subdirectory of [`/usr/local/phoenix_hypervisor/bin/tests/`](/usr/local/phoenix_hypervisor/bin/tests/). The script should exit with a status code of 0 for success and a non-zero status code for failure.
+1.  **Create a new test script:** The script should be placed in the appropriate subdirectory of [`/usr/local/phoenix-cli_hypervisor/bin/tests/`](/usr/local/phoenix-cli_hypervisor/bin/tests/). The script should exit with a status code of 0 for success and a non-zero status code for failure.
 2.  **Define the test in the configuration:** Add a new entry to the `tests` object in the relevant JSON configuration file, specifying the name, type, and path of the new test script.
 
 ## 5. Health Checks & Verification
@@ -136,6 +136,4 @@ For services that do not have automated health checks, the following manual veri
 
 | Container | Service | Verification Method |
 | :--- | :--- | :--- |
-| 951 | vLLM API Server | `curl http://localhost:8000/health` |
-| 953 | Nginx | `systemctl is-active --quiet nginx` |
-| 952 | Qdrant | `curl http://localhost:6333` |
+| 1002 | Dr-Phoenix (qdrant) | `curl http://10.0.0.102:6333` |

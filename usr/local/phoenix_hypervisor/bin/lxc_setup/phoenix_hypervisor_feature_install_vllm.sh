@@ -38,7 +38,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" > /dev/null && pwd)
 
 # --- Source common utilities ---
 # The common_utils.sh script provides shared functions for logging, error handling, etc.
-source "$(dirname "$0")/../phoenix_hypervisor_common_utils.sh"
+source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID=""
@@ -127,13 +127,10 @@ install_and_test_vllm() {
     log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
     # --- Dependency Check ---
-    # vLLM requires both a Python environment and NVIDIA drivers to function.
-    log_info "Verifying 'nvidia' and 'python_api_service' feature dependencies..."
+    # vLLM requires NVIDIA drivers to function.
+    log_info "Verifying 'nvidia' feature dependency..."
     if ! is_feature_present_on_container "$CTID" "nvidia"; then
         log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found."
-    fi
-    if ! is_feature_present_on_container "$CTID" "python_api_service"; then
-        log_fatal "The 'vllm' feature requires the 'python_api_service' feature, which was not found."
     fi
     if ! is_command_available "$CTID" "nvidia-smi"; then
         log_fatal "NVIDIA driver command 'nvidia-smi' not found. The 'vllm' feature depends on a functional NVIDIA driver."
@@ -175,32 +172,35 @@ install_and_test_vllm() {
 
     # --- Core Library Installation ---
     # vLLM often requires the latest features from PyTorch, necessitating a nightly build.
-    log_info "Installing PyTorch nightly for CUDA 12.1+..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
+    log_info "Installing PyTorch nightly for CUDA 12.8+..."
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
-    # --- vLLM Source Installation ---
-    # We clone the repository and check out a specific, known-good commit to ensure stability and prevent
-    # breaking changes from the main branch affecting our deployments.
-    log_info "Cloning vLLM repository and checking out a known-good commit..."
-    if pct_exec "$CTID" -- test -d "${vllm_repo_dir}"; then
-        log_warn "vLLM repository already exists. Fetching latest changes."
-        pct_exec "$CTID" -- git -C "${vllm_repo_dir}" fetch --all
-    else
-        pct_exec "$CTID" -- git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
-    fi
-    pct_exec "$CTID" -- git -C "${vllm_repo_dir}" checkout 5bcc153d7bf69ef34bc5788a33f60f1792cf2861
+    # --- vLLM Installation ---
+    log_info "Installing vLLM from pip wheel..."
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install vllm==0.10.2
 
-    # Installing in editable mode (-e) is useful for development and debugging.
-    log_info "Building and installing vLLM and FlashInfer from source..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e "${vllm_repo_dir}"
-    
-    # FlashInfer is a dependency for optimized attention kernels.
-    if pct_exec "$CTID" -- test -d "/opt/flashinfer"; then
-        log_info "FlashInfer directory already exists. Skipping clone and install."
-    else
-        pct_exec "$CTID" -- git clone https://github.com/flashinfer-ai/flashinfer.git /opt/flashinfer
-        pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e /opt/flashinfer
+    # --- FlashInfer Installation ---
+    log_info "Setting TORCH_CUDA_ARCH_LIST for sm_120..."
+    pct_exec "$CTID" -- bash -c "echo 'export TORCH_CUDA_ARCH_LIST=12.0' >> /etc/environment"
+    pct_exec "$CTID" -- bash -c "source /etc/environment"
+    log_info "Installing FlashInfer from source at tag v0.3.1..."
+    local flashinfer_dir="/opt/flashinfer"
+    # Idempotent clone
+    pct_exec "$CTID" -- sh -c "test -d ${flashinfer_dir} || git clone https://github.com/flashinfer-ai/flashinfer.git ${flashinfer_dir}" || true
+    pct_exec "$CTID" -- git -C "${flashinfer_dir}" fetch --all --tags
+    pct_exec "$CTID" -- git -C "${flashinfer_dir}" checkout tags/v0.3.1 -b v0.3.1-branch
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e "${flashinfer_dir}"
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" uninstall -y pynvml
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install nvidia-ml-py
+
+    # --- Verification ---
+    log_info "Verifying FlashInfer installation..."
+    # Filter only the version number, ignoring warnings
+    version_output=$(pct_exec "$CTID" -- "${vllm_dir}/bin/python" -c "import flashinfer; print(flashinfer.__version__)" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+$')
+    if [[ "$version_output" != "0.3.1" ]]; then
+        log_fatal "FlashInfer version verification failed. Expected '0.3.1', but found '$version_output'."
     fi
+    log_success "FlashInfer v0.3.1 verified."
 
     # --- Verification ---
     # This final check confirms that the vLLM library is correctly installed in the virtual environment.
@@ -213,57 +213,6 @@ install_and_test_vllm() {
 }
 
 # =====================================================================================
-# Function: create_vllm_systemd_service
-# Description: Creates a generic systemd service file for the vLLM model server.
-#              This service file is a template with placeholders that will be
-#              dynamically replaced by the container-specific application script.
-# Arguments:
-#   None (uses global CTID).
-# Returns:
-#   None. Exits with a fatal error if the service file cannot be created.
-# =====================================================================================
-create_vllm_systemd_service() {
-    log_info "Creating generic systemd service file for vLLM in CTID: $CTID..."
-    local service_file_path="/etc/systemd/system/vllm_model_server.service"
-    local temp_service_file
-    temp_service_file=$(mktemp) # Create a temporary file on the hypervisor
-
-    # Write the systemd service file content to the temporary file
-    cat > "$temp_service_file" <<'EOF'
-[Unit]
-Description=vLLM Model Server
-After=network.target
-
-[Service]
-User=root
-WorkingDirectory=/opt/vllm
-ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server --model "VLLM_MODEL_PLACEHOLDER" --served-model-name "VLLM_SERVED_MODEL_NAME_PLACEHOLDER" --host 0.0.0.0 --port VLLM_PORT_PLACEHOLDER VLLM_ARGS_PLACEHOLDER
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Push the temporary file to the container
-    run_pct_push "$CTID" "$temp_service_file" "$service_file_path"
-
-    # Clean up the temporary file
-    rm "$temp_service_file"
-
-    # Verify that the file was created
-    if ! pct_exec "$CTID" test -f "$service_file_path"; then
-        log_fatal "Failed to create systemd service file in CTID $CTID."
-    fi
-
-    log_info "Successfully created vLLM systemd service file in CTID $CTID."
-}
-
-# =====================================================================================
-# Function: main
-# Description: Main entry point for the vLLM feature script.
-# =====================================================================================
-# =====================================================================================
 # Function: main
 # Description: Main entry point for the vLLM feature script.
 #              It parses arguments, installs and tests vLLM, and exits.
@@ -275,7 +224,6 @@ EOF
 main() {
     parse_arguments "$@"
     install_and_test_vllm
-    create_vllm_systemd_service
     log_info "Successfully completed vLLM feature for CTID $CTID."
     exit_script 0
 }

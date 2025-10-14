@@ -198,12 +198,13 @@ configure_networking() {
     local INTERFACE=$(jq -r '.network.interfaces.name // "vmbr0"' "$HYPERVISOR_CONFIG_FILE")
     local IP_ADDRESS=$(jq -r '.network.interfaces.address // "10.0.0.13/24"' "$HYPERVISOR_CONFIG_FILE")
     local GATEWAY=$(jq -r '.network.interfaces.gateway // "10.0.0.1"' "$HYPERVISOR_CONFIG_FILE")
-    local DNS_SERVER=$(jq -r '.network.interfaces.dns_nameservers // "8.8.8.8"' "$HYPERVISOR_CONFIG_FILE")
+    local DNS_SERVERS_JSON=$(jq -r '.network.interfaces.dns_nameservers | if type == "array" then .[] else . end' "$HYPERVISOR_CONFIG_FILE")
+    local DNS_SERVERS=$(echo "$DNS_SERVERS_JSON" | tr '\n' ' ')
 
-    if [[ -z "$HOSTNAME" || -z "$INTERFACE" || -z "$IP_ADDRESS" || -z "$GATEWAY" || -z "$DNS_SERVER" ]]; then
+    if [[ -z "$HOSTNAME" || -z "$INTERFACE" || -z "$IP_ADDRESS" || -z "$GATEWAY" || -z "$DNS_SERVERS" ]]; then
         log_fatal "Missing network configuration in $HYPERVISOR_CONFIG_FILE."
     fi
-    log_info "Network config: Hostname=$HOSTNAME, Interface=$INTERFACE, IP=$IP_ADDRESS, Gateway=$GATEWAY, DNS=$DNS_SERVER"
+    log_info "Network config: Hostname=$HOSTNAME, Interface=$INTERFACE, IP=$IP_ADDRESS, Gateway=$GATEWAY, DNS=$DNS_SERVERS"
 
     # Set the system hostname.
     retry_command "hostnamectl set-hostname $HOSTNAME" || log_fatal "Failed to set hostname"
@@ -216,7 +217,7 @@ auto $INTERFACE
 iface $INTERFACE inet static
     address $IP_ADDRESS
     gateway $GATEWAY
-    dns-nameservers $DNS_SERVER
+    dns-nameservers $DNS_SERVERS
 EOF
     retry_command "systemctl restart networking" || log_fatal "Failed to restart networking"
     log_info "Configured static IP for interface $INTERFACE"

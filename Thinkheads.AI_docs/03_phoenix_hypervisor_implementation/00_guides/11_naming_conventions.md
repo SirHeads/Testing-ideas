@@ -19,24 +19,26 @@ This document defines the naming conventions for scripts, configuration files, a
 
 ## 1. Scripts
 
-All scripts in the `bin` directory should be prefixed with `phoenix_hypervisor_`. The rest of the script name should be in lowercase with words separated by underscores.
+All scripts in the `bin` directory should be prefixed with `phoenix_hypervisor_` for feature scripts, or `phoenix_` for orchestrator and manager scripts. The rest of the script name should be in lowercase with words separated by underscores.
 
-*   **Example:** `phoenix_hypervisor_lxc_952.sh`
+*   **Example:** `phoenix_hypervisor_feature_install_docker.sh`
+*   **Example:** `phoenix_orchestrator.sh`
 
 ## 2. Configuration Files
 
-All configuration files in the `etc` directory should be prefixed with `phoenix_`. The rest of the file name should be in lowercase with words separated by underscores.
+All configuration files in the `etc` directory should be prefixed with `phoenix_hypervisor_` or `phoenix_`. The rest of the file name should be in lowercase with words separated by underscores.
 
+*   **Example:** `phoenix_hypervisor_config.json`
 *   **Example:** `phoenix_lxc_configs.json`
 
 ## 3. LXC Containers
 
-LXC container names should be descriptive and include the container ID.
+LXC container names should be descriptive and use hyphens as separators.
 
-*   **Example:** `lxc-955-ollama-oWUI`
+*   **Example:** `vllm-qwen2.5-7b-awq`
 
 ## 4. Virtual Machines
 
-Virtual machine names should be descriptive and include the VM ID.
+Virtual machine names should be descriptive and use hyphens as separators.
 
-*   **Example:** `vm-100-dev-desktop`
+*   **Example:** `docker-vm-01`

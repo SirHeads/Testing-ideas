@@ -103,6 +103,9 @@
                                     "type": "string",
                                     "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
                                     "description": "Gateway IP address for the container's network"
+                                },
+                                "nameservers": {
+                                    "type": "string"
                                 }
                             },
                             "required": [
@@ -110,8 +113,7 @@
                                 "bridge",
                                 "ip",
                                 "gw"
-                            ],
-                            "additionalProperties": false
+                            ]
                         },
                         "features": {
                             "type": "array",
@@ -122,7 +124,14 @@
                                     "nvidia",
                                     "docker",
                                     "vllm",
-                                    "portainer"
+                                    "portainer",
+                                    "dns_server",
+                                    "nat_gateway",
+                                    "ollama",
+                                    "python_api_service",
+                                    "step_ca",
+                                    "traefik",
+                                    "trusted_ca"
                                 ]
                             },
                             "description": "An array of feature scripts to apply to the container."
@@ -134,7 +143,7 @@
                         },
                         "gpu_assignment": {
                             "type": "string",
-                            "pattern": "^(none|[0-9]+(,[0-9]+)*)$",
+                            "pattern": "^(none|[0-9]+(, ?[0-9]+)*)$",
                             "description": "GPU assignment for container. Use 'none' for no GPU access, or comma-separated indices (e.g., '0,1') for multiple GPUs"
                         },
                         "portainer_role": {
@@ -151,51 +160,84 @@
                             "type": "boolean",
                             "description": "Whether the container runs in unprivileged mode"
                         },
-                        "vllm_model": {
-                            "type": [
-                                "string",
-                                "null"
-                            ],
-                            "description": "Path to the specific AI model this container is configured to serve using vLLM"
-                        },
-                        "vllm_served_model_name": {
-                            "type": "string",
-                            "description": "The name of the model served by vLLM."
-                        },
-                        "vllm_model_type": {
-                            "type": "string",
-                            "enum": [
-                                "chat",
-                                "embedding"
-                            ],
-                            "description": "Specifies the type of the vLLM model."
-                        },
-                        "vllm_port": {
-                            "type": "integer",
-                            "description": "The port vLLM is listening on."
-                        },
-                        "vllm_tensor_parallel_size": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 8,
-                            "description": "Degree of tensor parallelism used by vLLM for the assigned model"
-                        },
-                        "vllm_gpu_memory_utilization": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1,
-                            "description": "GPU memory utilization for vLLM."
-                        },
-                        "vllm_max_model_len": {
-                            "type": "integer",
-                            "description": "Maximum model length for vLLM."
-                        },
-                        "vllm_args": {
-                            "type": "array",
-                            "items": {
-                                "type": "string"
+                        "vllm_engine_config": {
+                            "type": "object",
+                            "properties": {
+                                "ModelConfig": {
+                                    "type": "object",
+                                    "properties": {
+                                        "model": {
+                                            "type": "string"
+                                        },
+                                        "trust_remote_code": {
+                                            "type": "boolean"
+                                        },
+                                        "dtype": {
+                                            "type": "string"
+                                        },
+                                        "max_model_len": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "model",
+                                        "trust_remote_code",
+                                        "dtype",
+                                        "max_model_len"
+                                    ]
+                                },
+                                "CacheConfig": {
+                                    "type": "object",
+                                    "properties": {
+                                        "quantization": {
+                                            "type": "string"
+                                        },
+                                        "gpu_memory_utilization": {
+                                            "type": "number"
+                                        }
+                                    },
+                                    "required": [
+                                        "quantization",
+                                        "gpu_memory_utilization"
+                                    ]
+                                },
+                                "ParallelConfig": {
+                                    "type": "object",
+                                    "properties": {
+                                        "tensor_parallel_size": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "tensor_parallel_size"
+                                    ]
+                                },
+                                "ServerConfig": {
+                                    "type": "object",
+                                    "properties": {
+                                        "host": {
+                                            "type": "string"
+                                        },
+                                        "port": {
+                                            "type": "integer"
+                                        },
+                                        "served_model_name": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "host",
+                                        "port",
+                                        "served_model_name"
+                                    ]
+                                }
                             },
-                            "description": "Additional arguments for vLLM."
+                            "required": [
+                                "ModelConfig",
+                                "CacheConfig",
+                                "ParallelConfig",
+                                "ServerConfig"
+                            ]
                         },
                         "template_snapshot_name": {
                             "type": "string",
@@ -278,12 +320,10 @@
                                                 ]
                                             },
                                             "source": {
-                                                "type": "string",
-                                                "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+                                                "type": "string"
                                             },
                                             "dest": {
-                                                "type": "string",
-                                                "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$"
+                                                "type": "string"
                                             },
                                             "proto": {
                                                 "type": "string",
@@ -293,31 +333,19 @@
                                                 ]
                                             },
                                             "port": {
-                                                "type": "string",
-                                                "pattern": "^[0-9]+$"
+                                                "type": "string"
                                             }
                                         },
                                         "required": [
                                             "type",
-                                            "action",
-                                            "proto",
-                                            "port"
+                                            "action"
                                         ]
                                     }
                                 }
                             },
-                            "if": {
-                                "properties": {
-                                    "enabled": {
-                                        "const": true
-                                    }
-                                }
-                            },
-                            "then": {
-                                "required": [
-                                    "rules"
-                                ]
-                            }
+                            "required": [
+                                "enabled"
+                            ]
                         },
                         "dependencies": {
                             "type": "array",
@@ -327,11 +355,34 @@
                             },
                             "description": "An array of CTIDs that this container depends on. The orchestrator will ensure these containers are running before starting this one."
                         },
-                        "run_integration_tests": {
-                            "type": "boolean",
-                            "description": "If true, runs post-deployment integration tests after the container's health check passes."
+                        "tests": {
+                            "type": "object",
+                            "patternProperties": {
+                                "^[a-zA-Z0-9_-]+$": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {
+                                                "type": "string"
+                                            },
+                                            "type": {
+                                                "type": "string"
+                                            },
+                                            "path": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "required": [
+                                            "name",
+                                            "type",
+                                            "path"
+                                        ]
+                                    }
+                                }
+                            }
                         },
-                        "volumes": {
+                        "zfs_volumes": {
                             "type": "array",
                             "description": "A list of dedicated ZFS volumes to be created and mounted into the container.",
                             "items": {
@@ -359,6 +410,24 @@
                                 ]
                             }
                         },
+                        "mount_points": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "host_path": {
+                                        "type": "string"
+                                    },
+                                    "container_path": {
+                                        "type": "string"
+                                    }
+                                },
+                                "required": [
+                                    "host_path",
+                                    "container_path"
+                                ]
+                            }
+                        },
                         "apparmor_profile": {
                             "type": "string",
                             "description": "The AppArmor profile to apply to the container. Use 'unconfined' for no profile."
@@ -366,6 +435,10 @@
                         "apparmor_manages_nesting": {
                             "type": "boolean",
                             "description": "If true, indicates the AppArmor profile handles nesting, and the orchestrator should not apply the 'nesting=1' feature flag."
+                        },
+                        "enable_lifecycle_snapshots": {
+                            "type": "boolean",
+                            "description": "If true, the orchestrator will create 'pre-configured' and 'final-form' snapshots during the create lifecycle."
                         }
                     },
                     "required": [
@@ -379,11 +452,9 @@
                         "unprivileged",
                         "apparmor_profile",
                         "apparmor_manages_nesting"
-                    ],
-                    "additionalProperties": false
+                    ]
                 }
-            },
-            "additionalProperties": false
+            }
         }
     },
     "required": [
@@ -392,6 +463,5 @@
         "nvidia_repo_url",
         "nvidia_runfile_url",
         "lxc_configs"
-    ],
-    "additionalProperties": false
+    ]
 }

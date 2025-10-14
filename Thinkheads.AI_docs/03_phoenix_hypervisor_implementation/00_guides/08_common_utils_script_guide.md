@@ -103,6 +103,15 @@ The script sets up a consistent environment by:
 
 *   **`ensure_nvidia_repo_is_configured(ctid)`**: An idempotent function that ensures the NVIDIA CUDA repository is configured within a container. It checks for an existing configuration and, if not found, adds the repository and updates the package list.
 
+#### Other Functions
+
+*   **`is_command_available(ctid, command)`**: Checks if a command is available inside a specified LXC container, searching both the PATH and common binary locations.
+*   **`cache_and_get_file(url, cache_dir)`**: Downloads a file from a URL to a local cache directory if it doesn't already exist and returns the path to the cached file.
+*   **`is_nvidia_installed_robust(ctid)`**: A robust check to see if the NVIDIA feature is installed in a container by checking for `nvidia-smi`, the driver version, and the CUDA directory.
+*   **`is_feature_present_on_container(ctid, feature_name)`**: Recursively checks if a feature is present on a container or any of its parent templates.
+*   **`wait_for_container_initialization(ctid)`**: Waits for a container to have network connectivity by pinging an external address.
+*   **`verify_lxc_network_connectivity(ctid)`**: Verifies network connectivity and DNS resolution within a container.
+
 ## 5. Dependencies
 
 *   **jq**: For parsing JSON configuration files.
