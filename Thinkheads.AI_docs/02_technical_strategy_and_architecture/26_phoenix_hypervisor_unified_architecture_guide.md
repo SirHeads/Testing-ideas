@@ -312,11 +312,20 @@ The network architecture has been enhanced to a three-tiered model, providing a 
 
 ### 5.1. Network Topology
 
-The network is configured with a single bridge (`vmbr0`) that provides connectivity for all LXC containers and VMs. IP addresses, gateways, and DNS settings are all managed declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files.
+The network is configured with a single bridge (`vmbr0`) that provides connectivity for all LXC containers and VMs. IP addresses and gateways are managed declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files.
+
+DNS resolution is centralized to the Nginx Gateway container (LXC 101), which runs a `dnsmasq` server. All other containers and VMs are configured to use `10.0.0.153` as their primary nameserver. The hypervisor's own DNS resolver is also automatically configured by the orchestration scripts to point to LXC 101, ensuring that all components in the ecosystem can resolve internal hostnames.
 
 ### 5.2. API Gateway (NGINX)
 
 LXC container `101` functions as the primary external-facing Nginx reverse proxy and API gateway. This container serves as a secure and efficient entry point for all external traffic, routing requests to the internal Traefik proxy.
+
+#### 5.2.1. Nginx JavaScript Module (NJS)
+
+The Nginx gateway leverages the Nginx JavaScript module (NJS) to enable dynamic, programmable request handling. This allows for more sophisticated routing logic and traffic management than is possible with static configuration alone.
+
+*   **Configuration:** The NJS module is loaded in the main `nginx.conf` file, and the `js_import` directive is used to import custom scripts. The `js_content` directive is then used within a `location` block to execute a specific JavaScript function for a given request.
+*   **Use Case:** The primary use case for NJS in this environment is to provide a flexible mechanism for routing and manipulating requests as they enter the system. While the current implementation is a simple "Hello World," it provides a powerful foundation for future enhancements, such as dynamic backend selection, custom authentication, and advanced traffic shaping.
 
 ### 5.3. Internal Proxy (Traefik)
 
@@ -366,6 +375,26 @@ Firewall management is handled declaratively through the `phoenix_hypervisor_con
 
 **Note:** The system exclusively uses `pve-firewall`. All legacy `ufw` commands have been removed to prevent conflicts and ensure a consistent, reproducible security posture.
 
+### 5.6. Traffic Flow and Encryption Boundaries
+
+To clarify the communication protocols used within the network, this section details the end-to-end traffic flow for a typical request.
+
+```mermaid
+graph TD
+    A[External Client] -- "1. HTTPS" --> B[LXC 101: Nginx Gateway];
+    B -- "2. HTTPS" --> C[LXC 102: Traefik Proxy];
+    C -- "3. HTTP" --> D[Backend Service e.g., Qdrant];
+
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style B fill:#bbf,stroke:#333,stroke-width:2px
+    style C fill:#ccf,stroke:#333,stroke-width:2px
+    style D fill:#cfc,stroke:#333,stroke-width:2px
+```
+
+*   **Step 1: External Client to Nginx Gateway (HTTPS):** The client initiates a secure connection to the Nginx gateway. Nginx terminates the TLS connection using a certificate issued by the internal Step-CA.
+*   **Step 2: Nginx Gateway to Traefik Proxy (HTTPS):** Nginx re-encrypts the traffic and proxies the request to the Traefik internal mesh. This connection is secured by a certificate that Traefik obtains from the Step-CA.
+*   **Step 3: Traefik Proxy to Backend Service (HTTP):** Traefik terminates the TLS connection and forwards the request to the backend service using plain HTTP. This is considered secure because this traffic never leaves the trusted, isolated environment of the Proxmox hypervisor's internal network bridge.
+
 ## 6. Storage
 
 The Phoenix Hypervisor's storage architecture is built on a declarative model, with ZFS as its foundation. The desired state of all storage resources is defined in `phoenix_hypervisor_config.json`, and a series of idempotent scripts are responsible for implementing this state.
@@ -413,6 +442,13 @@ The Phoenix Hypervisor is designed to host and manage demanding AI tasks, includ
 ### 8.1. Modular Feature Installation
 
 Features such as Docker, NVIDIA drivers, and vLLM are installed through a modular system of scripts located in the `lxc_setup` and `vm_features` directories. The `features` array in the `phoenix-cli_lxc_configs.json` and `phoenix-cli_vm_configs.json` files allows for the declarative application of these features to any container or VM.
+
+#### 8.1.1. Centralized Certificate Trust (`trusted_ca` feature)
+
+To ensure that all components within the ecosystem can securely communicate with each other, a new `trusted_ca` feature has been introduced. This feature provides a centralized and declarative mechanism for distributing the internal root CA certificate (`phoenix_ca.crt`) to any container that requires it.
+
+*   **Functionality:** The `feature_install_trusted_ca.sh` script copies the root CA certificate from a central location on the hypervisor to the container's trust store (e.g., `/usr/local/share/ca-certificates/`) and then updates the system's certificate authorities.
+*   **Application:** To apply this feature, simply add `"trusted_ca"` to the `features` array in the container's configuration in `phoenix_lxc_configs.json`. This ensures that the container will automatically trust all certificates issued by the internal Step-CA.
 
 ### 8.2. GPU Passthrough (NVIDIA)
 

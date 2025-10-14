@@ -116,6 +116,14 @@ if ! apt-get update || ! apt-get install -y docker-ce docker-ce-cli containerd.i
 fi
 log_info "Docker Engine installed successfully."
 
+# Step 5.5: Configure Docker Daemon with Internal DNS
+log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
+INTERNAL_DNS_SERVER="10.0.0.153" # Hardcode the correct internal DNS server
+
+log_info "Setting Docker DNS to '$INTERNAL_DNS_SERVER'."
+mkdir -p /etc/docker
+echo "{\"dns\": [\"$INTERNAL_DNS_SERVER\"]}" > /etc/docker/daemon.json
+
 # 6. Enable and Start Docker Service
 log_info "Step 6: Enabling and starting Docker service (systemctl enable docker && systemctl start docker)..."
 if ! systemctl enable docker || ! systemctl start docker; then

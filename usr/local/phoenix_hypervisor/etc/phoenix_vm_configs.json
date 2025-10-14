@@ -15,7 +15,8 @@
             "template_image": "noble-server-cloudimg-amd64.img",
             "template_snapshot_name": "initial_clean_state",
             "network_config": {
-                "ip": "dhcp"
+                "ip": "dhcp",
+                "nameserver": "10.0.0.153"
             },
             "user_config": {
                 "username": "phoenix_user"
@@ -33,7 +34,8 @@
             "boot_delay": 2,
             "features": [
                 "base_setup",
-                "docker"
+                "docker",
+                "trusted_ca"
             ],
             "portainer_role": "primary",
             "network_config": {
@@ -56,7 +58,7 @@
         },
         {
             "vmid": 1002,
-            "name": "phoenix-agent",
+            "name": "agent",
             "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 4096,
@@ -66,7 +68,8 @@
             "boot_delay": 2,
             "features": [
                 "base_setup",
-                "docker"
+                "docker",
+                "trusted_ca"
             ],
             "portainer_role": "agent",
             "network_config": {

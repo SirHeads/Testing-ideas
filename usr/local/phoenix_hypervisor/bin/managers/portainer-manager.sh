@@ -211,6 +211,15 @@ deploy_portainer_instances() {
                 yq -i -y '.services.portainer.volumes += ["./certs:/certs"]' "$compose_file_on_hypervisor"
                 # --- END DOCKER COMPOSE MODIFICATION ---
 
+                log_info "Dynamically adding extra_hosts to docker-compose.yml for DNS resolution..."
+                local agent_ip=$(jq -r '.vms[] | select(.portainer_role == "agent") | .network_config.ip' "$VM_CONFIG_FILE" | cut -d'/' -f1)
+                local agent_name=$(jq -r '.vms[] | select(.portainer_role == "agent") | .name' "$VM_CONFIG_FILE")
+                local domain_name=$(get_global_config_value '.network.domain_name' | jq -r '. // "phoenix.local"')
+                local agent_fqdn="${agent_name}.agent.${domain_name}"
+                local host_entry="${agent_fqdn}:${agent_ip}"
+
+                yq -i -y ".services.portainer.extra_hosts += [\"${host_entry}\"]" "$compose_file_on_hypervisor" || log_fatal "Failed to add extra_hosts to docker-compose.yml using yq."
+
                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
                 if ! qm guest exec "$VMID" -- /bin/bash -c "docker compose -f ${compose_file_path} up -d"; then
                     log_fatal "Failed to deploy Portainer server on VM $VMID."
@@ -222,13 +231,34 @@ deploy_portainer_instances() {
             agent)
                 log_info "Deploying Portainer agent on VM $VMID..."
                 local agent_port=$(get_global_config_value '.network.portainer_agent_port')
+                local agent_name=$(echo "$vm_config" | jq -r '.name')
+                local domain_name=$(get_global_config_value '.network.domain_name' | jq -r '. // "phoenix.local"')
+                local agent_fqdn="${agent_name}.agent.${domain_name}"
+
+                # --- BEGIN AGENT CERTIFICATE GENERATION ---
+                local agent_cert_dir="${persistent_volume_path}/certs"
+                mkdir -p "$agent_cert_dir"
+                local agent_cert_path="${agent_cert_dir}/cert.pem"
+                local agent_key_path="${agent_cert_dir}/key.pem"
+                local agent_ca_path="${agent_cert_dir}/ca.pem"
+
+                log_info "Generating Portainer Agent certificate for ${agent_fqdn}..."
+                local temp_agent_cert_path="/tmp/${agent_fqdn}.crt"
+                local temp_agent_key_path="/tmp/${agent_fqdn}.key"
+                
+                pct exec 103 -- step ca certificate "${agent_fqdn}" "$temp_agent_cert_path" "$temp_agent_key_path" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/ca_password.txt --force
+                pct pull 103 "$temp_agent_cert_path" "$agent_cert_path"
+                pct pull 103 "$temp_agent_key_path" "$agent_key_path"
+                
+                # Copy the CA certificate to the agent's certs directory
+                cp "${PHOENIX_BASE_DIR}/persistent-storage/ssl/phoenix_ca.crt" "$agent_ca_path" || log_fatal "Failed to copy CA certificate to agent's certs directory."
+                # --- END AGENT CERTIFICATE GENERATION ---
 
                 log_info "Ensuring clean restart for Portainer agent on VM $VMID..."
                 qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly on VM $VMID. Proceeding with deployment."
 
-                # The Docker daemon in the VM is already configured to trust the Step-CA.
-                # Therefore, the agent can be deployed without needing to mount certificates directly.
-                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes portainer/agent:latest"
+                # The agent needs to be started with the correct TLS certificates. The agent will automatically use them if they are mounted to /certs.
+                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes -v ${vm_mount_point}/certs:/certs portainer/agent:latest"
 
                 if ! qm guest exec "$VMID" -- /bin/bash -c "$docker_command"; then
                     log_fatal "Failed to deploy Portainer agent on VM $VMID."
@@ -321,6 +351,10 @@ sync_all() {
     local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
 
     # 3. Process each agent VM to create/update environments (endpoints)
+    log_info "DEBUG: Listing all existing Portainer environments..."
+    local all_endpoints=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10)
+    log_info "DEBUG: Existing environments: $(echo "$all_endpoints" | jq)"
+
     local agent_vms_json
     agent_vms_json=$(jq -c '[.vms[] | select(.portainer_role == "agent")]' "$VM_CONFIG_FILE")
 
@@ -362,6 +396,9 @@ sync_all() {
 
         log_info "DEBUG: Adding firewall rule on Portainer server VM (1001) to allow outgoing traffic to agent VM (${AGENT_VMID}) at ${AGENT_IP}:${AGENT_PORT}..."
         qm guest exec 1001 -- /bin/bash -c "ufw allow out to ${AGENT_IP} port ${AGENT_PORT} proto tcp" || log_warn "Failed to add firewall rule on Portainer server VM (1001). This may cause connectivity issues."
+        
+        log_info "DEBUG: Forcing CA certificate update in Portainer server VM (1001)..."
+        qm guest exec 1001 -- /bin/bash -c "update-ca-certificates" || log_warn "Failed to force update-ca-certificates in Portainer server VM (1001)."
 
         log_info "Performing final connectivity check from Portainer server VM (1001) to agent VM (${AGENT_VMID}) at ${AGENT_IP}:${AGENT_PORT}..."
         if ! run_qm_command guest exec 1001 -- nc -z -w 5 "${AGENT_IP}" "${AGENT_PORT}"; then
@@ -369,7 +406,7 @@ sync_all() {
         fi
         log_success "Connectivity check passed: Portainer server VM (1001) can reach agent VM (${AGENT_VMID}) at ${AGENT_IP}:${AGENT_PORT}."
 
-        local ENDPOINT_URL="tcp://drphoenix.phoenix.local:${AGENT_PORT}"
+        local ENDPOINT_URL="tcp://${AGENT_NAME}.agent.phoenix.local:${AGENT_PORT}"
         local ENDPOINT_ID=""
 
         # First, check if an environment with this name already exists
@@ -377,10 +414,18 @@ sync_all() {
 
         if [ -n "$EXISTING_ENDPOINT_BY_NAME" ]; then
             log_warn "Portainer environment '${PORTAINER_ENVIRONMENT_NAME}' already exists with ID: ${EXISTING_ENDPOINT_BY_NAME}. Deleting and recreating to ensure a clean state."
-            if ! curl -s --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/endpoints/${EXISTING_ENDPOINT_BY_NAME}" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10; then
-                log_error "Failed to delete existing Portainer environment '${PORTAINER_ENVIRONMENT_NAME}'. Proceeding, but this might cause issues."
+            local delete_response
+            delete_response=$(curl -w "%{http_code}" -s --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/endpoints/${EXISTING_ENDPOINT_BY_NAME}" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10)
+            local http_code=${delete_response: -3}
+            local body=${delete_response::-3}
+
+            log_info "DEBUG: Delete API response HTTP code: ${http_code}"
+            log_info "DEBUG: Delete API response body: ${body}"
+
+            if [[ "$http_code" -ne 204 && "$http_code" -ne 404 ]]; then # 204 is success, 404 means it was already gone
+                log_error "Failed to delete existing Portainer environment '${PORTAINER_ENVIRONMENT_NAME}'. HTTP status: ${http_code}. Proceeding, but this might cause issues."
             else
-                log_info "Successfully deleted old Portainer environment '${PORTAINER_ENVIRONMENT_NAME}'."
+                log_info "Successfully deleted old Portainer environment '${PORTAINER_ENVIRONMENT_NAME}' (or it was already gone)."
             fi
         fi
 

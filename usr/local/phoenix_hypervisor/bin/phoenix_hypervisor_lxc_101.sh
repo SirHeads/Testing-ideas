@@ -197,4 +197,7 @@ if ! systemctl is-active --quiet nginx; then
 fi
 
 echo "Nginx API Gateway has been configured successfully in LXC 101."
+
+# DNS update is now handled by lxc-manager.sh
+
 exit 0

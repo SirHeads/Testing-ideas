@@ -30,7 +30,7 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 # Returns:
 #   None. Exits with a fatal error if directory or file operations fail.
 # =====================================================================================
-local ca_password_file_on_host=""
+ca_password_file_on_host=""
 
 # =====================================================================================
 # Function: manage_ca_password_on_hypervisor
@@ -375,9 +375,25 @@ apply_configurations() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+    local internal_dns_server="10.0.0.153"
+    local fallback_dns
+    fallback_dns=$(get_global_config_value ".network.fallback_dns")
 
-    # Apply network configuration
+    # Dynamic DNS Resolution Logic
+    if pct status 101 > /dev/null 2>&1; then
+        log_info "Internal DNS server (101) is available. Using internal DNS."
+        nameservers="$internal_dns_server"
+    else
+        log_info "Internal DNS server (101) is not available. Using fallback DNS."
+        nameservers="$fallback_dns"
+    fi
+ 
+     # Apply network configuration
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+    if [ -n "$nameservers" ]; then
+        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    fi
 
     # --- Apply GPU Passthrough Configuration ---
     # This is a critical step for containers that require GPU access.
@@ -835,46 +851,48 @@ run_application_script() {
         log_fatal "Failed to copy application script to container $CTID."
     fi
 
-    # --- START OF MODIFICATIONS FOR NGINX CONFIG PUSH ---
-    # If the application script is for the Nginx gateway (101), push the necessary configs.
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
-        log_info "Nginx gateway script detected. Packaging and pushing configuration files..."
-        local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
-        local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
+    # --- START OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
+    # If the application script is for the Nginx gateway (101) or Traefik (102), push the necessary configs.
+    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]] || [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
+        log_info "Packaging and pushing configuration files for $app_script_name..."
+        
+        if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
+            local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
+            local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
 
-        # Create a tarball of the nginx configs on the host
-        log_info "Creating tarball of Nginx configs at ${temp_tarball}"
-        if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
-            sites-available/gateway \
-            scripts \
-            snippets \
-            nginx.conf; then
-            log_fatal "Failed to create Nginx config tarball."
-        fi
-
-        # Push the single tarball to the container
-        if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
-            log_fatal "Failed to push Nginx config tarball to container $CTID."
-        fi
-
-        # Clean up the temporary tarball on the host
-        rm -f "$temp_tarball"
-    fi
-    # --- END OF MODIFICATIONS FOR NGINX CONFIG PUSH ---
-
-    # --- START OF MODIFICATIONS FOR TRAEFIK CONFIG PUSH ---
-    if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
-        log_info "Traefik script detected. Pushing dynamic configuration..."
-        local traefik_config_path="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
-        if [ -f "$traefik_config_path" ]; then
-            if ! pct push "$CTID" "$traefik_config_path" "${temp_dir_in_container}/dynamic_conf.yml"; then
-                log_fatal "Failed to push Traefik dynamic config to container $CTID."
+            # Create a tarball of the nginx configs on the host
+            log_info "Creating tarball of Nginx configs at ${temp_tarball}"
+            if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
+                sites-available/gateway \
+                scripts \
+                snippets \
+                nginx.conf; then
+                log_fatal "Failed to create Nginx config tarball."
             fi
-        else
-            log_warn "Traefik dynamic configuration not found at $traefik_config_path. Skipping."
+
+            # Push the single tarball to the container
+            if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
+                log_fatal "Failed to push Nginx config tarball to container $CTID."
+            fi
+            
+            # Clean up the temporary tarball on the host
+            rm -f "$temp_tarball"
+        fi
+
+        if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
+            local traefik_config_path="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
+            if [ -f "$traefik_config_path" ]; then
+                if ! pct push "$CTID" "$traefik_config_path" "${temp_dir_in_container}/dynamic_conf.yml"; then
+                    log_fatal "Failed to push Traefik dynamic config to container $CTID."
+                fi
+            else
+                log_warn "Traefik dynamic configuration not found at $traefik_config_path. Skipping."
+            fi
         fi
     fi
-    # --- END OF MODIFICATIONS FOR TRAEFIK CONFIG PUSH ---
+    # --- END OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
+
+    # This block is now redundant and has been removed.
 
     # 2. Copy common_utils.sh to the container
     log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
@@ -1264,6 +1282,15 @@ main_lxc_orchestrator() {
                     create_pre_configured_snapshot "$ctid"
                 fi
 
+                # Force set DNS before applying features
+                local fallback_dns
+                fallback_dns=$(get_global_config_value ".network.fallback_dns")
+                if [ -n "$fallback_dns" ]; then
+                    log_info "Forcing DNS to fallback DNS: $fallback_dns"
+                    # Remove Proxmox comments and set DNS
+                    pct exec "$ctid" -- bash -c "sed -i '/# --- BEGIN PVE ---/,/# --- END PVE ---/d' /etc/resolv.conf && echo 'nameserver $fallback_dns' > /etc/resolv.conf" || log_fatal "Failed to force DNS update in container."
+                fi
+
                 apply_features "$ctid"
                 run_application_script "$ctid"
                 run_health_check "$ctid"
@@ -1298,6 +1325,15 @@ main_lxc_orchestrator() {
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."
+
+                # --- Special Handling for Nginx Gateway (CTID 101) to update hypervisor DNS ---
+                if [ "$ctid" -eq 101 ]; then
+                    log_info "Updating hypervisor's /etc/resolv.conf to use container 101 as the DNS server..."
+                    if ! echo "nameserver 10.0.0.153" > /etc/resolv.conf; then
+                        log_fatal "Failed to update hypervisor's /etc/resolv.conf."
+                    fi
+                    log_success "Hypervisor's DNS updated successfully."
+                fi
             fi
             ;;
         start)

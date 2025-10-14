@@ -69,7 +69,7 @@ EOF
     # Append the [RULES] section to the temporary file
     echo "" >> "$TMP_FW_CONFIG"
     echo "[RULES]" >> "$TMP_FW_CONFIG"
-    jq -r '.shared_volumes.firewall.global_firewall_rules[] | "IN \(.action) -p \(.proto)" + (if .source and .source != "" and .source != "null" then " -source \(.source)" else "" end) + (if .dest and .dest != "" and .dest != "null" then " -dest \(.dest)" else "" end) + " -dport \(.port) # \(.comment)"' "$HYPERVISOR_CONFIG_FILE" >> "$TMP_FW_CONFIG"
+    jq -r '.shared_volumes.firewall.global_firewall_rules[] | "\(.type|ascii_upcase) \(.action) -p \(.proto)" + (if .source and .source != "" and .source != "null" then " -source \(.source)" else "" end) + (if .dest and .dest != "" and .dest != "null" then " -dest \(.dest)" else "" end) + " -dport \(.port) # \(.comment)"' "$HYPERVISOR_CONFIG_FILE" >> "$TMP_FW_CONFIG"
 
     # Replace the existing firewall configuration with the new one
     log_info "Applying new firewall configuration from temporary file..."

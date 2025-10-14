@@ -59,6 +59,17 @@ fi
 
 log_info "Base setup feature installation completed."
 
+# --- Disable IPv6 ---
+log_info "Step 3: Disabling IPv6 to ensure proper DNS resolution..."
+cat <<EOF > /etc/sysctl.d/99-disable-ipv6.conf
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+
+sysctl -p
+log_info "Step 3: IPv6 disabled."
+
 # --- Firewall Configuration for Portainer Roles ---
 log_info "Step 3: Checking for Portainer role to configure firewall..."
 PORTAINER_ROLE=$(jq -r '.portainer_role // "none"' "$CONTEXT_FILE")

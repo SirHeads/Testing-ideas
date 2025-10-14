@@ -34,6 +34,10 @@
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
+# --- Script Variables ---
+WIPE_DISKS=false # Flag to enable destructive disk operations during ZFS setup.
+CONFIG_FILE=""   # Path to the hypervisor configuration file.
+
 # --- SOURCE COMMON UTILITIES ---
 # Sources the common utilities script, which provides a centralized library of functions for logging,
 # error handling, and other common tasks, ensuring consistency across the system.
@@ -140,6 +144,14 @@ setup_hypervisor() {
             fi
         fi
     done
+
+    # Set the hypervisor's DNS to the fallback DNS
+    local fallback_dns
+    fallback_dns=$(get_global_config_value ".network.fallback_dns")
+    if [ -n "$fallback_dns" ]; then
+        log_info "Setting hypervisor's DNS to fallback DNS: $fallback_dns"
+        echo "nameserver $fallback_dns" > /etc/resolv.conf || log_fatal "Failed to update hypervisor's /etc/resolv.conf."
+    fi
 
     log_info "Hypervisor setup completed successfully."
 

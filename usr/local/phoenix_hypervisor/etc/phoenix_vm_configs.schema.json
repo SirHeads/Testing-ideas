@@ -48,6 +48,9 @@
                     "name": {
                         "type": "string"
                     },
+                    "is_template": {
+                        "type": "boolean"
+                    },
                     "clone_from_vmid": {
                         "type": "integer"
                     },
@@ -90,17 +93,28 @@
                             "type": "string"
                         }
                     },
+                    "portainer_role": {
+                        "type": "string",
+                        "enum": [
+                            "primary",
+                            "agent",
+                            "none"
+                        ]
+                    },
                     "snapshots": {
                         "type": "object",
                         "description": "Defines lifecycle snapshots to be taken.",
                         "properties": {
-                            "pre_features": {
+                            "pre-features": {
                                 "type": "string"
                             },
-                            "post_features": {
+                            "post-features": {
                                 "type": "string"
                             }
                         }
+                    },
+                    "template_snapshot_name": {
+                        "type": "string"
                     },
                     "count": {
                         "type": "integer",
@@ -120,25 +134,46 @@
                         "items": {
                             "type": "object",
                             "properties": {
+                                "type": {
+                                    "type": "string"
+                                },
                                 "name": {
                                     "type": "string"
                                 },
-                                "pool": {
+                                "path": {
                                     "type": "string"
                                 },
-                                "size_gb": {
-                                    "type": "integer",
-                                    "minimum": 1
-                                },
                                 "mount_point": {
+                                    "type": "string"
+                                },
+                                "server": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "type",
+                                "name",
+                                "path",
+                                "mount_point",
+                                "server"
+                            ]
+                        }
+                    },
+                    "docker_stacks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "environment": {
                                     "type": "string"
                                 }
                             },
                             "required": [
                                 "name",
-                                "pool",
-                                "size_gb",
-                                "mount_point"
+                                "environment"
                             ]
                         }
                     },
@@ -205,11 +240,13 @@
                             },
                             "gw": {
                                 "type": "string"
+                            },
+                            "nameserver": {
+                                "type": "string"
                             }
                         },
                         "required": [
-                            "ip",
-                            "gw"
+                            "ip"
                         ]
                     },
                     "user_config": {

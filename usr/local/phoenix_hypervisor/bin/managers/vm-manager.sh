@@ -495,10 +495,31 @@ apply_network_configurations() {
             if [ -z "$ip" ] || [ -z "$gw" ]; then
                 log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
             fi
-            log_info "Applying network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
+            log_info "Applying network config: IP=${ip}, Gateway=${gw}"
             run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
-            run_qm_command set "$VMID" --nameserver "$nameserver"
         fi
+    start_vm "$VMID"
+    wait_for_guest_agent "$VMID"
+
+    if [ -n "$network_config" ] && [ "$(echo "$network_config" | jq -r '.ip // ""')" != "dhcp" ]; then
+        local nameserver="10.0.0.153" # Default to the internal DNS server
+        # --- Directly configure systemd-resolved within the guest ---
+        log_info "Directly configuring systemd-resolved in VM $VMID to use DNS ${nameserver}..."
+        
+        local resolved_conf_content="[Resolve]\nDNS=${nameserver}\nDomains=~."
+        
+        # Create the directory and write the file
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "mkdir -p /etc/systemd/resolved.conf.d"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "echo -e '${resolved_conf_content}' > /etc/systemd/resolved.conf.d/99-phoenix.conf"
+        
+        # Ensure /etc/resolv.conf is using the systemd-resolved stub
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf"
+        
+        # Restart the service to apply changes
+        run_qm_command guest exec "$VMID" -- systemctl restart systemd-resolved
+    fi
+
+    run_qm_command guest exec "$VMID" -- systemctl restart systemd-networkd
     else
         log_info "No network configurations to apply for VM $VMID."
     fi

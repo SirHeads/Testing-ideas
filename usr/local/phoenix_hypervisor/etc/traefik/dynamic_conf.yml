@@ -33,7 +33,7 @@ http:
         certResolver: myresolver
 
    portainer-router:
-     rule: "Host(`portainer.phoenix.local`)"
+     rule: "Host(`agent.agent.phoenix.local`)"
      service: "portainer-service"
      entryPoints:
        - websecure

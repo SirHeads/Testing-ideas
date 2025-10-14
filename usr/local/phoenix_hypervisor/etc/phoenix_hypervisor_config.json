@@ -27,10 +27,14 @@
             "name": "vmbr0",
             "address": "10.0.0.13/24",
             "gateway": "10.0.0.1",
-            "dns_nameservers": "8.8.8.8"
+            "dns_nameservers": [
+                "10.0.0.153",
+                "8.8.8.8"
+            ]
         },
         "default_subnet": "10.0.0.0/24",
-        "nfs_server": "10.0.0.13"
+        "nfs_server": "10.0.0.13",
+        "fallback_dns": "8.8.8.8"
     },
     "docker": {
         "portainer_server_image": "portainer/portainer-ce:latest",
@@ -407,6 +411,24 @@
                     "proto": "udp",
                     "port": "138",
                     "comment": "Allow Samba NetBIOS Datagram Service"
+                },
+                {
+                    "type": "out",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "dest": "0.0.0.0/0",
+                    "port": "53",
+                    "comment": "Allow outbound DNS traffic from all guests"
+                },
+                {
+                    "type": "out",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "dest": "0.0.0.0/0",
+                    "port": "53",
+                    "comment": "Allow outbound DNS traffic (TCP) from all guests"
                 }
             ]
         }
