@@ -145,14 +145,6 @@ setup_hypervisor() {
         fi
     done
 
-    # Set the hypervisor's DNS to the fallback DNS
-    local fallback_dns
-    fallback_dns=$(get_global_config_value ".network.fallback_dns")
-    if [ -n "$fallback_dns" ]; then
-        log_info "Setting hypervisor's DNS to fallback DNS: $fallback_dns"
-        echo "nameserver $fallback_dns" > /etc/resolv.conf || log_fatal "Failed to update hypervisor's /etc/resolv.conf."
-    fi
-
     log_info "Hypervisor setup completed successfully."
 
     # As the final step, create the global symlink to make the phoenix command accessible.

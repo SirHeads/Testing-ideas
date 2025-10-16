@@ -31,24 +31,24 @@ http:
         - websecure
       tls:
         certResolver: myresolver
-
-   portainer-router:
-     rule: "Host(`agent.agent.phoenix.local`)"
-     service: "portainer-service"
-     entryPoints:
-       - websecure
-     tls:
-       certResolver: myresolver
-
- services:
-   portainer-service:
-     loadBalancer:
-       servers:
-         - url: "https://10.0.0.101:9443"
-   granite-embedding-service:
+  
+    portainer-router:
+      rule: "Host(`portainer.phoenix.thinkheads.ai`)"
+      service: "portainer-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
+  
+  services:
+    portainer-service:
       loadBalancer:
         servers:
-          - url: "http://10.0.0.141:8000"
+          - url: "https://10.0.0.101:9443"
+    granite-embedding-service:
+       loadBalancer:
+         servers:
+           - url: "http://10.0.0.141:8000"
 
     granite-3b-service:
       loadBalancer:

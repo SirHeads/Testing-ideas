@@ -1,34 +1,19 @@
-# Use Ubuntu as the base image for building
-FROM ubuntu:latest AS builder
+# Use the Alpine version of Portainer-CE, which includes a shell and ca-certificates package
+FROM portainer/portainer-ce:alpine
 
-# Install necessary packages
-RUN apt-get update && \
-    apt-get install -y ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/*
+# Install the ca-certificates package, which provides the update-ca-certificates command
+RUN apk add --no-cache ca-certificates
 
-# Copy the custom CA certificate into the image
+# Copy the custom CA certificate into the correct directory for Alpine's update-ca-certificates script
 COPY phoenix_ca.crt /usr/local/share/ca-certificates/phoenix_ca.crt
 
-# Update the CA certificates store
+# Run the command to update the certificate store. This is the crucial step that makes
+# the Go runtime inside the container trust our custom CA.
 RUN update-ca-certificates
 
-# --- Final stage ---
-FROM portainer/portainer-ce:latest
-
-# Copy the updated CA certificates from the builder stage
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# It's crucial to also update the certificates within the final image context
-# It's not necessary to run update-ca-certificates in the final stage,
-# as the certificate store is already updated in the builder stage.
-# The portainer/portainer-ce image is distroless and does not have a shell.
-
-# Expose Portainer ports
+# Expose Portainer ports (inherited from base image, but good practice to declare)
 EXPOSE 9000
 EXPOSE 9443
 
-# Add a healthcheck to verify Portainer is running
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-check-certificate -q -O - https://localhost:9443/api/status | grep -q 'Version' || exit 1
-
-# Command to run Portainer (default command from original image)
+# The HEALTHCHECK and CMD are inherited from the portainer/portainer-ce:alpine base image,
+# so we don't need to redefine them. This keeps the Dockerfile clean and focused on our customization.

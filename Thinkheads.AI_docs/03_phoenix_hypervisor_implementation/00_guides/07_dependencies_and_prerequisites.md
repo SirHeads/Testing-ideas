@@ -31,6 +31,7 @@ This document lists all the external dependencies and prerequisites for setting 
 *   **Proxmox VE**: Version 7.x or later.
 *   **Git**: For cloning the Phoenix Hypervisor repository.
 *   **jq**: For parsing JSON in the shell scripts.
+*   **libguestfs-tools**: Provides the `virt-customize` utility, which is essential for modifying cloud images to inject necessary components like the `qemu-guest-agent` before VM creation. This is a critical dependency for ensuring that new VMs can be properly managed by the Phoenix Hypervisor.
 *   **NVIDIA Drivers**: The appropriate NVIDIA drivers for your GPU.
 *   **Docker**: For running containerized applications.
 *   **Python**: For running the vLLM and other Python-based tools.

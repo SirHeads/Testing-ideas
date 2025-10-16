@@ -1,6 +1,7 @@
 {
     "version": "1.0.0",
     "author": "Heads, Qwen3-coder, Roo",
+    "domain_name": "phoenix.thinkheads.ai",
     "users": {
         "username": "phoenix_admin",
         "password_hash": "NOT_SET",
@@ -344,6 +345,13 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "icmp",
+                    "comment": "Allow ICMP (ping) from internal network"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow HTTPS traffic to Nginx gateway"
@@ -429,6 +437,22 @@
                     "dest": "0.0.0.0/0",
                     "port": "53",
                     "comment": "Allow outbound DNS traffic (TCP) from all guests"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "53",
+                    "comment": "Allow inbound DNS traffic from all guests"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "53",
+                    "comment": "Allow inbound DNS traffic (TCP) from all guests"
                 }
             ]
         }
@@ -436,6 +460,9 @@
     "portainer_api": {
         "admin_user": "admin",
         "admin_password": "NewKick@$$2025",
-        "portainer_hostname": "portainer.phoenix.local"
+        "portainer_hostname": "portainer.phoenix.thinkheads.ai"
+    },
+    "vm_defaults": {
+        "ubuntu_release": "noble"
     }
 }

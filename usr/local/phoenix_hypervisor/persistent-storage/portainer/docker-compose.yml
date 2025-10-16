@@ -1,8 +1,10 @@
 services:
   portainer:
-    image: portainer/portainer-ce:latest
+    build: .
     command: -H unix:///var/run/docker.sock --tlsverify --tlscert /certs/cert.pem --tlskey /certs/key.pem --tlscacert /certs/ca.pem
     container_name: portainer_server
+    dns:
+      - 10.0.0.13
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data

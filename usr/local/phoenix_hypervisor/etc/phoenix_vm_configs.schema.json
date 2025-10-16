@@ -259,6 +259,25 @@
                         "required": [
                             "username"
                         ]
+                    },
+                    "dns_records": {
+                        "type": "array",
+                        "description": "A list of DNS records to create for this VM.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "hostname": {
+                                    "type": "string"
+                                },
+                                "ip": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "hostname",
+                                "ip"
+                            ]
+                        }
                     }
                 },
                 "required": [

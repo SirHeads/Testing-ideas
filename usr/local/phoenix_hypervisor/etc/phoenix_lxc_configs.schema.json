@@ -441,6 +441,25 @@
                             "description": "If true, the orchestrator will create 'pre-configured' and 'final-form' snapshots during the create lifecycle."
                         }
                     },
+                    "dns_records": {
+                        "type": "array",
+                        "description": "A list of DNS records to create for this LXC.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "hostname": {
+                                    "type": "string"
+                                },
+                                "ip": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "hostname",
+                                "ip"
+                            ]
+                        }
+                    },
                     "required": [
                         "name",
                         "memory_mb",

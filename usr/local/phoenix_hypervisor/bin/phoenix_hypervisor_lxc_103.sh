@@ -31,6 +31,7 @@ CA_CONFIG_FILE="${CA_CONFIG_DIR}/ca.json"
 CA_SERVICE_FILE="/etc/systemd/system/step-ca.service"
 CA_PASSWORD_FILE="/etc/step-ca/ssl/ca_password.txt" # Path to the mounted password file
 # CA_INIT_PASSWORD=$(openssl rand -base64 32) # Removed: Password is now managed on the host
+CA_PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
 
 # =====================================================================================
 # Function: initialize_step_ca
@@ -69,7 +70,14 @@ initialize_step_ca() {
         log_debug "Set permissions of $CA_PASSWORD_FILE to 600."
     fi
 
-    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE"; then
+    # Add a check for the provisioner password file
+    log_debug "Checking for existence of provisioner password file inside container: $CA_PROVISIONER_PASSWORD_FILE"
+    if [ ! -f "$CA_PROVISIONER_PASSWORD_FILE" ]; then
+        log_fatal "Provisioner password file not found at $CA_PROVISIONER_PASSWORD_FILE inside container. Cannot initialize CA."
+    fi
+    log_debug "Provisioner password file found at $CA_PROVISIONER_PASSWORD_FILE inside container."
+
+    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
         log_fatal "Failed to initialize Smallstep CA in container $CTID."
     fi
     log_success "Smallstep CA initialized successfully."
@@ -195,6 +203,26 @@ verify_ca_status() {
     log_fatal "ACME provisioner failed to become active after $acme_retries attempts."
 }
 
+# =====================================================================================
+# Function: export_root_ca_certificate
+# Description: Exports the root CA certificate to a shared location.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if export fails.
+# =====================================================================================
+export_root_ca_certificate() {
+    log_info "Exporting root CA certificate to shared SSL directory..."
+    local shared_ssl_dir="/etc/step-ca/ssl"
+    local root_ca_cert_path="/root/.step/certs/root_ca.crt"
+
+    if [ ! -f "$root_ca_cert_path" ]; then
+        log_fatal "Root CA certificate not found at $root_ca_cert_path. Cannot export."
+    fi
+
+    cp "$root_ca_cert_path" "${shared_ssl_dir}/phoenix_ca.crt" || log_fatal "Failed to export root CA certificate."
+    log_success "Root CA certificate exported to ${shared_ssl_dir}/phoenix_ca.crt."
+}
 
 # =====================================================================================
 # Function: setup_ca_service
@@ -292,14 +320,7 @@ WantedBy=multi-user.target"
         log_warn "step-ca process not found or PID is 0. Cannot perform lsof/netstat."
     fi
 
-    # Check container's internal firewall rules (if ufw is installed)
-    log_info "Checking container's internal firewall status (ufw)..."
-    if command -v ufw &> /dev/null; then
-        ufw status verbose > /tmp/step-ca_ufw_status.log 2>&1 || log_warn "Failed to get ufw status."
-        log_info "ufw status logged to /tmp/step-ca_ufw_status.log"
-    else
-        log_info "ufw not installed in container. Skipping internal firewall check."
-    fi
+    log_info "ufw has been deprecated in favor of pve-firewall. Skipping internal firewall check."
 
     log_success "Smallstep CA service set up and started successfully with extended diagnostics."
 
@@ -328,6 +349,7 @@ main() {
     log_info "Starting Step CA application script for CTID $CTID."
  
     initialize_step_ca
+    export_root_ca_certificate
     setup_ca_service
     add_acme_provisioner
     verify_ca_status
@@ -358,11 +380,6 @@ main() {
         log_success "Pulled netstat log."
     else
         log_warn "Failed to pull netstat log."
-    fi
-    if pct pull "$CTID" "/tmp/step-ca_ufw_status.log" "${ca_output_dir}/logs/step-ca_ufw_status.log"; then
-        log_success "Pulled ufw status log."
-    else
-        log_warn "Failed to pull ufw status log."
     fi
 
     log_info "Step CA application script completed for CTID $CTID."

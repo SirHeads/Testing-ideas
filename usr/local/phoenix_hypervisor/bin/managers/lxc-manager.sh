@@ -56,13 +56,12 @@ manage_ca_password_on_hypervisor() {
     # Ensure the destination directory exists on the hypervisor
     mkdir -p "$final_ca_password_dir" || log_fatal "Failed to create destination directory for CA password: $final_ca_password_dir."
 
-    if [ -f "$final_ca_password_file" ]; then
-        log_info "CA password file already exists at $final_ca_password_file. No action needed."
+    if [ -s "$final_ca_password_file" ]; then
+        log_info "CA password file already exists and is not empty at $final_ca_password_file. No action needed."
     else
-        log_info "CA password file not found. Generating a new password..."
-        local new_password
-        new_password=$(openssl rand -base64 32)
-        echo "$new_password" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
+        log_info "CA password file not found or is empty. Generating a new password..."
+        log_info "CA password file not found. Creating it with the specified password..."
+        echo "NewKick@$$2025" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
         log_debug "Generated and wrote new password to $final_ca_password_file."
 
         # Set permissions for the final file
@@ -71,6 +70,35 @@ manage_ca_password_on_hypervisor() {
         log_success "New CA password generated and stored at $final_ca_password_file."
     fi
     echo "$final_ca_password_file" # Return the path to the final file
+}
+
+# =====================================================================================
+# Function: manage_provisioner_password_on_hypervisor
+# Description: Ensures a persistent provisioner password file exists on the hypervisor for CTID 103.
+#              If the file does not exist, a new strong password is generated and stored.
+# Arguments:
+#   $1 - The CTID of the container (expected to be 103).
+# Returns:
+#   The path to the provisioner password file on the hypervisor.
+# =====================================================================================
+manage_provisioner_password_on_hypervisor() {
+    local CTID="$1"
+    log_info "Managing provisioner password for CTID $CTID on hypervisor..."
+
+    local provisioner_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
+    local provisioner_password_file="${provisioner_password_dir}/provisioner_password.txt"
+
+    mkdir -p "$provisioner_password_dir" || log_fatal "Failed to create destination directory for provisioner password: $provisioner_password_dir."
+
+    if [ -s "$provisioner_password_file" ]; then
+        log_info "Provisioner password file already exists and is not empty at $provisioner_password_file. No action needed."
+    else
+        log_info "Provisioner password file not found or is empty. Generating a new password..."
+        echo "NewProvisioner@$$2025" > "$provisioner_password_file" || log_fatal "Failed to write new provisioner password to $provisioner_password_file."
+        chmod 644 "$provisioner_password_file" || log_fatal "Failed to set permissions for provisioner password file on hypervisor."
+        log_success "New provisioner password generated and stored at $provisioner_password_file."
+    fi
+    echo "$provisioner_password_file"
 }
 
 # =====================================================================================
@@ -210,9 +238,10 @@ create_container_from_template() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
  
-    # --- Build the pct create command array ---
-    # Using an array for the command arguments is a best practice that avoids issues with word splitting and quoting.
+     # --- Build the pct create command array ---
+     # Using an array for the command arguments is a best practice that avoids issues with word splitting and quoting.
     local pct_create_cmd=(
         create "$CTID" "$template"
         --hostname "$hostname"
@@ -223,6 +252,10 @@ create_container_from_template() {
         --net0 "$net0_string"
         --unprivileged "$unprivileged_val"
     )
+
+    if [ -n "$nameservers" ]; then
+        pct_create_cmd+=(--nameserver "$nameservers")
+    fi
 
     # Note: The --features flag is reserved for Proxmox's internal use.
     # Custom features (e.g., Docker, Nvidia) are handled by the state machine after container creation.
@@ -319,6 +352,19 @@ apply_configurations() {
     run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
     run_pct_command set "$CTID" --onboot "${start_at_boot_val}" || log_fatal "Failed to set onboot."
     run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
+
+    # --- Apply Network Configuration ---
+    local net0_name=$(jq_get_value "$CTID" ".network_config.name")
+    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
+    local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
+    local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
+    local mac_address=$(jq_get_value "$CTID" ".mac_address")
+    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
+    run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+    if [ -n "$nameservers" ]; then
+        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    fi
  
     # --- Apply AppArmor Profile ---
     # This function handles the application of the AppArmor profile, which is a critical security feature.
@@ -366,34 +412,6 @@ apply_configurations() {
     # Note: The --features flag here is for Proxmox's internal features.
     # Custom feature scripts are applied in a later state.
 
-
-    # --- Apply network settings ---
-    # This ensures that the container has the correct network configuration.
-    local net0_name=$(jq_get_value "$CTID" ".network_config.name")
-    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
-    local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
-    local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
-    local mac_address=$(jq_get_value "$CTID" ".mac_address")
-    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
-    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
-    local internal_dns_server="10.0.0.153"
-    local fallback_dns
-    fallback_dns=$(get_global_config_value ".network.fallback_dns")
-
-    # Dynamic DNS Resolution Logic
-    if pct status 101 > /dev/null 2>&1; then
-        log_info "Internal DNS server (101) is available. Using internal DNS."
-        nameservers="$internal_dns_server"
-    else
-        log_info "Internal DNS server (101) is not available. Using fallback DNS."
-        nameservers="$fallback_dns"
-    fi
- 
-     # Apply network configuration
-    run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
-    if [ -n "$nameservers" ]; then
-        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
-    fi
 
     # --- Apply GPU Passthrough Configuration ---
     # This is a critical step for containers that require GPU access.
@@ -572,71 +590,47 @@ apply_mount_points() {
 
     local mounts
     mounts=$(jq_get_value "$CTID" ".mount_points // [] | .[]" || echo "")
-    if [ -z "$mounts" ]; then
-        log_info "No host path mount points to apply for CTID $CTID."
-        return 0
-    fi
-
-    local volume_index=0
     # Find the next available mount point index
+    local volume_index=0
     while pct config "$CTID" | grep -q "mp${volume_index}:"; do
         volume_index=$((volume_index + 1))
     done
 
-    for mount_config in $(echo "$mounts" | jq -c '.'); do
-        local host_path=$(echo "$mount_config" | jq -r '.host_path')
-        local container_path=$(echo "$mount_config" | jq -r '.container_path')
-        local mount_id="mp${volume_index}"
-        local mount_string="${host_path},mp=${container_path}"
+    if [ -n "$mounts" ]; then
+        for mount_config in $(echo "$mounts" | jq -c '.'); do
+            local host_path=$(echo "$mount_config" | jq -r '.host_path')
+            local container_path=$(echo "$mount_config" | jq -r '.container_path')
+            local mount_id="mp${volume_index}"
+            local mount_string="${host_path},mp=${container_path}"
 
-        # Idempotency Check
-        if ! pct config "$CTID" | grep -q "mp.*: ${mount_string}"; then
-            log_info "Verifying host path '$host_path' before applying mount..."
-            # --- BEGIN DIAGNOSTIC LOGGING ---
-            log_debug "Checking if host path '$host_path' exists."
-            if [ ! -e "$host_path" ]; then
-                log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
-                # Optionally, you could make this a fatal error to stop the process immediately
-                # log_fatal "Host path '$host_path' does not exist."
+            # Idempotency Check
+            if ! pct config "$CTID" | grep -q "mp.*:${mount_string}"; then
+                log_info "Verifying host path '$host_path' before applying mount..."
+                # --- BEGIN DIAGNOSTIC LOGGING ---
+                log_debug "Checking if host path '$host_path' exists."
+                if [ ! -e "$host_path" ]; then
+                    log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
+                    # Optionally, you could make this a fatal error to stop the process immediately
+                    # log_fatal "Host path '$host_path' does not exist."
+                else
+                    log_debug "Host path '$host_path' found."
+                fi
+                # --- END DIAGNOSTIC LOGGING ---
+
+                log_info "Applying mount: ${host_path} -> ${container_path}"
+                run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
+                log_debug "Mount command executed for ${host_path} -> ${container_path} with ID ${mount_id}."
+                volume_index=$((volume_index + 1))
             else
-                log_debug "Host path '$host_path' found."
+                log_info "Mount point ${host_path} -> ${container_path} already configured."
+                log_debug "Skipping mount as it's already configured."
             fi
-            # --- END DIAGNOSTIC LOGGING ---
-
-            log_info "Applying mount: ${host_path} -> ${container_path}"
-            run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
-            log_debug "Mount command executed for ${host_path} -> ${container_path} with ID ${mount_id}."
-            volume_index=$((volume_index + 1))
-        else
-            log_info "Mount point ${host_path} -> ${container_path} already configured."
-            log_debug "Skipping mount as it's already configured."
-        fi
-    done
-
-    # --- Special Handling for Nginx Gateway SSL Certificates ---
-    if [ "$CTID" -eq 101 ]; then
-        log_info "Applying special mount for Nginx gateway (CTID 101) SSL certificates..."
-        local ssl_host_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl" # Corrected path to match where CA cert is exported
-        local ssl_container_path="/etc/nginx/ssl"
-        local ssl_mount_id="mp${volume_index}"
-        local ssl_mount_string="${ssl_host_path},mp=${ssl_container_path}"
-
-        log_debug "Checking if central SSL directory exists on host: $ssl_host_path"
-        if [ ! -d "$ssl_host_path" ]; then
-            log_warn "Central SSL directory not found at $ssl_host_path. Nginx may fail if certs are expected."
-        else
-            log_debug "Central SSL directory found on host: $ssl_host_path"
-        fi
-
-        if ! pct config "$CTID" | grep -q "mp.*: ${ssl_mount_string}"; then
-            log_info "Applying Nginx SSL mount: ${ssl_host_path} -> ${ssl_container_path}"
-            run_pct_command set "$CTID" --"${ssl_mount_id}" "$ssl_mount_string" || log_fatal "Failed to apply Nginx SSL mount."
-            log_debug "Nginx SSL mount command executed for ${ssl_host_path} -> ${ssl_container_path} with ID ${ssl_mount_id}."
-        else
-            log_info "Nginx SSL mount point already configured."
-            log_debug "Skipping Nginx SSL mount as it's already configured."
-        fi
+        done
+    else
+        log_info "No host path mount points to apply for CTID $CTID."
     fi
+
+
 }
 
 # =====================================================================================
@@ -803,6 +797,7 @@ run_portainer_script() {
 # =====================================================================================
 run_application_script() {
     local CTID="$1"
+    shift # Shift off the CTID, leaving the rest of the arguments in "$@"
     log_info "Waiting for container to settle before running application script..."
     sleep 10
     log_info "Checking for application script for CTID: $CTID"
@@ -857,6 +852,23 @@ run_application_script() {
         log_info "Packaging and pushing configuration files for $app_script_name..."
         
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
+            # --- BEGIN PUSH ROOT CA TO NGINX CONTAINER ---
+            log_info "Pushing Root CA certificate to Nginx container (CTID 101)..."
+            local temp_root_ca_on_host="/tmp/root_ca_for_101.crt"
+            local root_ca_in_103="/root/.step/certs/root_ca.crt"
+            local root_ca_dest_in_101="/tmp/root_ca.crt"
+
+            if ! pct pull 103 "$root_ca_in_103" "$temp_root_ca_on_host"; then
+                log_fatal "Failed to pull Root CA from CTID 103 to host."
+            fi
+
+            if ! pct push 101 "$temp_root_ca_on_host" "$root_ca_dest_in_101"; then
+                log_fatal "Failed to push Root CA from host to CTID 101."
+            fi
+            rm "$temp_root_ca_on_host"
+            log_info "Root CA successfully pushed to CTID 101."
+            # --- END PUSH ROOT CA TO NGINX CONTAINER ---
+
             local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
             local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
 
@@ -915,7 +927,7 @@ run_application_script() {
 
     # 5. Execute the application script
     log_info "Executing application script in container..."
-    if ! pct exec "$CTID" -- "$app_script_dest_path" "$CTID"; then
+    if ! pct exec "$CTID" -- "$app_script_dest_path" "$CTID" "$@"; then
         log_fatal "Application script '$app_script_name' failed for CTID $CTID."
     fi
 
@@ -1233,8 +1245,9 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
-            if [ "$ctid" -eq 103 ]; then
-                manage_ca_password_on_hypervisor "$ctid"
+            if [ "$ctid" -eq 101 ] || [ "$ctid" -eq 103 ]; then
+                manage_ca_password_on_hypervisor "103"
+                manage_provisioner_password_on_hypervisor "103"
             fi
 
             if ensure_container_defined "$ctid"; then
@@ -1259,12 +1272,14 @@ main_lxc_orchestrator() {
 
                     local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
 
-                    # Push the password file from the definitive source on the host to the container
-                    log_info "Pushing CA password file from host '$final_ca_password_file' to container '$ctid:$container_ca_password_path'..."
-                    if ! pct push "$ctid" "$final_ca_password_file" "$container_ca_password_path"; then
-                        log_fatal "Failed to push CA password file to container $ctid."
+                    # Read the password from the host file and write it directly into the container
+                    local ca_password_content
+                    ca_password_content=$(cat "$final_ca_password_file")
+                    log_info "Writing CA password directly to container '$ctid:$container_ca_password_path'..."
+                    if ! pct exec "$ctid" -- bash -c "echo '$ca_password_content' > $container_ca_password_path"; then
+                        log_fatal "Failed to write CA password to container $ctid."
                     fi
-                    log_success "CA password file pushed to container successfully."
+                    log_success "CA password written to container successfully."
 
                     # Set appropriate permissions inside the container
                     log_info "Setting permissions for CA password file inside container $ctid..."
@@ -1272,6 +1287,21 @@ main_lxc_orchestrator() {
                         log_fatal "Failed to set permissions for CA password file inside container $ctid."
                     fi
                     log_success "Permissions set for CA password file inside container."
+
+                    # Also push the provisioner password file
+                    local provisioner_password_file_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
+                    local container_provisioner_password_path="/etc/step-ca/ssl/provisioner_password.txt"
+                    local provisioner_password_content
+                    provisioner_password_content=$(cat "$provisioner_password_file_on_host")
+                    log_info "Writing provisioner password directly to Step CA container..."
+                    if ! pct exec "$ctid" -- bash -c "echo '$provisioner_password_content' > $container_provisioner_password_path"; then
+                        log_fatal "Failed to write provisioner password to container $ctid."
+                    fi
+                    log_info "Setting permissions for provisioner password file inside container $ctid..."
+                    if ! pct exec "$ctid" -- chmod 600 "$container_provisioner_password_path"; then
+                        log_fatal "Failed to set permissions for provisioner password file inside container $ctid."
+                    fi
+                    log_success "Provisioner password file pushed and configured in Step CA container."
                 fi
                 # --- END NEW HANDLING ---
 
@@ -1282,17 +1312,10 @@ main_lxc_orchestrator() {
                     create_pre_configured_snapshot "$ctid"
                 fi
 
-                # Force set DNS before applying features
-                local fallback_dns
-                fallback_dns=$(get_global_config_value ".network.fallback_dns")
-                if [ -n "$fallback_dns" ]; then
-                    log_info "Forcing DNS to fallback DNS: $fallback_dns"
-                    # Remove Proxmox comments and set DNS
-                    pct exec "$ctid" -- bash -c "sed -i '/# --- BEGIN PVE ---/,/# --- END PVE ---/d' /etc/resolv.conf && echo 'nameserver $fallback_dns' > /etc/resolv.conf" || log_fatal "Failed to force DNS update in container."
-                fi
-
                 apply_features "$ctid"
+                
                 run_application_script "$ctid"
+                
                 run_health_check "$ctid"
                 create_template_snapshot "$ctid"
 
@@ -1325,15 +1348,6 @@ main_lxc_orchestrator() {
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."
-
-                # --- Special Handling for Nginx Gateway (CTID 101) to update hypervisor DNS ---
-                if [ "$ctid" -eq 101 ]; then
-                    log_info "Updating hypervisor's /etc/resolv.conf to use container 101 as the DNS server..."
-                    if ! echo "nameserver 10.0.0.153" > /etc/resolv.conf; then
-                        log_fatal "Failed to update hypervisor's /etc/resolv.conf."
-                    fi
-                    log_success "Hypervisor's DNS updated successfully."
-                fi
             fi
             ;;
         start)

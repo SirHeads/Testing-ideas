@@ -16,7 +16,7 @@
             "template_snapshot_name": "initial_clean_state",
             "network_config": {
                 "ip": "dhcp",
-                "nameserver": "10.0.0.153"
+                "nameserver": "10.0.0.13"
             },
             "user_config": {
                 "username": "phoenix_user"
@@ -41,7 +41,7 @@
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1",
-                "nameserver": "10.0.0.153"
+                "nameserver": "10.0.0.13"
             },
             "user_config": {
                 "username": "phoenix_user"
@@ -54,11 +54,17 @@
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
                 }
+            ],
+            "dns_records": [
+                {
+                    "hostname": "portainer.phoenix.thinkheads.ai",
+                    "ip": "10.0.0.153"
+                }
             ]
         },
         {
             "vmid": 1002,
-            "name": "agent",
+            "name": "drphoenix",
             "clone_from_vmid": 9000,
             "cores": 4,
             "memory_mb": 4096,
@@ -72,10 +78,11 @@
                 "trusted_ca"
             ],
             "portainer_role": "agent",
+            "portainer_environment_name": "portainer-agent",
             "network_config": {
                 "ip": "10.0.0.102/24",
                 "gw": "10.0.0.1",
-                "nameserver": "10.0.0.153"
+                "nameserver": "10.0.0.13"
             },
             "user_config": {
                 "username": "phoenix_user"
@@ -97,6 +104,12 @@
                 {
                     "name": "thinkheads_ai_app",
                     "environment": "development"
+                }
+            ],
+            "dns_records": [
+                {
+                    "hostname": "drphoenix.phoenix.thinkheads.ai",
+                    "ip": "10.0.0.102"
                 }
             ]
         }

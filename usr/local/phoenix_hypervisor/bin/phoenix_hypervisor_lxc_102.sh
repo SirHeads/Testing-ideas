@@ -91,15 +91,14 @@ bootstrap_step_ca() {
     # Add internal hostnames to /etc/hosts to ensure proper routing
     log_info "Adding internal hostnames to /etc/hosts..."
     cat <<EOF >> /etc/hosts
-10.0.0.153 traefik.internal.thinkheads.ai
-10.0.0.153 granite-embedding.internal.thinkheads.ai
-10.0.0.153 granite-3b.internal.thinkheads.ai
-10.0.0.153 ollama.internal.thinkheads.ai
-10.0.0.153 llamacpp.internal.thinkheads.ai
+10.0.0.101 granite-embedding.internal.thinkheads.ai
+10.0.0.101 granite-3b.internal.thinkheads.ai
+10.0.0.101 ollama.internal.thinkheads.ai
+10.0.0.101 llamacpp.internal.thinkheads.ai
 EOF
 
     # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="/etc/traefik/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
+    local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
     log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
     local cert_attempt=1
     while [ ! -f "$ROOT_CA_CERT_PATH" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
@@ -174,6 +173,14 @@ providers:
   file:
     directory: /etc/traefik/dynamic
     watch: true
+
+serversTransport:
+  rootCAs:
+    - "/ssl/phoenix_ca.crt"
+
+serversTransport:
+  rootCAs:
+    - "/ssl/phoenix_ca.crt"
 
 certificatesResolvers:
   myresolver:
