@@ -134,6 +134,9 @@ configure_nodesource_repository() {
 #              and the initramfs, which is crucial after kernel updates.
 # =====================================================================================
 update_and_upgrade_system() {
+    log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    
     log_info "Updating and upgrading system (this may take a while)..."
     retry_command "apt-get update" || log_fatal "Failed to update package lists"
     
@@ -157,7 +160,7 @@ update_and_upgrade_system() {
 # =====================================================================================
 install_core_utilities() {
     log_info "Installing core utilities (s-tui, samba)..."
-    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient" || log_fatal "Failed to install core utilities"
+    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools" || log_fatal "Failed to install core utilities"
     log_info "Installed core utilities."
 }
 
@@ -217,10 +220,14 @@ auto $INTERFACE
 iface $INTERFACE inet static
     address $IP_ADDRESS
     gateway $GATEWAY
-    dns-nameservers $DNS_SERVERS
+    dns-nameservers 127.0.0.1 $DNS_SERVERS
 EOF
     retry_command "systemctl restart networking" || log_fatal "Failed to restart networking"
     log_info "Configured static IP for interface $INTERFACE"
+
+    # Temporarily set a public DNS for initial setup steps
+    log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
 
     # Update /etc/hosts to ensure the new hostname resolves locally.
     if ! grep -q "$HOSTNAME" /etc/hosts; then
@@ -229,38 +236,6 @@ EOF
     fi
 }
 
-# =====================================================================================
-# Function: configure_firewall
-# Description: Installs and configures the Uncomplicated Firewall (UFW). It sets up
-#              essential rules to allow access for SSH, the Proxmox Web UI, and file
-#              sharing services (NFS, Samba).
-# =====================================================================================
-configure_firewall() {
-    log_info "Installing and configuring firewall (UFW)..."
-    if ! command -v ufw >/dev/null 2>&1; then
-        retry_command "apt-get install -y ufw" || log_fatal "Failed to install ufw"
-    fi
-
-    # Allow standard services required for hypervisor management.
-    retry_command "ufw allow OpenSSH" || log_fatal "Failed to allow OpenSSH in firewall"
-    retry_command "ufw allow 8006/tcp" || log_fatal "Failed to allow Proxmox UI port in firewall"
-    retry_command "ufw allow 2049/tcp" || log_fatal "Failed to allow NFS port in firewall"
-    retry_command "ufw allow 111/tcp" || log_fatal "Failed to allow RPC port in firewall"
-    retry_command "ufw allow Samba" || log_fatal "Failed to allow Samba in firewall"
-    
-    # Enable the firewall if it's not already active.
-    if ufw status | grep -q "Status: active"; then
-        log_info "UFW firewall is already active."
-    else
-        yes | ufw enable
-        if ! ufw status | grep -q "Status: active"; then
-            log_fatal "Failed to enable UFW firewall."
-        fi
-    fi
-    retry_command "systemctl start ufw" || log_fatal "Failed to start UFW service."
-    retry_command "systemctl enable ufw" || log_fatal "Failed to enable UFW service on boot."
-    log_info "Firewall rules configured and UFW service enabled and started."
-}
 
 # =====================================================================================
 # Function: main
@@ -278,7 +253,13 @@ main() {
     set_system_timezone
     configure_ntp
     configure_networking
-    configure_firewall
+
+    if [ -f "${SCRIPT_DIR}/hypervisor_feature_setup_dns_server.sh" ]; then
+        log_info "Running DNS Server setup script..."
+        source "${SCRIPT_DIR}/hypervisor_feature_setup_dns_server.sh"
+    else
+        log_warning "DNS Server setup script not found. Skipping."
+    fi
 
     # The initial setup also triggers other feature scripts to ensure a complete configuration.
     if [ -f "${SCRIPT_DIR}/hypervisor_feature_initialize_nvidia_gpus.sh" ]; then

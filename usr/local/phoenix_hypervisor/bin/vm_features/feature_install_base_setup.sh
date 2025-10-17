@@ -20,12 +20,7 @@ fi
 
 log_info "Starting base setup feature installation..."
 
-# Install NFS client
-log_info "Step 1: Installing nfs-common..."
-if ! apt-get update || ! apt-get install -y nfs-common; then
-    log_fatal "Failed to install nfs-common."
-fi
-log_info "Step 1: nfs-common installed successfully."
+# nfs-common is now installed as part of the template creation.
 
 # Mount Persistent Storage
 CONTEXT_FILE="$(dirname "$0")/vm_context.json"
@@ -77,23 +72,7 @@ PORTAINER_ROLE=$(jq -r '.portainer_role // "none"' "$CONTEXT_FILE")
 if [ "$PORTAINER_ROLE" != "none" ]; then
     log_info "Step 3: Portainer role '$PORTAINER_ROLE' detected. Configuring firewall..."
     
-    if ! command -v ufw &> /dev/null; then
-        log_info "Step 3: Installing ufw..."
-        apt-get install -y ufw
-    fi
-
-    if [ "$PORTAINER_ROLE" == "primary" ]; then
-        log_info "Step 3: Allowing incoming traffic on ports 9000 (HTTP) and 9443 (HTTPS) for Portainer server..."
-        ufw allow 9000/tcp
-        ufw allow 9443/tcp
-    elif [ "$PORTAINER_ROLE" == "agent" ]; then
-        log_info "Step 3: Allowing incoming traffic on port 9001 for Portainer agent..."
-        ufw allow 9001/tcp
-    fi
-
-    log_info "Step 3: Enabling the firewall..."
-    echo "y" | ufw enable
-    log_info "Step 3: Firewall configured."
+    log_info "Step 3: Firewall configuration is now managed by Proxmox VE. Skipping ufw setup."
 else
     log_info "Step 3: No Portainer role. Skipping firewall configuration."
 fi

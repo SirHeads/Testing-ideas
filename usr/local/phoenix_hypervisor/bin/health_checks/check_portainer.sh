@@ -10,7 +10,7 @@ exec &> >(tee -a "$LOG_FILE")
 
 echo "--- Starting Portainer Health Check ---"
 
-PORTAINER_URL="https://portainer.phoenix.local/api/status"
+PORTAINER_URL="https://portainer.phoenix.thinkheads.ai/api/status"
 
 echo "Waiting for Portainer to become available at $PORTAINER_URL..."
 attempts=0

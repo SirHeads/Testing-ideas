@@ -39,6 +39,7 @@ LOG_FILE="/var/log/phoenix_feature_docker.log"
 exec &> >(tee -a "$LOG_FILE")
 
 log_info "--- Starting Docker Installation ---"
+wait_for_apt_lock
 log_info "Sourcing common utilities..." # This log_info will now work
 
 log_info "Setting context file path..."
@@ -49,18 +50,6 @@ if [ ! -f "$CONTEXT_FILE" ]; then
 fi
 log_info "Context file set to $CONTEXT_FILE."
 
-# =====================================================================================
-# Function: wait_for_apt_lock
-# Description: Waits for the apt lock to be released.
-# =====================================================================================
-wait_for_apt_lock() {
-    log_info "Waiting for apt lock to be released..."
-    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; do
-        log_warn "Waiting for other package manager operations to complete..."
-        sleep 5
-    done
-    log_info "Apt lock released."
-}
 
 # Idempotency Check: Check if Docker is already installed and running.
 log_info "Checking for existing Docker installation..."
@@ -118,7 +107,7 @@ log_info "Docker Engine installed successfully."
 
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
-INTERNAL_DNS_SERVER="10.0.0.153" # Hardcode the correct internal DNS server
+INTERNAL_DNS_SERVER="10.0.0.1" # Use the network gateway for DNS
 
 log_info "Setting Docker DNS to '$INTERNAL_DNS_SERVER'."
 mkdir -p /etc/docker
@@ -184,20 +173,23 @@ fi
 log_info "Bootstrapping step-cli with Step-CA..."
 CA_URL="https://ca.internal.thinkheads.ai:9000"
 CA_FINGERPRINT=$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_ca.crt)
-echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        log_info "Adding Step CA to /etc/hosts..."
+        echo "10.0.0.10 ca.internal.thinkheads.ai" >> /etc/hosts
+    fi
 step ca bootstrap --ca-url "${CA_URL}" --fingerprint "${CA_FINGERPRINT}"
 
-log_info "Generating certificate for portainer.phoenix.local..."
+log_info "Generating certificate for portainer.phoenix.thinkheads.ai..."
 CERT_DIR="/etc/docker/certs.d/portainer"
 mkdir -p "$CERT_DIR"
-CA_PASSWORD_FILE="$(dirname "$0")/ca_password.txt"
-if [ ! -f "$CA_PASSWORD_FILE" ]; then
-    log_fatal "CA password file not found at $CA_PASSWORD_FILE. It should have been provisioned by the vm-manager.sh script."
+PROVISIONER_PASSWORD_FILE="$(dirname "$0")/provisioner_password.txt"
+if [ ! -f "$PROVISIONER_PASSWORD_FILE" ]; then
+    log_fatal "Provisioner password file not found at $PROVISIONER_PASSWORD_FILE. It should have been provisioned by the vm-manager.sh script."
 fi
 
-step ca certificate "portainer.phoenix.local" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" \
+step ca certificate "portainer.phoenix.thinkheads.ai" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" \
     --provisioner "admin@thinkheads.ai" \
-    --password-file "${CA_PASSWORD_FILE}" \
+    --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" \
     --force
 
 log_info "Portainer server certificate generated successfully."

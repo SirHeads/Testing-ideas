@@ -57,7 +57,7 @@ HYPERVISOR_CONFIG_FILE="$1"
 # =====================================================================================
 install_nfs_packages() {
   log_info "Installing NFS packages..."
-  retry_command "apt-get install -y nfs-kernel-server nfs-common ufw" || log_fatal "Failed to install NFS packages"
+  retry_command "apt-get install -y nfs-kernel-server nfs-common" || log_fatal "Failed to install NFS packages"
   log_info "NFS packages installed"
 }
 
@@ -114,9 +114,8 @@ configure_nfs_exports() {
     local options_array=($(echo "$share_json" | jq -r '.options[]'))
 
     local options_str=$(IFS=,; echo "${options_array[*]}")
-    local clients_str=$(IFS=,; echo "${clients_array[*]}")
 
-    if [[ -z "$path" || -z "$clients_str" ]]; then
+    if [[ -z "$path" || ${#clients_array[@]} -eq 0 ]]; then
       log_warn "Skipping NFS share due to missing path or clients in configuration: $share_json"
       continue
     fi
@@ -128,12 +127,18 @@ configure_nfs_exports() {
     chown nobody:nogroup "$path" || log_warn "Failed to set ownership on $path"
     chmod 777 "$path" || log_warn "Failed to set permissions on $path"
 
+    # Construct the export line with each client having its own options.
+    local export_line="$path"
+    for client in "${clients_array[@]}"; do
+      export_line+=" $client($options_str)"
+    done
+
     # Idempotency check: Add the NFS export entry only if it doesn't already exist.
     if grep -q "^$path " "$exports_file"; then
       log_warn "Export line for $path already exists in $exports_file, skipping addition"
     else
-      echo "$path $clients_str($options_str)" >> "$exports_file" || log_fatal "Failed to add $path to $exports_file"
-      log_info "Added NFS export for $path with clients $clients_str and options $options_str"
+      echo "$export_line" >> "$exports_file" || log_fatal "Failed to add '$export_line' to $exports_file"
+      log_info "Added NFS export: $export_line"
       configured_exports=$((configured_exports + 1))
     fi
   done

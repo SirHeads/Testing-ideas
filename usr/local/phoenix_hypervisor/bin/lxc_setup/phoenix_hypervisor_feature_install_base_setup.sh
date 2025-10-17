@@ -103,11 +103,6 @@ perform_base_os_setup() {
 
     if [ ${#packages_to_install[@]} -gt 0 ]; then
         log_info "Missing packages: ${packages_to_install[*]}. Installing..."
-        # Force set DNS before running apt-get update
-        local fallback_dns="8.8.8.8"
-        log_info "Forcing DNS to fallback DNS: $fallback_dns"
-        pct_exec "$CTID" -- bash -c "echo 'nameserver $fallback_dns' > /etc/resolv.conf" || log_fatal "Failed to force DNS update in container."
-        
         pct_exec "$CTID" apt-get update
         pct_exec "$CTID" apt-get install -y "${packages_to_install[@]}"
     else

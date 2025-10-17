@@ -48,23 +48,29 @@ run_qm_command() {
         log_error "Command failed: $cmd_description (Exit Code: $exit_code)"
         log_error "Output:\n$output"
     elif [ "$is_guest_exec" = true ]; then
-        # Parse JSON output for qm guest exec
-        local out_data
-        out_data=$(echo "$output" | jq -r '."out-data" // ""')
-        local guest_exitcode
-        guest_exitcode=$(echo "$output" | jq -r '.exitcode // 0')
-        local exited_status
-        exited_status=$(echo "$output" | jq -r '.exited // 0')
+        # Check if the output is valid JSON before attempting to parse it.
+        if ! echo "$output" | jq -e . > /dev/null 2>&1; then
+            # If not JSON, print the raw output and assume success if the exit code was 0.
+            echo "$output"
+        else
+            # If it is JSON, parse it for details.
+            local out_data
+            out_data=$(echo "$output" | jq -r '."out-data" // ""')
+            local guest_exitcode
+            guest_exitcode=$(echo "$output" | jq -r '.exitcode // "0"') # Default to "0"
+            local exited_status
+            exited_status=$(echo "$output" | jq -r '.exited // "0"') # Default to "0"
 
-        if [ -n "$out_data" ]; then
-            echo -e "$out_data"
-        fi
+            if [ -n "$out_data" ]; then
+                echo -e "$out_data"
+            fi
 
-        # If the guest command explicitly exited with a non-zero status, reflect that.
-        # Proxmox's qm guest exec itself might return 0 even if the guest command failed.
-        if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
-            log_error "Guest command exited with non-zero status: $guest_exitcode"
-            return "$guest_exitcode"
+            # Proxmox's qm guest exec itself might return 0 even if the guest command failed.
+            # We must check the exitcode from within the JSON payload.
+            if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
+                log_error "Guest command exited with non-zero status: $guest_exitcode"
+                return "$guest_exitcode"
+            fi
         fi
     else
         echo "$output"
@@ -181,13 +187,7 @@ orchestrate_vm() {
         fi
         log_info "Step 6: Cloud-init completed in VM template $VMID."
 
-        log_info "Step 7: Installing nfs-common in VM template $VMID..."
-        if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "apt-get update && apt-get install -y nfs-common"; then
-            log_fatal "Failed to install nfs-common in template."
-        fi
-        log_info "Step 7: nfs-common installed in VM template $VMID."
-
-        log_info "Step 8: Applying features to VM template $VMID..."
+        log_info "Step 7: Applying features to VM template $VMID..."
         apply_vm_features "$VMID"
         log_info "Step 8: Features applied to VM template $VMID."
 
@@ -235,18 +235,22 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
-        log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
-        manage_snapshots "$VMID" "pre-features"
+        log_info "Step 7: Applying firewall rules for VM $VMID..."
+        apply_firewall_rules "$VMID"
         log_info "Step 7: Completed."
 
-        log_info "Step 8: Applying features to VM $VMID..."
-        apply_vm_features "$VMID"
+        log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
+        manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
 
-
-        log_info "Step 9: Managing post-feature snapshots for VM $VMID..."
-        manage_snapshots "$VMID" "post-features"
+        log_info "Step 9: Applying features to VM $VMID..."
+        apply_vm_features "$VMID"
         log_info "Step 9: Completed."
+
+
+        log_info "Step 10: Managing post-feature snapshots for VM $VMID..."
+        manage_snapshots "$VMID" "post-features"
+        log_info "Step 10: Completed."
 
 
     fi
@@ -311,6 +315,10 @@ create_vm_from_image() {
     local template_image="$2"
     log_info "Creating VM $VMID from image ${template_image}..."
 
+    if ! command -v virt-customize &> /dev/null; then
+        log_fatal "The 'virt-customize' command is not found. Please run the hypervisor setup to install it."
+    fi
+
     local storage_pool
     storage_pool=$(jq -r ".vm_defaults.storage_pool // \"\"" "$VM_CONFIG_FILE")
     if [ -z "$storage_pool" ]; then
@@ -322,7 +330,9 @@ create_vm_from_image() {
         log_fatal "Missing 'vm_defaults.network_bridge' in $VM_CONFIG_FILE."
     fi
     
-    local image_url="https://cloud-images.ubuntu.com/noble/current/${template_image}"
+    local ubuntu_release
+    ubuntu_release=$(jq -r ".vm_defaults.ubuntu_release // \"noble\"" "$HYPERVISOR_CONFIG_FILE")
+    local image_url="https://cloud-images.ubuntu.com/${ubuntu_release}/current/${template_image}"
     local download_path="/tmp/${template_image}"
 
     if [ ! -f "$download_path" ]; then
@@ -351,6 +361,18 @@ create_vm_from_image() {
     run_qm_command set "$VMID" --scsihw virtio-scsi-pci --scsi0 "${storage_pool}:vm-${VMID}-disk-0"
     run_qm_command set "$VMID" --boot c --bootdisk scsi0
     run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
+
+    # Apply nameserver from config if it exists
+    local network_config
+    network_config=$(jq -r ".vms[] | select(.vmid == $VMID) | .network_config // \"\"" "$VM_CONFIG_FILE")
+    if [ -n "$network_config" ]; then
+        local nameserver
+        nameserver=$(echo "$network_config" | jq -r '.nameserver // ""')
+        if [ -n "$nameserver" ]; then
+            log_info "Applying DNS config: DNS=${nameserver}"
+            run_qm_command set "$VMID" --nameserver "$nameserver"
+        fi
+    fi
 
     rm -f "$download_path"
 }
@@ -501,23 +523,6 @@ apply_network_configurations() {
     start_vm "$VMID"
     wait_for_guest_agent "$VMID"
 
-    if [ -n "$network_config" ] && [ "$(echo "$network_config" | jq -r '.ip // ""')" != "dhcp" ]; then
-        local nameserver="10.0.0.153" # Default to the internal DNS server
-        # --- Directly configure systemd-resolved within the guest ---
-        log_info "Directly configuring systemd-resolved in VM $VMID to use DNS ${nameserver}..."
-        
-        local resolved_conf_content="[Resolve]\nDNS=${nameserver}\nDomains=~."
-        
-        # Create the directory and write the file
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "mkdir -p /etc/systemd/resolved.conf.d"
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "echo -e '${resolved_conf_content}' > /etc/systemd/resolved.conf.d/99-phoenix.conf"
-        
-        # Ensure /etc/resolv.conf is using the systemd-resolved stub
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf"
-        
-        # Restart the service to apply changes
-        run_qm_command guest exec "$VMID" -- systemctl restart systemd-resolved
-    fi
 
     run_qm_command guest exec "$VMID" -- systemctl restart systemd-networkd
     else
@@ -578,7 +583,7 @@ apply_volumes() {
     fi
 
     log_info "Configuring NFS mount for VM $VMID: ${server}:${path} -> ${mount_point}"
-    run_qm_command guest exec "$VMID" -- /bin/bash -c "apt-get update && apt-get install -y nfs-common"
+    # nfs-common is now installed via virt-customize, so this is no longer needed.
     run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$mount_point"
     run_qm_command guest exec "$VMID" -- /bin/bash -c "grep -qxF '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' /etc/fstab || echo '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' >> /etc/fstab"
     
@@ -705,13 +710,13 @@ apply_vm_features() {
             log_warn "Step-CA root certificate not found at $ca_cert_source_path. Docker feature might fail if it needs to trust internal services."
         fi
 
-        # --- Definitive Fix: Copy Step-CA password file ---
-        log_info "Copying Step-CA password file to VM's persistent storage..."
-        local ca_password_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/ca_password.txt"
-        if [ -f "$ca_password_source_path" ]; then
-            cp "$ca_password_source_path" "${hypervisor_scripts_dir}/ca_password.txt"
+        # --- Definitive Fix: Copy Step-CA provisioner password file ---
+        log_info "Copying Step-CA provisioner password file to VM's persistent storage..."
+        local provisioner_password_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
+        if [ -f "$provisioner_password_source_path" ]; then
+            cp "$provisioner_password_source_path" "${hypervisor_scripts_dir}/provisioner_password.txt"
         else
-            log_warn "Step-CA password file not found at $ca_password_source_path. Certificate generation for Portainer will fail."
+            log_warn "Step-CA provisioner password file not found at $provisioner_password_source_path. Certificate generation for Portainer will fail."
         fi
 
         local persistent_mount_point
@@ -817,6 +822,71 @@ manage_snapshots() {
     fi
 
     log_info "Snapshot '$snapshot_name' created successfully."
+}
+
+# =====================================================================================
+# Function: apply_firewall_rules
+# Description: Applies firewall rules to a VM based on its declarative configuration.
+# Arguments:
+#   $1 - The VMID of the VM to configure.
+# =====================================================================================
+apply_firewall_rules() {
+    local VMID="$1"
+    log_info "Applying firewall rules to VM $VMID..."
+
+    local firewall_config
+    firewall_config=$(jq -r ".vms[] | select(.vmid == $VMID) | .firewall // {}" "$VM_CONFIG_FILE")
+
+    if [ -z "$firewall_config" ] || [ "$(echo "$firewall_config" | jq '. | length')" -eq 0 ]; then
+        log_info "No firewall configuration found for VM $VMID. Skipping."
+        return 0
+    fi
+
+    local firewall_enabled
+    firewall_enabled=$(echo "$firewall_config" | jq -r '.enabled // "false"')
+    if [ "$firewall_enabled" != "true" ]; then
+        log_info "Firewall is not enabled for VM $VMID. Skipping."
+        return 0
+    fi
+
+    local rules
+    rules=$(echo "$firewall_config" | jq -c '.rules[]?')
+    if [ -z "$rules" ]; then
+        log_info "No firewall rules defined for VM $VMID."
+        return 0
+    fi
+
+    # Clear existing rules to ensure an idempotent state
+    local existing_rules
+    existing_rules=$(pvesh get /nodes/$(hostname)/qemu/${VMID}/firewall/rules --output-format=json | jq -r '.[].pos')
+    for pos in $existing_rules; do
+        log_info "Deleting existing firewall rule at position $pos for VM $VMID..."
+        pvesh delete /nodes/$(hostname)/qemu/${VMID}/firewall/rules/$pos
+    done
+
+    echo "$rules" | while read -r rule; do
+        local type=$(echo "$rule" | jq -r '.type')
+        local action=$(echo "$rule" | jq -r '.action')
+        local source=$(echo "$rule" | jq -r '.source // ""')
+        local dest=$(echo "$rule" | jq -r '.dest // ""')
+        local proto=$(echo "$rule" | jq -r '.proto // ""')
+        local port=$(echo "$rule" | jq -r '.port // ""')
+        local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+        local cmd="pvesh create /nodes/$(hostname)/qemu/${VMID}/firewall/rules --type ${type} --action ${action} --enable 1"
+        [ -n "$source" ] && cmd+=" --source ${source}"
+        [ -n "$dest" ] && cmd+=" --dest ${dest}"
+        [ -n "$proto" ] && cmd+=" --proto ${proto}"
+        [ -n "$port" ] && cmd+=" --dport ${port}"
+        [ -n "$comment" ] && cmd+=" --comment \"${comment}\""
+
+        log_info "Executing: $cmd"
+        if ! eval "$cmd"; then
+            log_fatal "Failed to apply firewall rule for VM $VMID: $rule"
+        fi
+    done
+
+    log_info "Firewall rules applied successfully for VM $VMID."
 }
 
 # =====================================================================================

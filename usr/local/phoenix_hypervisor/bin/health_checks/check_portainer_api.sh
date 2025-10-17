@@ -19,7 +19,7 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
-PORT=$(get_global_config_value '.network.portainer_server_port')
+PORT="443" # Always check against the public-facing Nginx proxy port
 CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
 MAX_RETRIES=12
 RETRY_DELAY=10

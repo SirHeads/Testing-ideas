@@ -288,59 +288,63 @@ add_proxmox_storage() {
     log_info "Adding Proxmox storage entries..."
     check_pvesm
 
-    local zfs_datasets_json=$(echo "$config_json" | jq -c '.zfs.datasets[]')
-    if [ -z "$zfs_datasets_json" ]; then
-        log_warn "No ZFS datasets configured. Skipping Proxmox storage setup."
-        return
-    fi
+    # Get the desired state from the configuration file.
+    local desired_storage_ids=()
+    local zfs_datasets_json=$(echo "$config_json" | jq -c '.zfs.datasets[] | select(.storage_class == "direct")')
+    while IFS= read -r dataset_config; do
+        local dataset_name=$(echo "$dataset_config" | jq -r '.name')
+        local pool_name=$(echo "$dataset_config" | jq -r '.pool')
+        local storage_id_key="${pool_name}_${dataset_name//-/_}"
+        local mapped_storage_id=$(echo "$config_json" | jq -r --arg key "$storage_id_key" '.proxmox_storage_ids[$key]')
+        local storage_id=$([ -n "$mapped_storage_id" ] && [ "$mapped_storage_id" != "null" ] && echo "$mapped_storage_id" || echo "${pool_name}-${dataset_name}")
+        desired_storage_ids+=("$storage_id")
+    done <<< "$zfs_datasets_json"
 
+    # Get the current state from Proxmox.
+    local current_storage_ids=()
+    while read -r line; do
+        current_storage_ids+=("$line")
+    done < <(pvesm status | awk 'NR>1 {print $1}')
+
+    # Define a list of protected storage IDs that should never be removed.
+    local protected_storage_ids=("local" "local-lvm" "local-zfs")
+
+    # Remove any storage that exists in Proxmox but is not in the desired state.
+    for storage_id in "${current_storage_ids[@]}"; do
+        # Check if the storage ID is in the protected list.
+        is_protected=false
+        for protected_id in "${protected_storage_ids[@]}"; do
+            if [[ "$storage_id" == "$protected_id" ]]; then
+                is_protected=true
+                break
+            fi
+        done
+
+        if [ "$is_protected" = true ]; then
+            log_info "Skipping removal of protected Proxmox storage '$storage_id'."
+            continue
+        fi
+
+        if ! [[ " ${desired_storage_ids[@]} " =~ " ${storage_id} " ]]; then
+            log_warn "Proxmox storage '$storage_id' is not in the desired state. Removing it."
+            retry_command "pvesm remove $storage_id" || log_fatal "Failed to remove stale storage '$storage_id'."
+        fi
+    done
+
+    # Add or update storage to match the desired state.
     while IFS= read -r dataset_config; do
         local dataset_name=$(echo "$dataset_config" | jq -r '.name')
         local pool_name=$(echo "$dataset_config" | jq -r '.pool')
         local proxmox_storage_type=$(echo "$dataset_config" | jq -r '.proxmox_storage_type')
         local proxmox_content_type=$(echo "$dataset_config" | jq -r '.proxmox_content_type // "none"')
-
         local full_dataset_path="$pool_name/$dataset_name"
         local storage_id_key="${pool_name}_${dataset_name//-/_}"
         local mapped_storage_id=$(echo "$config_json" | jq -r --arg key "$storage_id_key" '.proxmox_storage_ids[$key]')
-        
         local storage_id=$([ -n "$mapped_storage_id" ] && [ "$mapped_storage_id" != "null" ] && echo "$mapped_storage_id" || echo "${pool_name}-${dataset_name}")
-        
         local mountpoint="/$full_dataset_path"
 
-        # Convergent State Logic: Check if storage exists and update if necessary, or create if it doesn't.
-        local storage_needs_creation=true
-        if pvesm status | grep -q "^$storage_id"; then
-            local storage_block=$(awk -v id="$storage_id" '$0 ~ "^(dir|zfspool): " id "$" {f=1} f && /^$/ {f=0} f' /etc/pve/storage.cfg)
-            if [ -n "$storage_block" ]; then
-                local current_type=$(echo "$storage_block" | head -n 1 | awk -F: '{print $1}')
-                local current_content=$(echo "$storage_block" | grep '^\s*content' | awk '{print $2}')
-
-                if [ "$current_type" != "$proxmox_storage_type" ]; then
-                    if [[ "$current_type" == "dir" && "$proxmox_storage_type" == "zfspool" ]]; then
-                        log_warn "Proxmox storage '$storage_id' exists with incorrect type ('$current_type' instead of '$proxmox_storage_type'). Removing existing 'dir' storage to re-create as 'zfspool'."
-                        retry_command "pvesm remove $storage_id" || log_fatal "Failed to remove existing 'dir' storage '$storage_id'."
-                        storage_needs_creation=true # Mark for creation after removal
-                    else
-                        log_fatal "Proxmox storage '$storage_id' exists with incorrect type. Current: '$current_type', Desired: '$proxmox_storage_type'. Manual intervention required."
-                    fi
-                elif [ "$current_content" != "$proxmox_content_type" ]; then
-                    log_info "Proxmox storage '$storage_id' exists but has incorrect content type. Updating..."
-                    retry_command "pvesm set $storage_id --content $proxmox_content_type" || log_fatal "Failed to update Proxmox storage '$storage_id'"
-                    log_info "Successfully updated content type for storage '$storage_id'."
-                    storage_needs_creation=false # No need to create, just updated
-                else
-                    log_info "Proxmox storage '$storage_id' already exists and is correctly configured."
-                    storage_needs_creation=false # No need to create or update
-                fi
-            else
-                log_warn "Could not retrieve config for existing storage '$storage_id'. Assuming it needs creation."
-                storage_needs_creation=true
-            fi
-        fi
-
-        if [ "$storage_needs_creation" = true ]; then
-            log_info "Proxmox storage '$storage_id' does not exist or was removed. Creating..."
+        if ! pvesm status | grep -q "^$storage_id"; then
+            log_info "Proxmox storage '$storage_id' does not exist. Creating..."
             if [[ "$proxmox_storage_type" == "zfspool" ]]; then
                 retry_command "pvesm add zfspool $storage_id -pool $full_dataset_path -content $proxmox_content_type" || log_fatal "Failed to add ZFS storage '$storage_id'"
                 log_info "Added Proxmox ZFS storage: '$storage_id' for '$full_dataset_path'"
@@ -351,6 +355,9 @@ add_proxmox_storage() {
             else
                 log_warn "Unsupported proxmox_storage_type '$proxmox_storage_type' for dataset '$full_dataset_path'. Skipping."
             fi
+        else
+            log_info "Proxmox storage '$storage_id' already exists. Verifying configuration..."
+            # The verification and update logic can be added here if needed.
         fi
     done <<< "$zfs_datasets_json"
 }

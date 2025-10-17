@@ -68,10 +68,21 @@ generate_nginx_certs() {
     echo "INFO: CA entry added to /etc/hosts."
 
     # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="${NGINX_CERT_DIR}/phoenix_ca.crt" # Assuming phoenix_ca.crt is the root CA cert
+    local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt"
+    echo "INFO: Waiting for root CA certificate to be mounted at $ROOT_CA_CERT_PATH..."
+
+    # Wait for the certificate file to appear in the mounted volume
+    local cert_wait_attempt=1
+    local max_cert_wait_attempts=12 # Wait for up to 2 minutes (12 * 10s)
+    while [ ! -f "$ROOT_CA_CERT_PATH" ] && [ "$cert_wait_attempt" -le "$max_cert_wait_attempts" ]; do
+        echo "Attempt $cert_wait_attempt/$max_cert_wait_attempts: Root CA certificate not found. Retrying in $RETRY_DELAY seconds..."
+        sleep "$RETRY_DELAY"
+        cert_wait_attempt=$((cert_wait_attempt + 1))
+    done
+
     echo "INFO: Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
     if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
-        echo "FATAL: Root CA certificate not found at $ROOT_CA_CERT_PATH. Cannot retrieve fingerprint." >&2
+        echo "FATAL: Root CA certificate not found at $ROOT_CA_CERT_PATH after waiting. Cannot retrieve fingerprint." >&2
         exit 1
     fi
     echo "INFO: Root CA certificate found. Retrieving fingerprint..."
@@ -82,13 +93,21 @@ generate_nginx_certs() {
     fi
     echo "INFO: Retrieved CA Fingerprint: $CA_FINGERPRINT"
 
-    # Add the locally mounted root CA certificate to the trust store
-    echo "INFO: Adding locally mounted root CA certificate to trust store..."
-    if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
-        echo "FATAL: Failed to install locally mounted root CA certificate into trust store." >&2
+    # Install the Root CA certificate that was pushed into this container
+    echo "INFO: Installing the Root CA certificate from /tmp/root_ca.crt..."
+    local LOCAL_ROOT_CA_PATH="/tmp/root_ca.crt"
+
+    if [ ! -f "$LOCAL_ROOT_CA_PATH" ]; then
+        echo "FATAL: Root CA certificate not found at $LOCAL_ROOT_CA_PATH. It should have been pushed by the lxc-manager." >&2
         exit 1
     fi
-    echo "INFO: Locally mounted root CA certificate added to trust store successfully."
+    
+    if ! step certificate install "$LOCAL_ROOT_CA_PATH"; then
+        echo "FATAL: Failed to install the Root CA certificate from $LOCAL_ROOT_CA_PATH into the trust store." >&2
+        exit 1
+    fi
+    # Do not remove the file, it might be needed again. The OS handles the trust store.
+    echo "INFO: Root CA certificate installed successfully."
 
     # Bootstrap the step CLI with the CA's URL and fingerprint
     echo "INFO: Bootstrapping step CLI with CA information..."
@@ -110,7 +129,7 @@ generate_nginx_certs() {
         step ca certificate "$NGINX_HOSTNAME"
         "${NGINX_CERT_DIR}/internal_traefik_proxy.crt"
         "${NGINX_CERT_DIR}/internal_traefik_proxy.key"
-        --password-file "${NGINX_CERT_DIR}/ca_password.txt" # Use the mounted password file
+        --provisioner-password-file "/ssl/provisioner_password.txt"
         --provisioner "admin@thinkheads.ai"
         --force
     )
@@ -120,6 +139,21 @@ generate_nginx_certs() {
     fi
 
     echo "Nginx server certificates generated successfully."
+
+    echo "Generating placeholder certificate for portainer.phoenix.thinkheads.ai to ensure Nginx starts..."
+    local placeholder_cert_cmd=(
+        step ca certificate "portainer.phoenix.thinkheads.ai"
+        "/ssl/portainer.phoenix.thinkheads.ai.crt"
+        "/ssl/portainer.phoenix.thinkheads.ai.key"
+        --provisioner-password-file "/ssl/provisioner_password.txt"
+        --provisioner "admin@thinkheads.ai"
+        --force
+    )
+    if ! "${placeholder_cert_cmd[@]}"; then
+        echo "WARNING: Failed to generate placeholder certificate for portainer.phoenix.thinkheads.ai. Nginx may fail to start if this is the first run." >&2
+    else
+        echo "Placeholder certificate for portainer.phoenix.thinkheads.ai generated successfully."
+    fi
 }
 
 # --- Package Installation ---
@@ -173,10 +207,6 @@ ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
 
 # --- Certificate Generation and Trust ---
 generate_nginx_certs
-echo "Installing Step-CA root certificate into system trust store..."
-cp /etc/nginx/ssl/phoenix_ca.crt /usr/local/share/ca-certificates/phoenix_ca.crt
-update-ca-certificates
-echo "Step-CA root certificate installed."
 chmod 600 "/etc/nginx/ssl/internal_traefik_proxy.key" || { echo "FATAL: Failed to set permissions for Nginx private key." >&2; exit 1; }
 
 

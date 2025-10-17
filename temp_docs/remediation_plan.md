@@ -1,34 +1,47 @@
-# DNS and Certificate Trust Chain Audit Plan
+# Portainer API Remediation Plan
 
-## 1. Objective
+## 1. Problem Summary
 
-This document outlines a systematic audit to definitively diagnose the root cause of the "Invalid environment name" error occurring during Portainer environment creation. The audit will verify DNS resolution and TLS certificate trust at every layer of the Phoenix Hypervisor stack, from the Proxmox host down to the Portainer container.
+The `phoenix sync all` command fails because the Portainer API does not become available after deployment. This is caused by a routing loop, where Traefik is configured to proxy requests back to the public-facing Nginx gateway instead of the internal Portainer service.
 
-## 2. Audit Steps
+The root cause is that the `portainer-manager.sh` script uses undefined `PORTAINER_SERVER_IP` and `AGENT_IP` variables when generating the Traefik dynamic configuration.
 
-The audit will be conducted in two phases: DNS Resolution and Certificate Trust Chain.
+## 2. Proposed Solution
 
-### 2.1. Phase 1: DNS Resolution Audit
+To fix this, I will modify the `portainer-manager.sh` script to correctly resolve the IP addresses of the Portainer server and agent VMs before generating the Traefik configuration. This will ensure that Traefik routes traffic to the correct internal endpoints.
 
-This phase will verify that the FQDN `agent.agent.phoenix.local` can be resolved at each layer of the system.
+## 3. Corrected Architecture
 
-| Step | Layer | Command | Expected Outcome |
-|---|---|---|---|
-| 1.1 | Proxmox Host | `nslookup agent.agent.phoenix.local` | Resolves to `10.0.0.102` |
-| 1.2 | DNS Server (LXC 101) | `pct exec 101 -- nslookup agent.agent.phoenix.local` | Resolves to `10.0.0.102` |
-| 1.3 | Portainer VM (1001) | `qm guest exec 1001 -- nslookup agent.agent.phoenix.local` | Resolves to `10.0.0.102` |
-| 1.4 | Portainer Container | `qm guest exec 1001 -- docker exec <ID> nslookup agent.agent.phoenix.local` | Resolves to `10.0.0.102` |
+The following diagram illustrates the corrected traffic flow:
 
-### 2.2. Phase 2: Certificate Trust Chain Audit
+```mermaid
+graph TD
+    subgraph "Proxmox Host"
+        subgraph "LXC 101 - Nginx Gateway"
+            A[Nginx]
+        end
+        subgraph "LXC 102 - Traefik"
+            B[Traefik]
+        end
+        subgraph "VM 1001 - Portainer Server"
+            C[Portainer Server]
+        end
+        subgraph "VM 1002 - Portainer Agent"
+            D[Portainer Agent]
+        end
+    end
 
-This phase will verify that the certificate presented by the Portainer agent is trusted at each layer.
+    User -- HTTPS --> A
+    A -- HTTPS --> B
+    B -- HTTPS --> C
+    B -- mTLS --> D
+```
 
-| Step | Layer | Command | Expected Outcome |
-|---|---|---|---|
-| 2.1 | Proxmox Host | `openssl s_client -connect 10.0.0.102:9001 -CAfile /path/to/ca.crt` | `Verify return code: 0 (ok)` |
-| 2.2 | Portainer VM (1001) | `qm guest exec 1001 -- openssl s_client -connect 10.0.0.102:9001 -CAfile /path/to/ca.crt` | `Verify return code: 0 (ok)` |
-| 2.3 | Portainer Container | `qm guest exec 1001 -- docker exec <ID> openssl s_client -connect 10.0.0.102:9001 -CAfile /path/to/ca.crt` | `Verify return code: 0 (ok)` |
+## 4. Files to be Modified
 
-## 3. Execution
+- `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`:
+    - Add logic to fetch the IP addresses of the Portainer server and agent VMs.
+    - Use the correct IP variables when generating the Traefik dynamic configuration file.
 
-Upon your approval of this plan, I will request to switch to the `code` role to execute these commands and gather the results. The results will be presented to you for review before any further action is taken.
+- `usr/local/phoenix_hypervisor/etc/traefik/dynamic_conf.yml`:
+    - This file will be overwritten by the corrected `portainer-manager.sh` script, so no manual changes are needed.

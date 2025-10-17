@@ -1,6 +1,7 @@
 {
     "version": "1.0.0",
     "author": "Heads, Qwen3-coder, Roo",
+    "domain_name": "phoenix.thinkheads.ai",
     "users": {
         "username": "phoenix_admin",
         "password_hash": "NOT_SET",
@@ -43,51 +44,15 @@
     "nfs": {
         "exports": [
             {
-                "path": "/fastData/shared-bulk-data",
-                "clients": [
-                    "10.0.0.0/24"
-                ],
-                "options": [
-                    "rw",
-                    "sync",
-                    "no_subtree_check",
-                    "no_root_squash"
-                ]
-            },
-            {
-                "path": "/quickOS/shared-prod-data",
-                "clients": [
-                    "10.0.0.0/24"
-                ],
-                "options": [
-                    "rw",
-                    "sync",
-                    "no_subtree_check",
-                    "no_root_squash"
-                ]
-            },
-            {
-                "path": "/quickOS/shared-prod-data-sync",
-                "clients": [
-                    "10.0.0.0/24"
-                ],
-                "options": [
-                    "rw",
-                    "sync",
-                    "no_subtree_check",
-                    "no_root_squash"
-                ]
-            },
-            {
                 "path": "/quickOS/vm-persistent-data",
                 "clients": [
-                    "10.0.0.0/24"
+                    "10.0.0.101",
+                    "10.0.0.102"
                 ],
                 "options": [
                     "rw",
                     "sync",
-                    "no_subtree_check",
-                    "no_root_squash"
+                    "no_subtree_check"
                 ]
             }
         ]
@@ -162,84 +127,96 @@
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=800G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images",
+                "storage_class": "direct"
             },
             {
                 "name": "lxc-disks",
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=standard,quota=600G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "direct"
             },
             {
                 "name": "shared-prod-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=400G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-prod-data-sync",
                 "pool": "quickOS",
                 "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images"
+                "proxmox_content_type": "images",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-test-data",
                 "pool": "fastData",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=500G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-test-data-sync",
                 "pool": "fastData",
                 "properties": "recordsize=16K,compression=lz4,sync=always,quota=100G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-backups",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=zstd,sync=standard,quota=2T",
                 "proxmox_storage_type": "dir",
-                "proxmox_content_type": "backup"
+                "proxmox_content_type": "backup",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
                 "proxmox_storage_type": "dir",
-                "proxmox_content_type": "iso,vztmpl"
+                "proxmox_content_type": "iso,vztmpl",
+                "storage_class": "shared"
             },
             {
                 "name": "shared-bulk-data",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             },
             {
                 "name": "fastData-shared-iso",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
                 "proxmox_storage_type": "dir",
-                "proxmox_content_type": "iso,vztmpl"
+                "proxmox_content_type": "iso,vztmpl",
+                "storage_class": "shared"
             },
             {
                 "name": "vm-persistent-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
                 "proxmox_storage_type": "dir",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             },
             {
                 "name": "lxc-persistent-data",
                 "pool": "quickOS",
                 "properties": "recordsize=128K,compression=lz4,sync=standard,quota=10G",
                 "proxmox_storage_type": "zfspool",
-                "proxmox_content_type": "images,rootdir"
+                "proxmox_content_type": "images,rootdir",
+                "storage_class": "shared"
             }
         ]
     },
@@ -344,17 +321,16 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "443",
-                    "comment": "Allow HTTPS traffic to Nginx gateway"
+                    "source": "10.0.0.0/24",
+                    "proto": "icmp",
+                    "comment": "Allow ICMP (ping) from internal network"
                 },
                 {
                     "type": "in",
                     "action": "ACCEPT",
-                    "dest": "10.0.0.102",
                     "proto": "tcp",
-                    "port": "9001",
-                    "comment": "Allow Portainer agent communication"
+                    "port": "443",
+                    "comment": "Allow HTTPS traffic to Nginx gateway"
                 },
                 {
                     "type": "in",
@@ -429,6 +405,38 @@
                     "dest": "0.0.0.0/0",
                     "port": "53",
                     "comment": "Allow outbound DNS traffic (TCP) from all guests"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "udp",
+                    "port": "53",
+                    "comment": "Allow inbound DNS traffic from all guests"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "proto": "tcp",
+                    "port": "53",
+                    "comment": "Allow inbound DNS traffic (TCP) from all guests"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.12",
+                    "proto": "tcp",
+                    "port": "9443",
+                    "comment": "Allow Traefik to access Portainer"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.13",
+                    "proto": "tcp",
+                    "port": "9443",
+                    "comment": "Allow Proxmox host to access Portainer for health checks"
                 }
             ]
         }
@@ -436,6 +444,57 @@
     "portainer_api": {
         "admin_user": "admin",
         "admin_password": "NewKick@$$2025",
-        "portainer_hostname": "portainer.phoenix.local"
+        "portainer_hostname": "portainer.phoenix.thinkheads.ai"
+    },
+    "vm_defaults": {
+        "ubuntu_release": "noble"
+    },
+    "dns_server": {
+        "enabled": true,
+        "upstream_servers": [
+            "8.8.8.8",
+            "1.1.1.1"
+        ],
+        "authoritative_zones": [
+            {
+                "zone_name": "phoenix.thinkheads.ai",
+                "records": [
+                    {
+                        "hostname": "portainer",
+                        "ip_internal": "10.0.0.101",
+                        "ip_external": "10.0.0.153"
+                    }
+                ]
+            },
+            {
+                "zone_name": "internal.thinkheads.ai",
+                "records": [
+                    {
+                        "hostname": "traefik",
+                        "ip_internal": "10.0.0.12"
+                    },
+                    {
+                        "hostname": "ca",
+                        "ip_internal": "10.0.0.10"
+                    },
+                    {
+                        "hostname": "granite-embedding",
+                        "ip_internal": "10.0.0.141"
+                    },
+                    {
+                        "hostname": "granite-3b",
+                        "ip_internal": "10.0.0.142"
+                    },
+                    {
+                        "hostname": "ollama",
+                        "ip_internal": "10.0.0.155"
+                    },
+                    {
+                        "hostname": "llamacpp",
+                        "ip_internal": "10.0.0.157"
+                    }
+                ]
+            }
+        ]
     }
 }

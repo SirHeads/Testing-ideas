@@ -329,6 +329,18 @@ main() {
 
     VERB="$1"
     shift
+    
+    # --- SPECIAL HANDLING FOR 'setup' VERB ---
+    # The 'setup' verb is unique as it operates on the hypervisor itself and
+    # may take its own set of command-line options (e.g., --wipe-disks).
+    # We intercept it here to pass all its arguments directly to the
+    # hypervisor-manager, bypassing the target-based logic.
+    if [ "$VERB" == "setup" ]; then
+        log_info "Verb 'setup' received. Routing to hypervisor-manager.sh with all arguments..."
+        "$SCRIPT_DIR/managers/hypervisor-manager.sh" --config "$HYPERVISOR_CONFIG_FILE" "$@"
+        exit $?
+    fi
+
     TARGETS=("$@")
 
     # --- VERB VALIDATION ---
@@ -345,10 +357,6 @@ main() {
     # Handle cases with no targets first.
     if [ "${#TARGETS[@]}" -eq 0 ]; then
         case "$VERB" in
-            setup)
-                log_info "Verb 'setup' received. Routing to hypervisor-manager.sh..."
-                "$SCRIPT_DIR/managers/hypervisor-manager.sh" --config "$HYPERVISOR_CONFIG_FILE"
-                ;;
             LetsGo)
                 log_info "Verb 'LetsGo' received. Initiating creation and startup of all guests..."
                 local all_guests

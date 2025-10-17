@@ -1595,3 +1595,60 @@ create_vm_snapshot() {
 
     log_info "Snapshot '$snapshot_name' created successfully."
 }
+# =====================================================================================
+# Function: retry_guest_command
+# Description: Executes a command inside a guest VM with a retry mechanism.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#   $2 - The command to execute.
+#
+# Returns:
+#   0 on success, 1 on failure.
+# =====================================================================================
+retry_guest_command() {
+    local VMID="$1"
+    local command="$2"
+    local max_attempts=3
+    local attempt=1
+    local delay=10
+
+    while [ $attempt -le $max_attempts ]; do
+        log_info "Attempt $attempt/$max_attempts: Executing in VM $VMID: $command"
+        if run_qm_command guest exec "$VMID" -- /bin/bash -c "$command"; then
+            log_success "Command succeeded in VM $VMID."
+            return 0
+        fi
+
+        if [ $attempt -lt $max_attempts ]; then
+            log_warn "Command failed in VM $VMID. Retrying in $delay seconds..."
+            sleep $delay
+        fi
+        ((attempt++))
+    done
+
+    log_error "Command failed in VM $VMID after $max_attempts attempts."
+    return 1
+}
+# =====================================================================================
+# Function: wait_for_apt_lock
+# Description: Waits for the apt lock to be released.
+# =====================================================================================
+wait_for_apt_lock() {
+    log_info "Waiting for apt lock to be released..."
+    if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 ; then
+        kill_apt_processes
+    fi
+    log_info "Apt lock released."
+}
+# =====================================================================================
+# Function: kill_apt_processes
+# Description: Forcefully kills any running apt or dpkg processes.
+# =====================================================================================
+kill_apt_processes() {
+    log_warn "Forcefully terminating any existing apt/dpkg processes..."
+    pkill -f "apt-get" || true
+    pkill -f "apt" || true
+    pkill -f "dpkg" || true
+    log_info "Forced termination of apt/dpkg processes complete."
+}

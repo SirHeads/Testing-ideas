@@ -80,6 +80,65 @@ create_global_symlink() {
 }
 
 # =====================================================================================
+# Function: wait_for_nfs_ready
+# Description: Waits for the NFS server to become fully operational by checking if the
+#              NFS shares defined in the configuration are available. This function is
+#              critical for resolving race conditions where other services (like ZFS storage
+#              provisioning) might try to access NFS mounts before they are ready.
+#
+# Arguments:
+#   $1 - The path to the hypervisor configuration file.
+#
+# Returns:
+#   None. The function will call log_fatal and exit if the NFS shares do not become
+#   available within the timeout period.
+# =====================================================================================
+wait_for_nfs_ready() {
+    local config_file="$1"
+    log_info "Waiting for NFS server to become ready..."
+
+    local nfs_server=$(jq -r '.network.nfs_server // "127.0.0.1"' "$config_file")
+    local nfs_exports=$(jq -r '(.nfs.exports // [])[].path' "$config_file")
+
+    if [ -z "$nfs_exports" ]; then
+        log_info "No NFS exports configured. Skipping wait."
+        return
+    fi
+
+    local timeout=120 # 2 minutes timeout
+    local interval=5  # 5 seconds interval
+    local elapsed=0
+
+    while [ $elapsed -lt $timeout ]; do
+        local all_shares_mounted=true
+        local showmount_output
+        showmount_output=$(showmount -e "$nfs_server" 2>/dev/null)
+
+        if [ -z "$showmount_output" ]; then
+            all_shares_mounted=false
+        else
+            for share in $nfs_exports; do
+                if ! echo "$showmount_output" | grep -q -E "^\s*$share\s+"; then
+                    all_shares_mounted=false
+                    break
+                fi
+            done
+        fi
+
+        if [ "$all_shares_mounted" = true ]; then
+            log_info "NFS server is ready. All shares are mounted."
+            return
+        fi
+
+        log_info "NFS shares not yet available. Retrying in $interval seconds..."
+        sleep $interval
+        elapsed=$((elapsed + interval))
+    done
+
+    log_fatal "Timeout waiting for NFS server to become ready. Please check the NFS server logs."
+}
+
+# =====================================================================================
 # Function: setup_hypervisor
 # Description: Orchestrates the initial setup of the Proxmox hypervisor by executing a
 #              predefined sequence of modular setup scripts. This function ensures that all
@@ -110,12 +169,13 @@ setup_hypervisor() {
     # Define the sequence of setup scripts to be executed. The order is critical for proper setup.
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
+        "hypervisor_feature_setup_firewall.sh"
+        "hypervisor_feature_setup_nfs.sh"
         "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
         "hypervisor_feature_initialize_nvidia_gpus.sh"
-        "hypervisor_feature_setup_firewall.sh"
-        "hypervisor_feature_setup_nfs.sh"
+        "hypervisor_feature_setup_dns_server.sh"
         "hypervisor_feature_create_heads_user.sh"
         "hypervisor_feature_setup_samba.sh"
         "hypervisor_feature_create_admin_user.sh"
@@ -143,15 +203,12 @@ setup_hypervisor() {
                 log_fatal "Hypervisor setup script '$script' failed."
             fi
         fi
-    done
 
-    # Set the hypervisor's DNS to the fallback DNS
-    local fallback_dns
-    fallback_dns=$(get_global_config_value ".network.fallback_dns")
-    if [ -n "$fallback_dns" ]; then
-        log_info "Setting hypervisor's DNS to fallback DNS: $fallback_dns"
-        echo "nameserver $fallback_dns" > /etc/resolv.conf || log_fatal "Failed to update hypervisor's /etc/resolv.conf."
-    fi
+        # After setting up NFS, wait for it to be ready before proceeding.
+        if [[ "$script" == "hypervisor_feature_setup_nfs.sh" ]]; then
+            wait_for_nfs_ready "$config_file"
+        fi
+    done
 
     log_info "Hypervisor setup completed successfully."
 

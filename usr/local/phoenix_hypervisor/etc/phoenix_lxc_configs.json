@@ -4,39 +4,6 @@
     "nvidia_repo_url": "https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/",
     "nvidia_runfile_url": "https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run",
     "lxc_configs": {
-        "905": {
-            "name": "NAT-Gateway-Template",
-            "start_at_boot": false,
-            "boot_order": 0,
-            "boot_delay": 0,
-            "memory_mb": 1024,
-            "cores": 1,
-            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
-            "storage_pool": "quickOS-lxc-disks",
-            "storage_size_gb": 8,
-            "network_config": {
-                "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.205/24",
-                "gw": "10.0.0.1",
-                "nameservers": "8.8.8.8"
-            },
-            "mac_address": "52:54:00:AA:BB:C9",
-            "gpu_assignment": "none",
-            "portainer_role": "none",
-            "unprivileged": true,
-            "features": [
-                "base_setup",
-                "nat_gateway"
-            ],
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ],
-            "template_snapshot_name": "final-form",
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "enable_lifecycle_snapshots": true
-        },
         "900": {
             "name": "Copy-Base",
             "start_at_boot": false,
@@ -44,7 +11,7 @@
             "boot_delay": 0,
             "memory_mb": 2048,
             "cores": 2,
-            "clone_from_ctid": "905",
+            "template": "/fastData/shared-iso/template/cache/ubuntu-24.04-standard_24.04-2_amd64.tar.zst",
             "storage_pool": "quickOS-lxc-disks",
             "storage_size_gb": 16,
             "network_config": {
@@ -52,7 +19,7 @@
                 "bridge": "vmbr0",
                 "ip": "10.0.0.200/24",
                 "gw": "10.0.0.1",
-                "nameservers": "10.0.0.205"
+                "nameservers": "8.8.8.8"
             },
             "mac_address": "52:54:00:AA:BB:CC",
             "gpu_assignment": "none",
@@ -88,7 +55,7 @@
             "gpu_assignment": "0, 1",
             "portainer_role": "none",
             "unprivileged": true,
-            "clone_from_ctid": "905",
+            "clone_from_ctid": "900",
             "features": [
                 "nvidia"
             ],
@@ -421,7 +388,7 @@
                 "bridge": "vmbr0",
                 "ip": "10.0.0.153/24",
                 "gw": "10.0.0.1",
-                "nameservers": "10.0.0.153"
+                "nameservers": "10.0.0.13"
             },
             "mac_address": "52:54:00:67:89:B3",
             "gpu_assignment": "none",
@@ -430,7 +397,6 @@
             "clone_from_ctid": "900",
             "features": [
                 "base_setup",
-                "dns_server",
                 "trusted_ca"
             ],
             "pct_options": [
@@ -440,6 +406,12 @@
                 "lxc.mount.auto:sys:rw"
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
+            "dependencies": [],
+            "start_at_boot": true,
+            "boot_order": 1,
+            "boot_delay": 5,
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
             "firewall": {
                 "enabled": true,
                 "rules": [
@@ -447,29 +419,26 @@
                         "type": "in",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "port": "80"
+                        "port": "80",
+                        "comment": "Allow HTTP traffic"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "port": "443"
+                        "port": "443",
+                        "comment": "Allow HTTPS traffic"
                     },
                     {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.101",
                         "proto": "tcp",
-                        "port": "9443"
+                        "port": "9443",
+                        "comment": "Allow Nginx to proxy to Portainer"
                     }
                 ]
             },
-            "dependencies": [],
-            "start_at_boot": true,
-            "boot_order": 1,
-            "boot_delay": 5,
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
             "zfs_volumes": [
                 {
                     "name": "nginx_logs",
@@ -481,7 +450,7 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/etc/nginx/ssl"
+                    "container_path": "/ssl"
                 }
             ]
         },
@@ -573,7 +542,7 @@
                 "bridge": "vmbr0",
                 "ip": "10.0.0.10/24",
                 "gw": "10.0.0.1",
-                "nameservers": "8.8.8.8"
+                "nameservers": "10.0.0.13"
             },
             "mac_address": "52:54:00:AA:BB:CA",
             "gpu_assignment": "none",
@@ -614,7 +583,7 @@
                 "bridge": "vmbr0",
                 "ip": "10.0.0.12/24",
                 "gw": "10.0.0.1",
-                "nameservers": "10.0.0.153"
+                "nameservers": "10.0.0.13"
             },
             "mac_address": "52:54:00:AA:BB:CB",
             "gpu_assignment": "none",
@@ -630,31 +599,33 @@
             "dependencies": [
                 "103"
             ],
-            "apparmor_profile": "unconfined",
-            "apparmor_manages_nesting": true,
-            "enable_lifecycle_snapshots": true,
-            "lxc_options": [
-                "lxc.apparmor.profile=unconfined"
-            ],
             "firewall": {
                 "enabled": true,
                 "rules": [
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
+                        "source": "10.0.0.10",
                         "proto": "tcp",
-                        "port": "443"
+                        "port": "443",
+                        "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "80"
+                        "dest": "10.0.0.13",
+                        "proto": "udp",
+                        "port": "53",
+                        "comment": "Allow outbound DNS queries"
                     }
                 ]
             },
+            "apparmor_profile": "unconfined",
+            "apparmor_manages_nesting": true,
+            "enable_lifecycle_snapshots": true,
+            "lxc_options": [
+                "lxc.apparmor.profile=unconfined"
+            ],
             "zfs_volumes": [
                 {
                     "name": "traefik_config",
@@ -666,7 +637,7 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/etc/traefik/ssl"
+                    "container_path": "/ssl"
                 }
             ]
         }

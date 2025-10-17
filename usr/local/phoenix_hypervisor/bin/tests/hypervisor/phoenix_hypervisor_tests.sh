@@ -218,10 +218,10 @@ verify_network_configuration() {
 
 # Verifies that the UFW firewall is active.
 verify_firewall_status() {
-    if sudo ufw status | grep -q "Status: active"; then
-        report_pass "Firewall Status (UFW)"
+    if systemctl is-active --quiet pve-firewall; then
+        report_pass "Firewall Status (pve-firewall)"
     else
-        report_fail "Firewall Status (UFW)" "UFW is not active."
+        report_fail "Firewall Status (pve-firewall)" "pve-firewall service is not active."
     fi
 }
 
