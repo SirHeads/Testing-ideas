@@ -55,12 +55,19 @@
                     "server": "10.0.0.13"
                 }
             ],
-            "dns_records": [
-                {
-                    "hostname": "portainer.phoenix.thinkheads.ai",
-                    "ip": "10.0.0.153"
-                }
-            ]
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.0/24",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Traefik to access Portainer"
+                    }
+                ]
+            }
         },
         {
             "vmid": 1002,
@@ -111,7 +118,20 @@
                     "hostname": "drphoenix.phoenix.thinkheads.ai",
                     "ip": "10.0.0.102"
                 }
-            ]
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.101",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Portainer server to access agent"
+                    }
+                ]
+            }
         }
     ]
 }

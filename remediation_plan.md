@@ -1,32 +1,33 @@
-# Portainer Initialization Remediation Plan
+# Storage Architecture Remediation Plan
 
-## 1. Problem Analysis
+## 1. Issue
 
-The current `portainer-manager.sh` script suffers from a race condition. It initiates the Portainer container deployment and then immediately calls `check_portainer_api.sh`. This health check script only verifies that the Portainer API endpoint is responding, not that the application is fully initialized and ready to accept configuration changes.
+The hypervisor setup process is plagued by a combination of architectural flaws, race conditions, and stale configurations. The core issues are:
 
-Consequently, the `setup_portainer_admin_user` function is often called prematurely, resulting in the `{"message":"Administrator initialization timeout"}` error from the Portainer API.
+1.  **Incorrect Storage Management:** The `hypervisor_feature_setup_zfs.sh` script was incorrectly treating all ZFS datasets as direct Proxmox storage, including those intended for shared access via NFS and Samba.
+2.  **Race Conditions:** The setup scripts were not waiting for critical services like NFS to be fully operational before dependent services tried to use them.
+3.  **Stale Configurations:** Previous failed setup attempts have left behind incorrect and non-functional storage definitions within Proxmox, causing "unreachable" errors on subsequent runs.
 
-## 2. Proposed Solution
+## 2. Remediation
 
-To resolve this, I will implement a more intelligent and resilient admin user creation process directly within the `portainer-manager.sh` script. This approach eliminates the need for the separate, inadequate health check and ensures we only proceed when Portainer is truly ready.
+A comprehensive refactor of the storage setup process will be implemented to address these issues.
 
-### Key Changes:
+### 2.1. Declarative Configuration (`phoenix_hypervisor_config.json`)
 
-1.  **Modify `setup_portainer_admin_user` function in `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`:**
-    *   I will introduce a retry loop that will attempt to create the admin user by calling the `/api/users/admin/init` endpoint.
-    *   The loop will intelligently inspect the API response:
-        *   **On "Administrator initialization timeout"**: The script will wait for a short interval and then retry, understanding that the service is still starting up.
-        *   **On Success (user created)**: The loop will terminate, and the script will proceed.
-        *   **On "User already exists"**: The loop will also terminate, as this is a successful state for our purposes.
-        *   **On Other Errors**: The script will log a fatal error and exit, as this would indicate an unexpected problem.
+*   The `storage_class` property will be used to differentiate between `"direct"` and `"shared"` storage, ensuring that only appropriate datasets are managed by Proxmox.
 
-2.  **Update `sync_all` function in `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`:**
-    *   I will remove the call to `check_portainer_api.sh`. The new, robust logic within `setup_portainer_admin_user` makes this separate health check redundant and inefficient.
+### 2.2. Declarative ZFS Script (`hypervisor_feature_setup_zfs.sh`)
 
-## 3. Benefits of this Approach
+*   The `add_proxmox_storage` function will be rewritten to be fully declarative. It will:
+    1.  Read the desired state of `"direct"` storage from the configuration file.
+    2.  Get the current state of storage from Proxmox.
+    3.  Remove any storage configurations that exist in Proxmox but are not in the desired state.
+    4.  Add or update storage configurations to match the desired state.
 
-*   **Increased Reliability**: The script will no longer fail due to timing issues during Portainer's startup.
-*   **Improved Efficiency**: We will be polling the exact endpoint required for the next step, which is a more accurate and direct measure of readiness.
-*   **Simplified Logic**: Consolidating the readiness check and user creation logic into a single function makes the overall script easier to understand and maintain.
+### 2.3. Service Readiness (`hypervisor-manager.sh`)
 
-This plan will address the root cause of the failure and make the Portainer deployment process significantly more stable.
+*   A `wait_for_nfs_ready` function will be added to the `hypervisor-manager.sh` script to resolve the race condition, ensuring that the NFS service is fully operational before the ZFS script runs.
+
+## 3. Expected Outcome
+
+After applying these changes, the `phoenix setup` command will be robust, idempotent, and architecturally sound. It will correctly configure the storage, remove any stale configurations, and complete successfully without race conditions.

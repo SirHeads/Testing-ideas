@@ -134,6 +134,9 @@ configure_nodesource_repository() {
 #              and the initramfs, which is crucial after kernel updates.
 # =====================================================================================
 update_and_upgrade_system() {
+    log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    
     log_info "Updating and upgrading system (this may take a while)..."
     retry_command "apt-get update" || log_fatal "Failed to update package lists"
     
@@ -222,9 +225,9 @@ EOF
     retry_command "systemctl restart networking" || log_fatal "Failed to restart networking"
     log_info "Configured static IP for interface $INTERFACE"
 
-    # Force /etc/resolv.conf to use the local dnsmasq server
-    log_info "Forcing /etc/resolv.conf to use localhost for DNS..."
-    echo "nameserver 127.0.0.1" > /etc/resolv.conf || log_fatal "Failed to overwrite /etc/resolv.conf."
+    # Temporarily set a public DNS for initial setup steps
+    log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
 
     # Update /etc/hosts to ensure the new hostname resolves locally.
     if ! grep -q "$HOSTNAME" /etc/hosts; then

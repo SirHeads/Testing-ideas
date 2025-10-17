@@ -1,75 +1,97 @@
 #!/bin/bash
 #
 # File: hypervisor_feature_setup_dns_server.sh
-# Description: This feature script installs and configures dnsmasq on the Proxmox host
-#              to provide centralized internal DNS resolution for the Phoenix Hypervisor environment.
+# Description: This script sets up a dnsmasq server on the Proxmox host
+#              to provide split-horizon DNS for the Phoenix Hypervisor environment.
 #
+# Version: 1.0.0
+# Author: Roo
+
+set -e
 
 # --- SCRIPT INITIALIZATION ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
+
+# Source common utilities
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
-# --- MAIN LOGIC ---
-main() {
-    log_info "Starting dnsmasq setup for the Proxmox host."
+# =====================================================================================
+# Function: setup_dns_server
+# Description: Installs and configures dnsmasq based on the declarative configuration.
+# =====================================================================================
+setup_dns_server() {
+    log_info "Starting dnsmasq server setup..."
 
-    # --- Install dnsmasq ---
+    local DNS_CONFIG=$(get_global_config_value '.dns_server')
+    if [ "$(echo "$DNS_CONFIG" | jq -r '.enabled')" != "true" ]; then
+        log_info "DNS server setup is disabled in the configuration. Skipping."
+        return
+    fi
+
     log_info "Installing dnsmasq..."
-    if ! apt-get update -y || ! apt-get install -y dnsmasq; then
-        log_fatal "Failed to install dnsmasq on the hypervisor."
-    fi
+    apt-get update
+    apt-get install -y dnsmasq
 
-    # --- Configure dnsmasq ---
     log_info "Configuring dnsmasq..."
-    local dnsmasq_config_file="/etc/dnsmasq.d/phoenix.conf"
-    
-    # Get the IP of the Nginx gateway and Step-CA from the LXC config
-    local step_ca_ip=$(jq -r '.lxc_configs."103".network_config.ip' "${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json" | cut -d'/' -f1)
+    local DNSMASQ_CONF="/etc/dnsmasq.conf"
+    local DNSMASQ_HOSTS_DIR="/etc/dnsmasq.d"
 
-    if [ -z "$step_ca_ip" ]; then
-        log_fatal "Could not read IP address for Step-CA from lxc_configs.json."
-    fi
+    # Create a backup of the original dnsmasq.conf
+    [ -f "$DNSMASQ_CONF" ] && mv "$DNSMASQ_CONF" "${DNSMASQ_CONF}.bak"
 
-    log_info "Creating dnsmasq configuration at ${dnsmasq_config_file}..."
-    {
-        echo "# Phoenix Hypervisor Internal DNS Configuration"
-        echo "# This file is managed automatically. Do not edit manually."
-        echo ""
-        echo "# Listen on localhost and the primary bridge interface"
-        echo "listen-address=127.0.0.1,10.0.0.13"
-        echo ""
-        echo "# --- Explicit DNS Records ---"
-        
-        # Add records from VM configs
-        jq -r '.vms[] | .dns_records[]? | "address=/\(.hostname)/\(.ip)"' "${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
-        
-        # Add records from LXC configs
-        jq -r '.lxc_configs | to_entries[] | .value.dns_records[]? | "address=/\(.hostname)/\(.ip)"' "${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
+    # Create a new dnsmasq.conf
+    cat > "$DNSMASQ_CONF" <<EOF
+# General dnsmasq settings
+port=53
+domain-needed
+bogus-priv
+strict-order
 
-        echo ""
-        echo "# --- Service-Specific Records ---"
-        echo "# Route Step-CA traffic directly"
-        echo "address=/ca.internal.thinkheads.ai/${step_ca_ip}"
-        echo ""
-        echo "# --- Upstream DNS ---"
-        echo "# Use Google's public DNS for external queries"
-        echo "server=8.8.8.8"
-        echo "server=8.8.4.4"
-    } > "${dnsmasq_config_file}"
+# Point to our custom hosts directory
+conf-dir=${DNSMASQ_HOSTS_DIR},*.conf
+EOF
 
-    # --- Restart dnsmasq ---
+    # Add upstream DNS servers
+    echo "$DNS_CONFIG" | jq -r '.upstream_servers[]' | while read -r server; do
+        echo "server=${server}" >> "$DNSMASQ_CONF"
+    done
+
+    # Create the hosts directory
+    mkdir -p "$DNSMASQ_HOSTS_DIR"
+    rm -f ${DNSMASQ_HOSTS_DIR}/*.conf
+
+    # Generate dnsmasq configuration from JSON
+    echo "$DNS_CONFIG" | jq -c '.authoritative_zones[]' | while read -r zone; do
+        local ZONE_NAME=$(echo "$zone" | jq -r '.zone_name')
+        local CONF_FILE="${DNSMASQ_HOSTS_DIR}/${ZONE_NAME}.conf"
+        log_info "Generating configuration for zone: ${ZONE_NAME}"
+
+        echo "# Zone file for ${ZONE_NAME}" > "$CONF_FILE"
+        echo "$zone" | jq -c '.records[]' | while read -r record; do
+            local HOSTNAME=$(echo "$record" | jq -r '.hostname')
+            local IP_INTERNAL=$(echo "$record" | jq -r '.ip_internal // ""')
+            local IP_EXTERNAL=$(echo "$record" | jq -r '.ip_external // ""')
+            local FQDN="${HOSTNAME}.${ZONE_NAME}"
+
+            if [ -n "$IP_INTERNAL" ]; then
+                echo "address=/${FQDN}/${IP_INTERNAL}" >> "$CONF_FILE"
+            fi
+            if [ -n "$IP_EXTERNAL" ]; then
+                echo "address=/${FQDN}/${IP_EXTERNAL}" >> "$CONF_FILE"
+            fi
+        done
+    done
+
     log_info "Restarting dnsmasq service..."
-    if ! systemctl restart dnsmasq; then
-        log_fatal "Failed to restart dnsmasq service."
-    fi
-    
-    if ! systemctl enable dnsmasq; then
-        log_fatal "Failed to enable dnsmasq service."
-    fi
+    systemctl restart dnsmasq
+    systemctl enable dnsmasq
 
-    log_info "dnsmasq setup on the Proxmox host is complete."
+    log_info "Switching /etc/resolv.conf to use localhost for DNS..."
+    echo "nameserver 127.0.0.1" > /etc/resolv.conf || log_fatal "Failed to overwrite /etc/resolv.conf."
+
+    log_success "dnsmasq server setup completed successfully."
 }
 
-# --- SCRIPT EXECUTION ---
-main "$@"
+# --- Main execution ---
+setup_dns_server

@@ -18,9 +18,6 @@
 set -e
 
 # --- SCRIPT INITIALIZATION ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
-PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
-
 source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
@@ -148,7 +145,8 @@ EOF
 configure_traefik() {
     log_info "Configuring Traefik..."
 
-    # Create Traefik configuration directory
+    # Wipe and recreate Traefik dynamic configuration directory
+    rm -rf /etc/traefik/dynamic
     mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
 
     # Create traefik.yml
@@ -160,6 +158,9 @@ global:
 log:
   level: INFO
 
+ping:
+  entryPoint: "traefik"
+
 api:
   dashboard: true
 
@@ -168,15 +169,13 @@ entryPoints:
     address: ":80"
   websecure:
     address: ":443"
+  traefik:
+    address: ":8080"
 
 providers:
   file:
     directory: /etc/traefik/dynamic
     watch: true
-
-serversTransport:
-  rootCAs:
-    - "/ssl/phoenix_ca.crt"
 
 serversTransport:
   rootCAs:
@@ -226,65 +225,25 @@ http:
         - websecure
       tls:
         certResolver: myresolver
+
+    dashboard-insecure:
+      rule: "Host(`localhost`) && PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+      service: "api@internal"
+      entryPoints:
+        - traefik
 EOF
 
-    # Create dynamic configuration for backend services
-    cat <<'EOF' > /etc/traefik/dynamic/dynamic_conf.yml
-http:
-  routers:
-    granite-embedding-router:
-      rule: "Host(`granite-embedding.internal.thinkheads.ai`)"
-      service: "granite-embedding-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
+    # Generate and copy the dynamic configuration
+    log_info "Generating Traefik dynamic configuration..."
+    local generated_config_path
+    if ! generated_config_path=$("/tmp/phoenix_run/generate_traefik_config.sh"); then
+        log_fatal "Failed to generate Traefik dynamic configuration."
+    fi
 
-    granite-3b-router:
-      rule: "Host(`granite-3b.internal.thinkheads.ai`)"
-      service: "granite-3b-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-
-    ollama-router:
-      rule: "Host(`ollama.internal.thinkheads.ai`)"
-      service: "ollama-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-
-    llamacpp-router:
-      rule: "Host(`llamacpp.internal.thinkheads.ai`)"
-      service: "llamacpp-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-
-  services:
-    granite-embedding-service:
-      loadBalancer:
-        servers:
-          - url: "http://10.0.0.141:8000"
-
-    granite-3b-service:
-      loadBalancer:
-        servers:
-          - url: "http://10.0.0.142:8000"
-
-    ollama-service:
-      loadBalancer:
-        servers:
-          - url: "http://10.0.0.155:11434"
-
-    llamacpp-service:
-      loadBalancer:
-        servers:
-          - url: "http://10.0.0.157:8081"
-EOF
+    log_info "Copying generated dynamic configuration to Traefik container..."
+    if ! cp "$generated_config_path" /etc/traefik/dynamic/dynamic_conf.yml; then
+        log_fatal "Failed to copy generated dynamic configuration to Traefik container."
+    fi
 
     log_info "Traefik configured successfully."
 }

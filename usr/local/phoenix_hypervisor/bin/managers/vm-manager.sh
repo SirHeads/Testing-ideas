@@ -235,18 +235,22 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
-        log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
-        manage_snapshots "$VMID" "pre-features"
+        log_info "Step 7: Applying firewall rules for VM $VMID..."
+        apply_firewall_rules "$VMID"
         log_info "Step 7: Completed."
 
-        log_info "Step 8: Applying features to VM $VMID..."
-        apply_vm_features "$VMID"
+        log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
+        manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
 
-
-        log_info "Step 9: Managing post-feature snapshots for VM $VMID..."
-        manage_snapshots "$VMID" "post-features"
+        log_info "Step 9: Applying features to VM $VMID..."
+        apply_vm_features "$VMID"
         log_info "Step 9: Completed."
+
+
+        log_info "Step 10: Managing post-feature snapshots for VM $VMID..."
+        manage_snapshots "$VMID" "post-features"
+        log_info "Step 10: Completed."
 
 
     fi
@@ -818,6 +822,71 @@ manage_snapshots() {
     fi
 
     log_info "Snapshot '$snapshot_name' created successfully."
+}
+
+# =====================================================================================
+# Function: apply_firewall_rules
+# Description: Applies firewall rules to a VM based on its declarative configuration.
+# Arguments:
+#   $1 - The VMID of the VM to configure.
+# =====================================================================================
+apply_firewall_rules() {
+    local VMID="$1"
+    log_info "Applying firewall rules to VM $VMID..."
+
+    local firewall_config
+    firewall_config=$(jq -r ".vms[] | select(.vmid == $VMID) | .firewall // {}" "$VM_CONFIG_FILE")
+
+    if [ -z "$firewall_config" ] || [ "$(echo "$firewall_config" | jq '. | length')" -eq 0 ]; then
+        log_info "No firewall configuration found for VM $VMID. Skipping."
+        return 0
+    fi
+
+    local firewall_enabled
+    firewall_enabled=$(echo "$firewall_config" | jq -r '.enabled // "false"')
+    if [ "$firewall_enabled" != "true" ]; then
+        log_info "Firewall is not enabled for VM $VMID. Skipping."
+        return 0
+    fi
+
+    local rules
+    rules=$(echo "$firewall_config" | jq -c '.rules[]?')
+    if [ -z "$rules" ]; then
+        log_info "No firewall rules defined for VM $VMID."
+        return 0
+    fi
+
+    # Clear existing rules to ensure an idempotent state
+    local existing_rules
+    existing_rules=$(pvesh get /nodes/$(hostname)/qemu/${VMID}/firewall/rules --output-format=json | jq -r '.[].pos')
+    for pos in $existing_rules; do
+        log_info "Deleting existing firewall rule at position $pos for VM $VMID..."
+        pvesh delete /nodes/$(hostname)/qemu/${VMID}/firewall/rules/$pos
+    done
+
+    echo "$rules" | while read -r rule; do
+        local type=$(echo "$rule" | jq -r '.type')
+        local action=$(echo "$rule" | jq -r '.action')
+        local source=$(echo "$rule" | jq -r '.source // ""')
+        local dest=$(echo "$rule" | jq -r '.dest // ""')
+        local proto=$(echo "$rule" | jq -r '.proto // ""')
+        local port=$(echo "$rule" | jq -r '.port // ""')
+        local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+        local cmd="pvesh create /nodes/$(hostname)/qemu/${VMID}/firewall/rules --type ${type} --action ${action} --enable 1"
+        [ -n "$source" ] && cmd+=" --source ${source}"
+        [ -n "$dest" ] && cmd+=" --dest ${dest}"
+        [ -n "$proto" ] && cmd+=" --proto ${proto}"
+        [ -n "$port" ] && cmd+=" --dport ${port}"
+        [ -n "$comment" ] && cmd+=" --comment \"${comment}\""
+
+        log_info "Executing: $cmd"
+        if ! eval "$cmd"; then
+            log_fatal "Failed to apply firewall rule for VM $VMID: $rule"
+        fi
+    done
+
+    log_info "Firewall rules applied successfully for VM $VMID."
 }
 
 # =====================================================================================

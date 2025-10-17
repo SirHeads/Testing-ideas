@@ -412,6 +412,33 @@
             "boot_delay": 5,
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow HTTP traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow HTTPS traffic"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.101",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Nginx to proxy to Portainer"
+                    }
+                ]
+            },
             "zfs_volumes": [
                 {
                     "name": "nginx_logs",
@@ -572,6 +599,27 @@
             "dependencies": [
                 "103"
             ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.13",
+                        "proto": "udp",
+                        "port": "53",
+                        "comment": "Allow outbound DNS queries"
+                    }
+                ]
+            },
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,

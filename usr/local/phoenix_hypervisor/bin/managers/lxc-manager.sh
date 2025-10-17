@@ -449,6 +449,74 @@ apply_configurations() {
 }
 
 # =====================================================================================
+# Function: apply_firewall_rules
+# Description: Configures the firewall for a given container based on the rules
+#              defined in the LXC configuration file.
+# Arguments:
+#   $1 - The CTID of the container.
+# Returns:
+#   None. Exits with a fatal error if firewall configuration fails.
+# =====================================================================================
+apply_firewall_rules() {
+    local CTID="$1"
+    log_info "Applying firewall rules for CTID: $CTID"
+
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
+    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
+
+    if [ "$firewall_enabled" != "true" ]; then
+        log_info "Firewall is not enabled for CTID $CTID. Ensuring it is disabled in $conf_file."
+        if grep -q "^firewall:" "$conf_file"; then
+            sed -i '/^firewall:/d' "$conf_file"
+        fi
+        return 0
+    fi
+
+    log_info "Enabling firewall for CTID $CTID in $conf_file..."
+    if grep -q "^firewall:" "$conf_file"; then
+        sed -i 's/^firewall:.*/firewall: 1/' "$conf_file"
+    else
+        echo "firewall: 1" >> "$conf_file"
+    fi
+
+    # Clear existing rules to ensure a clean slate
+    local existing_rules=$(pct firewall get "$CTID" --output-format=json | jq -r '.[].pos')
+    for pos in $existing_rules; do
+        run_pct_command firewall del "$CTID" --pos "$pos" || log_warn "Could not delete rule at pos $pos. It may have been removed already."
+    done
+
+    local rules=$(jq_get_value "$CTID" ".firewall.rules // [] | .[]" || echo "")
+    if [ -z "$rules" ]; then
+        log_info "No firewall rules to apply for CTID $CTID."
+        return 0
+    fi
+
+    local pos=0
+    for rule_config in $(echo "$rules" | jq -c '.'); do
+        local type=$(echo "$rule_config" | jq -r '.type')
+        local action=$(echo "$rule_config" | jq -r '.action')
+        local source=$(echo "$rule_config" | jq -r '.source // ""')
+        local dest=$(echo "$rule_config" | jq -r '.dest // ""')
+        local proto=$(echo "$rule_config" | jq -r '.proto // ""')
+        local port=$(echo "$rule_config" | jq -r '.port // ""')
+        local comment=$(echo "$rule_config" | jq -r '.comment // ""')
+
+        local rule_string="${type} ${action}"
+        [ -n "$source" ] && rule_string+=",source=${source}"
+        [ -n "$dest" ] && rule_string+=",dest=${dest}"
+        [ -n "$proto" ] && rule_string+=",proto=${proto}"
+        [ -n "$port" ] && rule_string+=",dport=${port}"
+        [ -n "$comment" ] && rule_string+=",descr=\"${comment}\""
+
+        log_info "Adding firewall rule at pos ${pos}: ${rule_string}"
+        run_pct_command firewall add "$CTID" --pos "$pos" --rule "$rule_string" || log_fatal "Failed to add firewall rule: ${rule_string}"
+        pos=$((pos + 1))
+    done
+
+    log_info "Firewall rules applied successfully for CTID $CTID."
+}
+
+# =====================================================================================
 # Function: ensure_container_defined
 # Description: This function is a key part of the idempotent state machine. It checks if a
 #              container with the specified CTID already exists. If it does, the function
@@ -839,11 +907,29 @@ run_application_script() {
     log_info "Temporary directory verified successfully."
 
     # 2. Copy common_utils.sh to the container
-
+    log_info "Copying common utilities to $CTID:$common_utils_dest_path..."
+    if ! pct push "$CTID" "$common_utils_source_path" "$common_utils_dest_path"; then
+        log_fatal "Failed to copy common_utils.sh to container $CTID."
+    fi
+ 
     # 3. Copy the application script to the container
     log_info "Copying application script to $CTID:$app_script_dest_path..."
     if ! pct push "$CTID" "$app_script_path" "$app_script_dest_path"; then
         log_fatal "Failed to copy application script to container $CTID."
+    fi
+
+    # Also copy the Traefik config generator script if it's the Traefik container
+    if [ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]; then
+        local traefik_generator_script_path="${PHOENIX_BASE_DIR}/bin/generate_traefik_config.sh"
+        local traefik_generator_dest_path="${temp_dir_in_container}/generate_traefik_config.sh"
+        log_info "Copying Traefik config generator to $CTID:$traefik_generator_dest_path..."
+        if ! pct push "$CTID" "$traefik_generator_script_path" "$traefik_generator_dest_path"; then
+            log_fatal "Failed to copy Traefik config generator to container $CTID."
+        fi
+        log_info "Making Traefik config generator executable in container..."
+        if ! pct exec "$CTID" -- chmod +x "$traefik_generator_dest_path"; then
+            log_fatal "Failed to make Traefik config generator executable in container $CTID."
+        fi
     fi
 
     # --- START OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
@@ -894,7 +980,7 @@ run_application_script() {
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
             local traefik_config_path="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
             if [ -f "$traefik_config_path" ]; then
-                if ! pct push "$CTID" "$traefik_config_path" "${temp_dir_in_container}/dynamic_conf.yml"; then
+                if ! pct push "$CTID" "$traefik_config_path" "/etc/traefik/dynamic/dynamic_conf.yml"; then
                     log_fatal "Failed to push Traefik dynamic config to container $CTID."
                 fi
             else
@@ -917,6 +1003,21 @@ run_application_script() {
     log_info "Copying LXC config to $CTID:$lxc_config_dest_path..."
     if ! pct push "$CTID" "$LXC_CONFIG_FILE" "$lxc_config_dest_path"; then
         log_fatal "Failed to copy LXC config file to container $CTID."
+    fi
+
+    # Also copy the VM and hypervisor configs
+    local vm_config_file="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
+    local vm_config_dest_path="${temp_dir_in_container}/phoenix_vm_configs.json"
+    log_info "Copying VM config to $CTID:$vm_config_dest_path..."
+    if ! pct push "$CTID" "$vm_config_file" "$vm_config_dest_path"; then
+        log_fatal "Failed to copy VM config file to container $CTID."
+    fi
+
+    local hypervisor_config_file="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
+    local hypervisor_config_dest_path="${temp_dir_in_container}/phoenix_hypervisor_config.json"
+    log_info "Copying hypervisor config to $CTID:$hypervisor_config_dest_path..."
+    if ! pct push "$CTID" "$hypervisor_config_file" "$hypervisor_config_dest_path"; then
+        log_fatal "Failed to copy hypervisor config file to container $CTID."
     fi
 
     # 4. Make the application script executable
@@ -1255,6 +1356,7 @@ main_lxc_orchestrator() {
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
                 
                 apply_configurations "$ctid"
+                apply_firewall_rules "$ctid"
                 apply_zfs_volumes "$ctid"
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
