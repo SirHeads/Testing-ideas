@@ -187,18 +187,23 @@ create_zfs_pools() {
         # Destructive operation: Wipe disks before creating a new pool.
         log_info "Wiping partitions on drives for pool '$pool_name'..."
         for drive in "${disks_array[@]}"; do
-            if [[ "$EXECUTION_MODE" == "force-destructive" ]]; then
-                log_warn "Wiping partitions on $drive due to 'force-destructive' mode."
-                retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive"
-            elif [[ "$EXECUTION_MODE" == "interactive" ]]; then
-                read -p "WARNING: About to wipe partitions on $drive. Continue? (y/N): " confirm
-                if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            if wipefs "$drive" | grep -q 'zfs_member'; then
+                if [[ "$EXECUTION_MODE" == "force-destructive" ]]; then
+                    log_warn "Wiping existing ZFS signature on $drive due to 'force-destructive' mode."
                     retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive"
-                else
-                    log_fatal "User aborted."
+                elif [[ "$EXECUTION_MODE" == "interactive" ]]; then
+                    read -p "WARNING: Found ZFS signature on $drive. Wipe and continue? (y/N): " confirm
+                    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                        retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive"
+                    else
+                        log_fatal "User aborted."
+                    fi
+                else # safe mode
+                    log_fatal "Found existing ZFS signature on $drive. Aborting in safe mode. Use --mode interactive or --mode force-destructive to override."
                 fi
-            else # safe mode
-                log_fatal "Found existing signatures on $drive. Aborting in safe mode. Use --mode interactive or --mode force-destructive to override."
+            else
+                log_info "No ZFS signature found on $drive. Wiping any other existing signatures."
+                retry_command "wipefs -a $drive" || log_fatal "Failed to wipe partitions on $drive"
             fi
             log_info "Wiped partitions on $drive"
         done
@@ -290,7 +295,7 @@ add_proxmox_storage() {
 
     # Get the desired state from the configuration file.
     local desired_storage_ids=()
-    local zfs_datasets_json=$(echo "$config_json" | jq -c '.zfs.datasets[] | select(.storage_class == "direct")')
+    local zfs_datasets_json=$(echo "$config_json" | jq -c '.zfs.datasets[]')
     while IFS= read -r dataset_config; do
         local dataset_name=$(echo "$dataset_config" | jq -r '.name')
         local pool_name=$(echo "$dataset_config" | jq -r '.pool')

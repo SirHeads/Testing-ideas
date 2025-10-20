@@ -89,15 +89,6 @@ initialize_step_ca() {
     fi
     log_success "Entry added to /etc/hosts successfully."
 
-    # Add internal hostnames to /etc/hosts to ensure proper routing
-    log_info "Adding internal hostnames to /etc/hosts..."
-    cat <<EOF >> /etc/hosts
-10.0.0.153 traefik.internal.thinkheads.ai
-10.0.0.153 granite-embedding.internal.thinkheads.ai
-10.0.0.153 granite-3b.internal.thinkheads.ai
-10.0.0.153 ollama.internal.thinkheads.ai
-10.0.0.153 llamacpp.internal.thinkheads.ai
-EOF
 
    log_info "Dumping content of $CA_CONFIG_FILE after initialization for debugging:"
    cat "$CA_CONFIG_FILE" || log_warn "Could not read $CA_CONFIG_FILE"

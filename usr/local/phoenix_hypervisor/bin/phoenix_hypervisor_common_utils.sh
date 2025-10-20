@@ -481,8 +481,37 @@ pct_exec_silent() {
 #   The configuration value.
 # =====================================================================================
 get_global_config_value() {
-    local jq_query="$1"
-    jq -r "$jq_query" "$HYPERVISOR_CONFIG_FILE"
+    local query="$1"
+    local value
+    value=$(jq -r "${query}" "$HYPERVISOR_CONFIG_FILE")
+
+    if [ -z "$value" ] || [ "$value" == "null" ]; then
+        log_fatal "Configuration value for query '${query}' not found or is null in ${HYPERVISOR_CONFIG_FILE}."
+        exit 1
+    fi
+
+    echo "$value"
+}
+
+# =====================================================================================
+# FUNCTION: get_vm_config_value
+# DESCRIPTION: Retrieves a global configuration value from the vm config file.
+# ARGUMENTS:
+#   $1 - The jq query string.
+# RETURNS:
+#   The configuration value.
+# =====================================================================================
+get_vm_config_value() {
+    local query="$1"
+    local value
+    value=$(jq -r "${query}" "$VM_CONFIG_FILE")
+
+    if [ -z "$value" ] || [ "$value" == "null" ]; then
+        log_fatal "Configuration value for query '${query}' not found or is null in ${VM_CONFIG_FILE}."
+        exit 1
+    fi
+
+    echo "$value"
 }
 
 # =====================================================================================
@@ -551,6 +580,67 @@ jq_get_array() {
 
     if [ "$?" -ne 0 ]; then
         log_error "jq command failed for CTID $ctid with query '${jq_query}'."
+        return 1
+    elif [ -z "$values" ] || [ "$values" == "null" ]; then
+        return 1
+    fi
+
+    echo "$values"
+    return 0
+}
+
+# =====================================================================================
+# Function: jq_get_vm_value
+# Description: A robust wrapper for `jq` that retrieves a specific value from the VM JSON
+#              configuration file for a given VMID.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#   $2 - The `jq` query string to execute.
+#
+# Returns:
+#   The queried value on success, and a non-zero status code on failure.
+# =====================================================================================
+jq_get_vm_value() {
+    local vmid="$1"
+    local jq_query="$2"
+    local value
+
+    log_debug "Executing jq query for VMID $vmid: .vms[] | select(.vmid == ${vmid}) | ${jq_query}"
+    value=$(jq -r --argjson vmid "$vmid" ".vms[] | select(.vmid == \$vmid) | ${jq_query}" "$VM_CONFIG_FILE")
+
+    if [ "$?" -ne 0 ]; then
+        log_error "jq command failed for VMID $vmid with query '${jq_query}'."
+        return 1
+    elif [ -z "$value" ] || [ "$value" == "null" ]; then
+        return 1
+    fi
+
+    echo "$value"
+    return 0
+}
+
+# =====================================================================================
+# Function: jq_get_vm_array
+# Description: A robust wrapper for `jq` that retrieves all elements of a JSON array from the
+#              VM configuration file for a given VMID.
+#
+# Arguments:
+#   $1 - The VMID of the VM.
+#   $2 - The `jq` query string that selects the array.
+#
+# Returns:
+#   The elements of the array, each on a new line.
+# =====================================================================================
+jq_get_vm_array() {
+    local vmid="$1"
+    local jq_query="$2"
+    local values
+
+    values=$(jq -r --argjson vmid "$vmid" ".vms[] | select(.vmid == \$vmid) | ${jq_query}" "$VM_CONFIG_FILE")
+
+    if [ "$?" -ne 0 ]; then
+        log_error "jq command failed for VMID $vmid with query '${jq_query}'."
         return 1
     elif [ -z "$values" ] || [ "$values" == "null" ]; then
         return 1

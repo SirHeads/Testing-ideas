@@ -218,7 +218,7 @@ create_container_from_template() {
         
          # Determine the storage ID for ISOs from the configuration file
          local storage_id
-         storage_id=$(get_global_config_value ".proxmox_storage_ids.fastdata_iso")
+         storage_id=$(get_global_config_value ".proxmox_storage_ids.fastData_shared_iso")
          if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
             log_fatal "Could not determine ISO storage ID from configuration file."
          fi
@@ -319,7 +319,7 @@ clone_container() {
 }
 
 # =====================================================================================
-# Function: apply_configurations
+# Function: apply_lxc_configurations
 # Description: Applies a set of configurations to a newly created or cloned container. This
 #              function is responsible for setting the container's resources (memory, cores),
 #              network settings, and other options based on the values defined in the JSON
@@ -331,7 +331,7 @@ clone_container() {
 # Returns:
 #   None. The function will exit the script with a fatal error if any of the `pct set` commands fail.
 # =====================================================================================
-apply_configurations() {
+apply_lxc_configurations() {
     local CTID="$1"
     log_info "Applying configurations for CTID: $CTID"
     local conf_file="/etc/pve/lxc/${CTID}.conf"
@@ -340,7 +340,7 @@ apply_configurations() {
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
     local features
-    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
+    features=$(jq_get_array "$CTID" ".features[]" || echo "")
     local start_at_boot=$(jq_get_value "$CTID" ".start_at_boot")
     local boot_order=$(jq_get_value "$CTID" ".boot_order")
     local boot_delay=$(jq_get_value "$CTID" ".boot_delay")
@@ -361,10 +361,9 @@ apply_configurations() {
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
-    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
-    if [ -n "$nameservers" ]; then
-        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
-    fi
+    # Force nameserver to be the host, ensuring all guests use the centralized DNS
+    local nameservers="10.0.0.13"
+    run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
  
     # --- Apply AppArmor Profile ---
     # This function handles the application of the AppArmor profile, which is a critical security feature.
@@ -373,7 +372,7 @@ apply_configurations() {
     # --- Apply pct options ---
     # These are Proxmox-specific features that can be enabled on the container.
     local pct_options
-    pct_options=$(jq_get_value "$CTID" ".pct_options // [] | .[]" || echo "")
+    pct_options=$(jq_get_array "$CTID" ".pct_options[]" || echo "")
     if [ -n "$pct_options" ]; then
         log_info "Applying pct options for CTID $CTID..."
         local features_to_set=()
@@ -391,7 +390,7 @@ apply_configurations() {
     # --- Apply lxc options ---
     # These are low-level LXC options that are written directly to the container's configuration file.
     local lxc_options
-    lxc_options=$(jq_get_value "$CTID" ".lxc_options // [] | .[]" || echo "")
+    lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
     if [ -n "$lxc_options" ]; then
         log_info "Applying lxc options for CTID $CTID..."
         local conf_file="/etc/pve/lxc/${CTID}.conf"
@@ -449,7 +448,7 @@ apply_configurations() {
 }
 
 # =====================================================================================
-# Function: apply_firewall_rules
+# Function: apply_lxc_firewall_rules
 # Description: Configures the firewall for a given container based on the rules
 #              defined in the LXC configuration file.
 # Arguments:
@@ -457,63 +456,83 @@ apply_configurations() {
 # Returns:
 #   None. Exits with a fatal error if firewall configuration fails.
 # =====================================================================================
-apply_firewall_rules() {
+apply_lxc_firewall_rules() {
     local CTID="$1"
-    log_info "Applying firewall rules for CTID: $CTID"
+    log_info "Applying firewall rules to LXC $CTID..."
 
-    local conf_file="/etc/pve/lxc/${CTID}.conf"
-    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
+    local firewall_config
+    firewall_config=$(jq_get_value "$CTID" ".firewall" || echo "{}")
+    local firewall_enabled
+    firewall_enabled=$(echo "$firewall_config" | jq -r '.enabled // "false"')
+
+    # Get the current net0 configuration
+    local current_net0
+    current_net0=$(pct config "$CTID" | grep '^net0:' | sed 's/net0: //')
 
     if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for CTID $CTID. Ensuring it is disabled in $conf_file."
-        if grep -q "^firewall:" "$conf_file"; then
-            sed -i '/^firewall:/d' "$conf_file"
+        log_info "Firewall is not enabled for LXC $CTID. Ensuring it is disabled on net0."
+        if [[ "$current_net0" =~ ,firewall=1 ]]; then
+            local new_net0=${current_net0/,firewall=1/}
+            run_pct_command set "$CTID" --net0 "$new_net0"
         fi
         return 0
     fi
 
-    log_info "Enabling firewall for CTID $CTID in $conf_file..."
-    if grep -q "^firewall:" "$conf_file"; then
-        sed -i 's/^firewall:.*/firewall: 1/' "$conf_file"
-    else
-        echo "firewall: 1" >> "$conf_file"
+    log_info "Enabling firewall for LXC $CTID on net0..."
+    if [[ ! "$current_net0" =~ firewall=1 ]]; then
+        run_pct_command set "$CTID" --net0 "${current_net0},firewall=1"
     fi
 
-    # Clear existing rules to ensure a clean slate
-    local existing_rules=$(pct firewall get "$CTID" --output-format=json | jq -r '.[].pos')
-    for pos in $existing_rules; do
-        run_pct_command firewall del "$CTID" --pos "$pos" || log_warn "Could not delete rule at pos $pos. It may have been removed already."
+    # Clear existing rules to ensure an idempotent state
+    log_info "Clearing existing firewall rules for LXC $CTID..."
+    local existing_rules_json
+    existing_rules_json=$(pvesh get /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules --output-format=json 2>/dev/null || echo "[]")
+    # Sort positions in reverse numerical order to avoid re-indexing issues during deletion.
+    local positions
+    positions=$(echo "$existing_rules_json" | jq -r '.[].pos' | sort -rn)
+
+    for pos in $positions; do
+        log_info "Deleting existing firewall rule at position $pos for LXC $CTID..."
+        if ! pvesh delete /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules/"${pos}"; then
+            log_warn "Could not delete rule at position $pos. It may have been removed already."
+        fi
     done
 
-    local rules=$(jq_get_value "$CTID" ".firewall.rules // [] | .[]" || echo "")
+    local rules
+    rules=$(echo "$firewall_config" | jq -c '.rules[]?')
     if [ -z "$rules" ]; then
-        log_info "No firewall rules to apply for CTID $CTID."
+        log_info "No new firewall rules to apply for LXC $CTID."
         return 0
     fi
 
-    local pos=0
-    for rule_config in $(echo "$rules" | jq -c '.'); do
-        local type=$(echo "$rule_config" | jq -r '.type')
-        local action=$(echo "$rule_config" | jq -r '.action')
-        local source=$(echo "$rule_config" | jq -r '.source // ""')
-        local dest=$(echo "$rule_config" | jq -r '.dest // ""')
-        local proto=$(echo "$rule_config" | jq -r '.proto // ""')
-        local port=$(echo "$rule_config" | jq -r '.port // ""')
-        local comment=$(echo "$rule_config" | jq -r '.comment // ""')
+    echo "$rules" | while read -r rule; do
+        local type=$(echo "$rule" | jq -r '.type')
+        local action=$(echo "$rule" | jq -r '.action')
+        local source=$(echo "$rule" | jq -r '.source // ""')
+        local dest=$(echo "$rule" | jq -r '.dest // ""')
+        local proto=$(echo "$rule" | jq -r '.proto // ""')
+        local port=$(echo "$rule" | jq -r '.port // ""')
+        local comment=$(echo "$rule" | jq -r '.comment // ""')
 
-        local rule_string="${type} ${action}"
-        [ -n "$source" ] && rule_string+=",source=${source}"
-        [ -n "$dest" ] && rule_string+=",dest=${dest}"
-        [ -n "$proto" ] && rule_string+=",proto=${proto}"
-        [ -n "$port" ] && rule_string+=",dport=${port}"
-        [ -n "$comment" ] && rule_string+=",descr=\"${comment}\""
+        local cmd_args=(
+            create /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules
+            --type "${type}"
+            --action "${action}"
+            --enable 1
+        )
+        [ -n "$source" ] && cmd_args+=(--source "${source}")
+        [ -n "$dest" ] && cmd_args+=(--dest "${dest}")
+        [ -n "$proto" ] && cmd_args+=(--proto "${proto}")
+        [ -n "$port" ] && cmd_args+=(--dport "${port}")
+        [ -n "$comment" ] && cmd_args+=(--comment "${comment}")
 
-        log_info "Adding firewall rule at pos ${pos}: ${rule_string}"
-        run_pct_command firewall add "$CTID" --pos "$pos" --rule "$rule_string" || log_fatal "Failed to add firewall rule: ${rule_string}"
-        pos=$((pos + 1))
+        log_info "Executing: pvesh ${cmd_args[*]}"
+        if ! pvesh "${cmd_args[@]}"; then
+            log_fatal "Failed to apply firewall rule for LXC $CTID: $rule"
+        fi
     done
 
-    log_info "Firewall rules applied successfully for CTID $CTID."
+    log_info "Firewall rules applied successfully for LXC $CTID."
 }
 
 # =====================================================================================
@@ -576,7 +595,7 @@ apply_zfs_volumes() {
     log_info "Applying ZFS volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_value "$CTID" ".zfs_volumes // [] | .[]" || echo "")
+    volumes=$(jq_get_array "$CTID" ".zfs_volumes[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No ZFS volumes to apply for CTID $CTID."
         return 0
@@ -622,7 +641,7 @@ apply_dedicated_volumes() {
     log_info "Applying dedicated volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_value "$CTID" ".volumes // [] | .[]" || echo "")
+    volumes=$(jq_get_array "$CTID" ".volumes[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No dedicated volumes to apply for CTID $CTID."
         return 0
@@ -657,7 +676,7 @@ apply_mount_points() {
     log_info "Applying host path mount points for CTID: $CTID..."
 
     local mounts
-    mounts=$(jq_get_value "$CTID" ".mount_points // [] | .[]" || echo "")
+    mounts=$(jq_get_array "$CTID" ".mount_points[]" || echo "")
     # Find the next available mount point index
     local volume_index=0
     while pct config "$CTID" | grep -q "mp${volume_index}:"; do
@@ -788,7 +807,7 @@ apply_features() {
     local CTID="$1"
     log_info "Applying features for CTID: $CTID"
     local features
-    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
+    features=$(jq_get_array "$CTID" ".features[]" || echo "")
     if [ -z "$features" ]; then
         log_info "No features to apply for CTID $CTID."
         return 0
@@ -930,6 +949,14 @@ run_application_script() {
         if ! pct exec "$CTID" -- chmod +x "$traefik_generator_dest_path"; then
             log_fatal "Failed to make Traefik config generator executable in container $CTID."
         fi
+
+        # Also copy the Traefik template file
+        local traefik_template_source_path="${PHOENIX_BASE_DIR}/etc/traefik/traefik.yml.template"
+        local traefik_template_dest_path="${temp_dir_in_container}/traefik.yml.template"
+        log_info "Copying Traefik template to $CTID:$traefik_template_dest_path..."
+        if ! pct push "$CTID" "$traefik_template_source_path" "$traefik_template_dest_path"; then
+            log_fatal "Failed to copy Traefik template to container $CTID."
+        fi
     fi
 
     # --- START OF MODIFICATIONS FOR NGINX AND TRAEFIK CONFIG PUSH ---
@@ -1059,7 +1086,7 @@ run_health_check() {
     log_info "Checking for health check for CTID: $CTID"
     # --- NVIDIA Health Check ---
     local features
-    features=$(jq_get_value "$CTID" ".features // [] | .[]" || echo "")
+    features=$(jq_get_array "$CTID" ".features[]" || echo "")
     if [[ " ${features[*]} " =~ " nvidia " ]]; then
         log_info "NVIDIA feature detected. Running NVIDIA health check..."
         local nvidia_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_nvidia.sh"
@@ -1114,7 +1141,7 @@ run_post_deployment_validation() {
     local CTID="$1"
     log_info "Checking for post-deployment validation for CTID: $CTID"
     local test_suites
-    test_suites=$(jq -r ".lxc_configs.\"$CTID\".tests | keys[]" "$LXC_CONFIG_FILE")
+    test_suites=$(jq_get_array "$CTID" ".tests | keys[]" || echo "")
 
     if [ -z "$test_suites" ]; then
         log_info "No test suites found for CTID $CTID. Skipping post-deployment validation."
@@ -1355,8 +1382,8 @@ main_lxc_orchestrator() {
                 # Ensure the container is stopped before applying configurations that require a restart
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
                 
-                apply_configurations "$ctid"
-                apply_firewall_rules "$ctid"
+                apply_lxc_configurations "$ctid"
+                apply_lxc_firewall_rules "$ctid"
                 apply_zfs_volumes "$ctid"
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
@@ -1441,12 +1468,12 @@ main_lxc_orchestrator() {
                     fi
                     log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
 
-                    # Set correct ownership for the shared SSL directory for unprivileged containers
-                    log_info "Setting ownership of shared SSL directory for unprivileged access..."
-                    if ! chown -R 100000:100000 "$ca_output_dir"; then
-                        log_fatal "Failed to set ownership of shared SSL directory."
+                    # Set correct permissions for the shared SSL directory to ensure readability by all containers
+                    log_info "Setting read permissions on shared SSL directory..."
+                    if ! chmod -R 644 "$ca_output_dir"; then
+                        log_fatal "Failed to set permissions on shared SSL directory."
                     fi
-                    log_success "Ownership of shared SSL directory set successfully."
+                    log_success "Permissions on shared SSL directory set successfully."
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."

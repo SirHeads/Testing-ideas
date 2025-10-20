@@ -132,7 +132,7 @@ orchestrate_vm() {
 
     # --- VMID Validation ---
     log_info "Step 0: Validating VMID $VMID against configuration file..."
-    if ! jq -e ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > /dev/null; then
+    if ! jq_get_vm_value "$VMID" "." > /dev/null; then
         log_fatal "VMID $VMID not found in configuration file: $VM_CONFIG_FILE. Please add a valid VM definition."
     fi
     log_info "Step 0: VMID $VMID found in configuration. Proceeding with orchestration."
@@ -141,7 +141,7 @@ orchestrate_vm() {
     pvesm status
 
     local is_template
-    is_template=$(jq -r ".vms[] | select(.vmid == $VMID) | .is_template" "$VM_CONFIG_FILE")
+    is_template=$(jq_get_vm_value "$VMID" ".is_template" || echo "false")
 
     if [ "$is_template" == "true" ]; then
         log_info "Step 1: Ensuring VM template $VMID is defined..."
@@ -236,7 +236,7 @@ orchestrate_vm() {
         log_info "Step 6: Completed."
 
         log_info "Step 7: Applying firewall rules for VM $VMID..."
-        apply_firewall_rules "$VMID"
+        apply_vm_firewall_rules "$VMID"
         log_info "Step 7: Completed."
 
         log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
@@ -282,14 +282,12 @@ ensure_vm_defined() {
     fi
     log_info "VM $VMID does not exist. Proceeding with creation..."
 
-    local vm_config
-    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
     local clone_from_vmid
-    clone_from_vmid=$(echo "$vm_config" | jq -r '.clone_from_vmid // ""')
+    clone_from_vmid=$(jq_get_vm_value "$VMID" ".clone_from_vmid" || echo "")
     local template
-    template=$(echo "$vm_config" | jq -r '.template // ""')
+    template=$(jq_get_vm_value "$VMID" ".template" || echo "")
     local template_image
-    template_image=$(echo "$vm_config" | jq -r '.template_image // ""')
+    template_image=$(jq_get_vm_value "$VMID" ".template_image" || echo "")
 
     if [ -n "$clone_from_vmid" ]; then
         clone_vm "$VMID"
@@ -320,18 +318,21 @@ create_vm_from_image() {
     fi
 
     local storage_pool
-    storage_pool=$(jq -r ".vm_defaults.storage_pool // \"\"" "$VM_CONFIG_FILE")
+    storage_pool=$(get_vm_config_value ".vm_defaults.storage_pool")
     if [ -z "$storage_pool" ]; then
         log_fatal "Missing 'vm_defaults.storage_pool' in $VM_CONFIG_FILE."
     fi
     local network_bridge
-    network_bridge=$(jq -r ".vm_defaults.network_bridge // \"\"" "$VM_CONFIG_FILE")
+    network_bridge=$(get_vm_config_value ".vm_defaults.network_bridge")
     if [ -z "$network_bridge" ]; then
         log_fatal "Missing 'vm_defaults.network_bridge' in $VM_CONFIG_FILE."
     fi
     
+    log_debug "HYPERVISOR_CONFIG_FILE is set to: $HYPERVISOR_CONFIG_FILE"
+    log_debug "VM_CONFIG_FILE is set to: $VM_CONFIG_FILE"
+    log_debug "Attempting to read .vm_defaults.ubuntu_release"
     local ubuntu_release
-    ubuntu_release=$(jq -r ".vm_defaults.ubuntu_release // \"noble\"" "$HYPERVISOR_CONFIG_FILE")
+    ubuntu_release=$(get_global_config_value ".vm_defaults.ubuntu_release")
     local image_url="https://cloud-images.ubuntu.com/${ubuntu_release}/current/${template_image}"
     local download_path="/tmp/${template_image}"
 
@@ -351,7 +352,7 @@ create_vm_from_image() {
 
     log_info "Creating base VM..."
     local vm_name
-    vm_name=$(jq -r ".vms[] | select(.vmid == $VMID) | .name" "$VM_CONFIG_FILE")
+    vm_name=$(jq_get_vm_value "$VMID" ".name")
     run_qm_command create "$VMID" --name "$vm_name" --memory 2048 --net0 "virtio,bridge=${network_bridge}" --agent 1
 
     log_info "Importing disk to storage pool '$storage_pool'..."
@@ -363,15 +364,17 @@ create_vm_from_image() {
     run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
 
     # Apply nameserver from config if it exists
-    local network_config
-    network_config=$(jq -r ".vms[] | select(.vmid == $VMID) | .network_config // \"\"" "$VM_CONFIG_FILE")
-    if [ -n "$network_config" ]; then
-        local nameserver
-        nameserver=$(echo "$network_config" | jq -r '.nameserver // ""')
-        if [ -n "$nameserver" ]; then
-            log_info "Applying DNS config: DNS=${nameserver}"
-            run_qm_command set "$VMID" --nameserver "$nameserver"
-        fi
+    local nameserver
+    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
+    if [ -n "$nameserver" ]; then
+        log_info "Applying DNS config: DNS=${nameserver}"
+        run_qm_command set "$VMID" --nameserver "$nameserver"
+    fi
+    local searchdomain
+    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
+    if [ -n "$searchdomain" ]; then
+        log_info "Applying DNS config: Search=${searchdomain}"
+        run_qm_command set "$VMID" --searchdomain "$searchdomain"
     fi
 
     rm -f "$download_path"
@@ -387,12 +390,10 @@ clone_vm() {
     local VMID="$1"
     log_info "Cloning VM $VMID..."
 
-    local vm_config
-    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
     local clone_from_vmid
-    clone_from_vmid=$(echo "$vm_config" | jq -r '.clone_from_vmid // ""')
+    clone_from_vmid=$(jq_get_vm_value "$VMID" ".clone_from_vmid" || echo "")
     local new_vm_name
-    new_vm_name=$(echo "$vm_config" | jq -r '.name // ""')
+    new_vm_name=$(jq_get_vm_value "$VMID" ".name" || echo "")
 
     if [ -z "$clone_from_vmid" ]; then
         log_fatal "VM configuration for $VMID is missing the required 'clone_from_vmid' attribute."
@@ -405,37 +406,36 @@ clone_vm() {
     run_qm_command clone "$clone_from_vmid" "$VMID" --name "$new_vm_name" --full
 
     # Apply initial network configurations
-    local network_config
-    network_config=$(echo "$vm_config" | jq -r '.network_config // ""')
-    if [ -n "$network_config" ]; then
-        local ip
-        ip=$(echo "$network_config" | jq -r '.ip // ""')
-        local gw
-        gw=$(echo "$network_config" | jq -r '.gw // ""')
-        local nameserver
-        nameserver=$(echo "$network_config" | jq -r '.nameserver // ""')
-        if [ -z "$ip" ] || [ -z "$gw" ]; then
-            log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
-        fi
-        log_info "Applying initial network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
-        run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
-        if [ -n "$nameserver" ]; then
-            run_qm_command set "$VMID" --nameserver "$nameserver"
-        fi
+    local ip
+    ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
+    local gw
+    gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
+    local nameserver
+    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
+    if [ -z "$ip" ] || [ -z "$gw" ]; then
+        log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
+    fi
+    log_info "Applying initial network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
+    run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
+    if [ -n "$nameserver" ]; then
+        run_qm_command set "$VMID" --nameserver "$nameserver"
+    fi
+    local searchdomain
+    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
+    if [ -n "$searchdomain" ];
+    then
+        log_info "Applying DNS config: Search=${searchdomain}"
+        run_qm_command set "$VMID" --searchdomain "$searchdomain"
     fi
     
     # Apply initial user configurations
-    local user_config
-    user_config=$(echo "$vm_config" | jq -r '.user_config // ""')
-    if [ -n "$user_config" ]; then
-        local username
-        username=$(echo "$user_config" | jq -r '.username // ""')
-        if [ -z "$username" ] || [ "$username" == "null" ]; then
-            log_warn "VM configuration for $VMID has a 'user_config' section but is missing a 'username'. Skipping user configuration."
-        else
-            log_info "Applying initial user config: Username=${username}"
-            run_qm_command set "$VMID" --ciuser "$username"
-        fi
+    local username
+    username=$(jq_get_vm_value "$VMID" ".user_config.username" || echo "")
+    if [ -z "$username" ] || [ "$username" == "null" ]; then
+        log_warn "VM configuration for $VMID has a 'user_config' section but is missing a 'username'. Skipping user configuration."
+    else
+        log_info "Applying initial user config: Username=${username}"
+        run_qm_command set "$VMID" --ciuser "$username"
     fi
 
     log_info "Resizing disk for VM $VMID..."
@@ -452,25 +452,22 @@ apply_core_configurations() {
     local VMID="$1"
     log_info "Applying core configurations to VM $VMID..."
 
-    local vm_config
-    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
-    
     local cores
-    cores=$(jq -r "(.vms[] | select(.vmid == $VMID) | .cores) // .vm_defaults.cores // \"\"" "$VM_CONFIG_FILE")
+    cores=$(jq_get_vm_value "$VMID" ".cores" || get_vm_config_value ".vm_defaults.cores")
     if [ -z "$cores" ]; then
         log_fatal "Core count for VM $VMID is not defined in its config or in vm_defaults."
     fi
     local memory_mb
-    memory_mb=$(jq -r "(.vms[] | select(.vmid == $VMID) | .memory_mb) // .vm_defaults.memory_mb // \"\"" "$VM_CONFIG_FILE")
+    memory_mb=$(jq_get_vm_value "$VMID" ".memory_mb" || get_vm_config_value ".vm_defaults.memory_mb")
     if [ -z "$memory_mb" ]; then
         log_fatal "Memory size for VM $VMID is not defined in its config or in vm_defaults."
     fi
     local start_at_boot
-    start_at_boot=$(echo "$vm_config" | jq -r '.start_at_boot // "false"')
+    start_at_boot=$(jq_get_vm_value "$VMID" ".start_at_boot" || echo "false")
     local boot_order
-    boot_order=$(echo "$vm_config" | jq -r '.boot_order // ""')
+    boot_order=$(jq_get_vm_value "$VMID" ".boot_order" || echo "")
     local boot_delay
-    boot_delay=$(echo "$vm_config" | jq -r '.boot_delay // ""')
+    boot_delay=$(jq_get_vm_value "$VMID" ".boot_delay" || echo "")
 
     log_info "Setting cores to $cores and memory to ${memory_mb}MB for VM $VMID."
     run_qm_command set "$VMID" --cores "$cores"
@@ -499,35 +496,31 @@ apply_network_configurations() {
     local VMID="$1"
     log_info "Applying network configurations to VM $VMID..."
 
-    local vm_config
-    vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
-    local network_config
-    network_config=$(echo "$vm_config" | jq -r '.network_config // ""')
-
-    if [ -n "$network_config" ]; then
-        local ip
-        ip=$(echo "$network_config" | jq -r '.ip // ""')
-        if [ "$ip" == "dhcp" ]; then
-            log_info "Applying network config: IP=dhcp"
-            run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
-        else
-            local gw
-            gw=$(echo "$network_config" | jq -r '.gw // ""')
-            local nameserver="10.0.0.153" # Default to the internal DNS server
-            if [ -z "$ip" ] || [ -z "$gw" ]; then
-                log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
-            fi
-            log_info "Applying network config: IP=${ip}, Gateway=${gw}"
-            run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
+    local ip
+    ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
+    if [ "$ip" == "dhcp" ]; then
+        log_info "Applying network config: IP=dhcp"
+        run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
+    else
+        local gw
+        gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
+        if [ -z "$ip" ] || [ -z "$gw" ]; then
+            log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
         fi
+        log_info "Applying network config: IP=${ip}, Gateway=${gw}"
+        run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
+    fi
+
+    # Apply DNS settings regardless of DHCP or static IP
+    # Force nameserver to be the host, ensuring all guests use the centralized DNS
+    local nameserver="10.0.0.13"
+    local searchdomain
+    log_info "Applying DNS config: DNS=${nameserver}"
+    run_qm_command set "$VMID" --nameserver "$nameserver"
+
     start_vm "$VMID"
     wait_for_guest_agent "$VMID"
-
-
     run_qm_command guest exec "$VMID" -- systemctl restart systemd-networkd
-    else
-        log_info "No network configurations to apply for VM $VMID."
-    fi
 }
 
 # =====================================================================================
@@ -540,17 +533,17 @@ apply_volumes() {
     local VMID="$1"
     log_info "Applying volume configurations to VM $VMID..."
 
-    local volumes
-    volumes=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[]? | select(.type == \"nfs\")" "$VM_CONFIG_FILE")
-    if [ -z "$volumes" ]; then
+    local server
+    server=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .server" || echo "")
+    local path
+    path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" || echo "")
+    local mount_point
+    mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" || echo "")
+
+    if [ -z "$server" ] || [ -z "$path" ] || [ -z "$mount_point" ]; then
         log_info "No NFS volumes defined for VM $VMID. Skipping volume configuration."
         return 0
     fi
-
-    local server mount_point path
-    server=$(echo "$volumes" | jq -r '.server')
-    path=$(echo "$volumes" | jq -r '.path')
-    mount_point=$(echo "$volumes" | jq -r '.mount_point')
 
     log_info "Ensuring NFS source directory exists on hypervisor..."
     # The 'path' from JSON is the absolute path on the hypervisor
@@ -646,7 +639,7 @@ apply_vm_features() {
     log_info "Applying features for VMID: $VMID"
 
     local features
-    features=$(jq -r ".vms[] | select(.vmid == $VMID) | .features[]?" "$VM_CONFIG_FILE")
+    features=$(jq_get_vm_array "$VMID" "(.features // [])[]" || echo "")
 
     if [ -z "$features" ]; then
         log_info "No features to apply for VMID $VMID."
@@ -654,10 +647,10 @@ apply_vm_features() {
     fi
 
     local temp_context_file="/tmp/vm_${VMID}_context.json"
-    jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE" > "$temp_context_file"
+    jq_get_vm_value "$VMID" "." > "$temp_context_file"
 
     local persistent_volume_path
-    persistent_volume_path=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .path" "$VM_CONFIG_FILE" | head -n 1)
+    persistent_volume_path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" | head -n 1)
 
     if [ -z "$persistent_volume_path" ]; then
         log_fatal "No NFS volume found for VM $VMID. Cannot apply features."
@@ -720,13 +713,14 @@ apply_vm_features() {
         fi
 
         local persistent_mount_point
-        persistent_mount_point=$(jq -r ".vms[] | select(.vmid == $VMID) | .volumes[] | select(.type == \"nfs\") | .mount_point" "$VM_CONFIG_FILE" | head -n 1)
+        persistent_mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" | head -n 1)
         local vm_script_dir="${persistent_mount_point}/.phoenix_scripts"
         local vm_script_path="${vm_script_dir}/feature_install_${feature}.sh"
         local log_file_in_vm="/var/log/phoenix_feature_${feature}.log"
 
-        # Make scripts executable
-        run_qm_command guest exec "$VMID" -- /bin/chmod -R +x "$vm_script_dir"
+        # Make scripts executable on the hypervisor before the VM accesses them
+        log_info "Setting executable permissions on scripts in $hypervisor_scripts_dir..."
+        chmod -R +x "$hypervisor_scripts_dir"
 
         # Execute the script asynchronously and capture its PID
         log_info "Executing feature script '$feature' in VM $VMID..."
@@ -804,7 +798,7 @@ manage_snapshots() {
     log_info "Managing snapshots for VMID $VMID at lifecycle point: $lifecycle_point"
 
     local snapshot_name
-    snapshot_name=$(jq -r ".vms[] | select(.vmid == $VMID) | .snapshots.\"$lifecycle_point\" // \"\"" "$VM_CONFIG_FILE")
+    snapshot_name=$(jq_get_vm_value "$VMID" ".snapshots.\"$lifecycle_point\"" || echo "")
 
     if [ -z "$snapshot_name" ]; then
         log_info "No snapshot defined for '$lifecycle_point' for VMID $VMID. Skipping."
@@ -825,68 +819,52 @@ manage_snapshots() {
 }
 
 # =====================================================================================
-# Function: apply_firewall_rules
+# Function: apply_vm_firewall_rules
 # Description: Applies firewall rules to a VM based on its declarative configuration.
 # Arguments:
 #   $1 - The VMID of the VM to configure.
 # =====================================================================================
-apply_firewall_rules() {
+apply_vm_firewall_rules() {
     local VMID="$1"
-    log_info "Applying firewall rules to VM $VMID..."
-
-    local firewall_config
-    firewall_config=$(jq -r ".vms[] | select(.vmid == $VMID) | .firewall // {}" "$VM_CONFIG_FILE")
-
-    if [ -z "$firewall_config" ] || [ "$(echo "$firewall_config" | jq '. | length')" -eq 0 ]; then
-        log_info "No firewall configuration found for VM $VMID. Skipping."
-        return 0
-    fi
+    log_info "Configuring firewall for VM $VMID to be managed by the host..."
 
     local firewall_enabled
-    firewall_enabled=$(echo "$firewall_config" | jq -r '.enabled // "false"')
+    firewall_enabled=$(jq_get_vm_value "$VMID" ".firewall.enabled" || echo "false")
+    local conf_file="/etc/pve/qemu-server/${VMID}.conf"
+
+    if [ ! -f "$conf_file" ]; then
+        log_fatal "VM config file not found at $conf_file."
+    fi
+
     if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for VM $VMID. Skipping."
-        return 0
-    fi
-
-    local rules
-    rules=$(echo "$firewall_config" | jq -c '.rules[]?')
-    if [ -z "$rules" ]; then
-        log_info "No firewall rules defined for VM $VMID."
-        return 0
-    fi
-
-    # Clear existing rules to ensure an idempotent state
-    local existing_rules
-    existing_rules=$(pvesh get /nodes/$(hostname)/qemu/${VMID}/firewall/rules --output-format=json | jq -r '.[].pos')
-    for pos in $existing_rules; do
-        log_info "Deleting existing firewall rule at position $pos for VM $VMID..."
-        pvesh delete /nodes/$(hostname)/qemu/${VMID}/firewall/rules/$pos
-    done
-
-    echo "$rules" | while read -r rule; do
-        local type=$(echo "$rule" | jq -r '.type')
-        local action=$(echo "$rule" | jq -r '.action')
-        local source=$(echo "$rule" | jq -r '.source // ""')
-        local dest=$(echo "$rule" | jq -r '.dest // ""')
-        local proto=$(echo "$rule" | jq -r '.proto // ""')
-        local port=$(echo "$rule" | jq -r '.port // ""')
-        local comment=$(echo "$rule" | jq -r '.comment // ""')
-
-        local cmd="pvesh create /nodes/$(hostname)/qemu/${VMID}/firewall/rules --type ${type} --action ${action} --enable 1"
-        [ -n "$source" ] && cmd+=" --source ${source}"
-        [ -n "$dest" ] && cmd+=" --dest ${dest}"
-        [ -n "$proto" ] && cmd+=" --proto ${proto}"
-        [ -n "$port" ] && cmd+=" --dport ${port}"
-        [ -n "$comment" ] && cmd+=" --comment \"${comment}\""
-
-        log_info "Executing: $cmd"
-        if ! eval "$cmd"; then
-            log_fatal "Failed to apply firewall rule for VM $VMID: $rule"
+        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall."
+        if grep -q "^firewall:" "$conf_file"; then
+            sed -i "s/^firewall:.*/firewall: 0/" "$conf_file"
+        else
+            echo "firewall: 0" >> "$conf_file"
         fi
-    done
+        return 0
+    fi
 
-    log_info "Firewall rules applied successfully for VM $VMID."
+    # Enable the firewall for the VM itself by editing the config file
+    log_info "Enabling firewall flag for VM $VMID in $conf_file..."
+    if grep -q "^firewall:" "$conf_file"; then
+        sed -i "s/^firewall:.*/firewall: 1/" "$conf_file"
+    else
+        echo "firewall: 1" >> "$conf_file"
+    fi
+
+    # Enable firewall on the net0 interface
+    log_info "Enabling firewall on net0 interface for VM $VMID..."
+    local current_net0
+    current_net0=$(qm config "$VMID" | grep '^net0:' | sed 's/net0: //')
+    if [[ ! "$current_net0" =~ firewall=1 ]]; then
+        run_qm_command set "$VMID" --net0 "${current_net0},firewall=1"
+    else
+        log_info "Firewall is already enabled on net0 for VM $VMID."
+    fi
+
+    log_info "VM $VMID is now configured for host-level firewall management. All rules will be applied globally by the hypervisor."
 }
 
 # =====================================================================================

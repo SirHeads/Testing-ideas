@@ -107,6 +107,57 @@ setup_traefik_directories() {
 }
 
 # =====================================================================================
+# Function: create_systemd_service
+# Description: Creates and enables a systemd service for Traefik.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if service setup fails.
+# =====================================================================================
+create_systemd_service() {
+    log_info "Creating systemd service for Traefik..."
+
+    local service_file_content="[Unit]
+Description=Traefik Ingress Controller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${TRAEFIK_INSTALL_DIR}/traefik --configfile=${TRAEFIK_CONFIG_DIR}/traefik.yml
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target"
+
+    # Create a temporary file on the host
+    local temp_service_file
+    temp_service_file=$(mktemp)
+    echo "$service_file_content" > "$temp_service_file"
+
+    log_info "Pushing systemd service file to container..."
+    if ! pct push "$CTID" "$temp_service_file" /etc/systemd/system/traefik.service; then
+        rm "$temp_service_file"
+        log_fatal "Failed to push systemd service file to container $CTID."
+    fi
+    rm "$temp_service_file" # Clean up the temporary file
+
+    log_info "Reloading systemd daemon..."
+    if ! pct exec "$CTID" -- systemctl daemon-reload; then
+        log_fatal "Failed to reload systemd daemon in container $CTID."
+    fi
+
+    log_info "Enabling Traefik service..."
+    if ! pct exec "$CTID" -- systemctl enable traefik; then
+        log_fatal "Failed to enable Traefik service in container $CTID."
+    fi
+
+    log_success "Traefik systemd service created and enabled successfully."
+}
+
+# =====================================================================================
 # Function: main
 # Description: Main entry point for the script.
 # Arguments:
@@ -123,6 +174,7 @@ main() {
 
     install_traefik_binary
     setup_traefik_directories
+    create_systemd_service
 
     log_info "Traefik feature installation completed for CTID $CTID."
 }

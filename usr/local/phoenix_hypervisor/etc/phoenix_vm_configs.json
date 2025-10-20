@@ -61,10 +61,18 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.0/24",
+                        "source": "10.0.0.12",
                         "proto": "tcp",
                         "port": "9443",
                         "comment": "Allow Traefik to access Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Proxmox host to access Portainer API"
                     }
                 ]
             }
@@ -129,6 +137,20 @@
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "6333",
+                        "comment": "Allow access to Qdrant HTTP API"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "6334",
+                        "comment": "Allow access to Qdrant gRPC API"
                     }
                 ]
             }

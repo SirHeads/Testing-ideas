@@ -85,14 +85,6 @@ bootstrap_step_ca() {
     fi
     log_info "CA entry added to /etc/hosts."
 
-    # Add internal hostnames to /etc/hosts to ensure proper routing
-    log_info "Adding internal hostnames to /etc/hosts..."
-    cat <<EOF >> /etc/hosts
-10.0.0.101 granite-embedding.internal.thinkheads.ai
-10.0.0.101 granite-3b.internal.thinkheads.ai
-10.0.0.101 ollama.internal.thinkheads.ai
-10.0.0.101 llamacpp.internal.thinkheads.ai
-EOF
 
     # Retrieve CA fingerprint from the mounted root certificate
     local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
@@ -149,48 +141,12 @@ configure_traefik() {
     rm -rf /etc/traefik/dynamic
     mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
 
-    # Create traefik.yml
-    cat <<EOF > /etc/traefik/traefik.yml
-global:
-  checkNewVersion: false
-  sendAnonymousUsage: false
+    # Copy the Traefik template and replace the CA_URL placeholder
+    log_info "Copying Traefik configuration template..."
+    cp "/tmp/phoenix_run/traefik.yml.template" "/etc/traefik/traefik.yml" || log_fatal "Failed to copy Traefik template."
 
-log:
-  level: INFO
-
-ping:
-  entryPoint: "traefik"
-
-api:
-  dashboard: true
-
-entryPoints:
-  web:
-    address: ":80"
-  websecure:
-    address: ":443"
-  traefik:
-    address: ":8080"
-
-providers:
-  file:
-    directory: /etc/traefik/dynamic
-    watch: true
-
-serversTransport:
-  rootCAs:
-    - "/ssl/phoenix_ca.crt"
-
-certificatesResolvers:
-  myresolver:
-    acme:
-      email: admin@thinkheads.ai
-      storage: /etc/traefik/acme.json
-      caServer: ${CA_URL}/acme/acme/directory
-      keyType: EC384
-      httpChallenge:
-        entryPoint: web
-EOF
+    log_info "Injecting CA URL into Traefik configuration..."
+    sed -i "s|__CA_URL__|${CA_URL}|g" "/etc/traefik/traefik.yml" || log_fatal "Failed to inject CA URL."
  
      # Force a fresh certificate request by deleting the old acme.json
      log_info "Removing existing acme.json to force fresh certificate request..."
@@ -233,19 +189,8 @@ http:
         - traefik
 EOF
 
-    # Generate and copy the dynamic configuration
-    log_info "Generating Traefik dynamic configuration..."
-    local generated_config_path
-    if ! generated_config_path=$("/tmp/phoenix_run/generate_traefik_config.sh"); then
-        log_fatal "Failed to generate Traefik dynamic configuration."
-    fi
-
-    log_info "Copying generated dynamic configuration to Traefik container..."
-    if ! cp "$generated_config_path" /etc/traefik/dynamic/dynamic_conf.yml; then
-        log_fatal "Failed to copy generated dynamic configuration to Traefik container."
-    fi
-
-    log_info "Traefik configured successfully."
+    # Dynamic configuration is now handled by the sync_all command at the host level.
+    log_info "Traefik static configuration complete."
 }
 
 # =====================================================================================
@@ -261,13 +206,16 @@ setup_traefik_service() {
 
     # Create the systemd service file content
     local SERVICE_CONTENT="[Unit]
-Description=Traefik Proxy
-After=network.target
+Description=Traefik Ingress Controller
+After=network-online.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
+Type=simple
+ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yml
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
-User=root
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target"

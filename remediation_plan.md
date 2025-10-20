@@ -1,33 +1,48 @@
-# Storage Architecture Remediation Plan
+# Phoenix Hypervisor Remediation Plan
 
-## 1. Issue
+## 1. Executive Summary
 
-The hypervisor setup process is plagued by a combination of architectural flaws, race conditions, and stale configurations. The core issues are:
+This document outlines the plan to remediate the critical networking failure in the Phoenix Hypervisor environment. The root cause has been identified as incorrect, hardcoded `/etc/hosts` entries in the setup scripts for the Traefik (LXC 102) and Step-CA (LXC 103) containers. These entries bypass the intended dual-horizon DNS architecture, causing a complete breakdown in communication between the core networking services, preventing certificate issuance and internal service routing.
 
-1.  **Incorrect Storage Management:** The `hypervisor_feature_setup_zfs.sh` script was incorrectly treating all ZFS datasets as direct Proxmox storage, including those intended for shared access via NFS and Samba.
-2.  **Race Conditions:** The setup scripts were not waiting for critical services like NFS to be fully operational before dependent services tried to use them.
-3.  **Stale Configurations:** Previous failed setup attempts have left behind incorrect and non-functional storage definitions within Proxmox, causing "unreachable" errors on subsequent runs.
+The proposed solution is to remove the faulty `/etc/hosts` entries from the setup scripts and ensure that all components rely on the central `dnsmasq` server in the Nginx Gateway container (LXC 101) for all DNS resolution.
 
-## 2. Remediation
+## 2. Problem Analysis
 
-A comprehensive refactor of the storage setup process will be implemented to address these issues.
+The investigation revealed the following critical issues:
 
-### 2.1. Declarative Configuration (`phoenix_hypervisor_config.json`)
+*   **LXC 103 (Step-CA):** The setup script `phoenix_hypervisor_lxc_103.sh` incorrectly adds `/etc/hosts` entries that point internal service hostnames to the Nginx gateway's IP (`10.0.0.153`) instead of their actual IPs. This causes the CA to fail when trying to validate ACME challenges.
+*   **LXC 102 (Traefik):** The setup script `phoenix_hypervisor_lxc_102.sh` adds incorrect `/etc/hosts` entries, pointing backend services to the wrong IP (`10.0.0.101`). This prevents Traefik from discovering and routing traffic to the correct backend services.
 
-*   The `storage_class` property will be used to differentiate between `"direct"` and `"shared"` storage, ensuring that only appropriate datasets are managed by Proxmox.
+These misconfigurations create a situation where the core networking components cannot communicate with each other correctly, leading to the observed failures.
 
-### 2.2. Declarative ZFS Script (`hypervisor_feature_setup_zfs.sh`)
+## 3. Remediation Steps
 
-*   The `add_proxmox_storage` function will be rewritten to be fully declarative. It will:
-    1.  Read the desired state of `"direct"` storage from the configuration file.
-    2.  Get the current state of storage from Proxmox.
-    3.  Remove any storage configurations that exist in Proxmox but are not in the desired state.
-    4.  Add or update storage configurations to match the desired state.
+The following steps will be taken to resolve the issue:
 
-### 2.3. Service Readiness (`hypervisor-manager.sh`)
+1.  **Modify `phoenix_hypervisor_lxc_103.sh`:**
+    *   Remove the section that adds incorrect hostnames to the `/etc/hosts` file.
+    *   Ensure the container's DNS resolver is correctly configured to point to the Nginx gateway (`10.0.0.153`).
 
-*   A `wait_for_nfs_ready` function will be added to the `hypervisor-manager.sh` script to resolve the race condition, ensuring that the NFS service is fully operational before the ZFS script runs.
+2.  **Modify `phoenix_hypervisor_lxc_102.sh`:**
+    *   Remove the section that adds incorrect hostnames to the `/etc/hosts` file.
+    *   Ensure the container's DNS resolver is correctly configured to point to the Nginx gateway (`10.0.0.153`).
 
-## 3. Expected Outcome
+3.  **Redeploy Networking Containers:**
+    *   Destroy and recreate the core networking containers (LXC 101, 102, and 103) using the `phoenix-cli` to apply the corrected setup scripts.
 
-After applying these changes, the `phoenix setup` command will be robust, idempotent, and architecturally sound. It will correctly configure the storage, remove any stale configurations, and complete successfully without race conditions.
+## 4. Implementation Plan
+
+The remediation will be implemented by the **Code** mode, which will perform the following actions:
+
+1.  Use `apply_diff` to remove the incorrect `/etc/hosts` entries from `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_103.sh`.
+2.  Use `apply_diff` to remove the incorrect `/etc/hosts` entries from `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_102.sh`.
+3.  Provide instructions to the user on how to redeploy the networking containers using the `phoenix-cli`.
+
+## 5. Expected Outcome
+
+Upon successful completion of this remediation plan, the Phoenix Hypervisor environment will be fully functional:
+
+*   All containers will correctly use the central `dnsmasq` server for DNS resolution.
+*   The Step-CA will be able to successfully issue and validate certificates for all internal services.
+*   Traefik will be able to correctly discover and route traffic to all backend services.
+*   The entire system will be aligned with the intended dual-horizon DNS architecture, ensuring a stable and scalable networking environment.

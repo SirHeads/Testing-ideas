@@ -435,12 +435,13 @@ main() {
         if [ "$VERB" == "converge" ]; then
             log_info "Converging target '$target'. Routing to manager for 'create'..."
             if is_lxc_target "$target"; then
-                source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "create" "$target"
+                "$MANAGER_DIR/lxc-manager.sh" "create" "$target"
             elif is_vm_target "$target"; then
                 "$MANAGER_DIR/vm-manager.sh" "create" "$target"
             else
                 log_warn "Target '$target' is not a valid LXC or VM. Skipping convergence."
             fi
+            log_info "Finished converging target '$target'."
             continue # Move to the next target
         fi
 
@@ -461,10 +462,10 @@ main() {
         log_info "Processing target '$target' for action '$VERB'..."
         if is_lxc_target "$target"; then
             log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."
-            source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "$VERB" "$target"
+            "$MANAGER_DIR/lxc-manager.sh" "$VERB" "$target"
         elif is_vm_target "$target"; then
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
-            source "$MANAGER_DIR/vm-manager.sh" && main_vm_orchestrator "$VERB" "$target"
+            "$MANAGER_DIR/vm-manager.sh" "$VERB" "$target"
         else
             # Handle non-guest targets (e.g., setup commands)
             case "$VERB" in

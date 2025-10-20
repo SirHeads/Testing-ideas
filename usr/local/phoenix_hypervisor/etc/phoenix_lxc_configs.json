@@ -34,7 +34,27 @@
             "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
-            "enable_lifecycle_snapshots": true
+            "enable_lifecycle_snapshots": true,
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "icmp",
+                        "source": "10.0.0.0/24",
+                        "comment": "Allow ICMP from internal network"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "22",
+                        "source": "10.0.0.0/24",
+                        "comment": "Allow SSH from internal network"
+                    }
+                ]
+            }
         },
         "901": {
             "name": "Copy-Cuda12.8",
@@ -272,9 +292,10 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
+                        "source": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "8000"
+                        "port": "8000",
+                        "comment": "Allow Traefik to access granite-embedding"
                     }
                 ]
             },
@@ -374,7 +395,20 @@
             "apparmor_manages_nesting": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "8000",
+                        "comment": "Allow Traefik to access granite-3.3-8b-fp8"
+                    }
+                ]
+            }
         },
         "101": {
             "name": "Nginx-Phoenix",
@@ -432,10 +466,18 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.101",
+                        "dest": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "9443",
-                        "comment": "Allow Nginx to proxy to Portainer"
+                        "port": "443",
+                        "comment": "Allow Nginx to proxy to Traefik"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Nginx to proxy ACME challenges to Traefik"
                     }
                 ]
             },
@@ -490,7 +532,20 @@
             "apparmor_manages_nesting": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "11434",
+                        "comment": "Allow Traefik to access ollama-gpu0"
+                    }
+                ]
+            }
         },
         "917": {
             "name": "llamacpp-gpu0",
@@ -526,7 +581,20 @@
             "apparmor_manages_nesting": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "8081",
+                        "comment": "Allow Traefik to access llamacpp-gpu0"
+                    }
+                ]
+            }
         },
         "103": {
             "name": "Step-CA",
@@ -560,6 +628,19 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
+            "firewall": {
+                "enabled": true,
+                "rules": [
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Step-CA to perform ACME challenges with Traefik"
+                    }
+                ]
+            },
             "zfs_volumes": [
                 {
                     "name": "step_ca_ssl",
@@ -605,6 +686,22 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Nginx to proxy to Traefik"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Nginx to proxy ACME challenges to Traefik"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
                         "source": "10.0.0.10",
                         "proto": "tcp",
                         "port": "443",
@@ -617,6 +714,46 @@
                         "proto": "udp",
                         "port": "53",
                         "comment": "Allow outbound DNS queries"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.101",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Traefik to proxy to Portainer"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.141",
+                        "proto": "tcp",
+                        "port": "8000",
+                        "comment": "Allow Traefik to proxy to granite-embedding"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.142",
+                        "proto": "tcp",
+                        "port": "8000",
+                        "comment": "Allow Traefik to proxy to granite-3.3-8b-fp8"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.155",
+                        "proto": "tcp",
+                        "port": "11434",
+                        "comment": "Allow Traefik to proxy to ollama-gpu0"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.157",
+                        "proto": "tcp",
+                        "port": "8081",
+                        "comment": "Allow Traefik to proxy to llamacpp-gpu0"
                     }
                 ]
             },

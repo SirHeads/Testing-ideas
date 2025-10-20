@@ -32,9 +32,34 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # --- Main Logic ---
+generate_rule_string() {
+    local rule_json="$1"
+    local type=$(echo "$rule_json" | jq -r '.type // ""')
+    local action=$(echo "$rule_json" | jq -r '.action // ""')
+    local proto=$(echo "$rule_json" | jq -r '.proto // ""')
+    local source=$(echo "$rule_json" | jq -r '.source // ""')
+    local dest=$(echo "$rule_json" | jq -r '.dest // ""')
+    local port=$(echo "$rule_json" | jq -r '.port // ""')
+    local comment=$(echo "$rule_json" | jq -r '.comment // ""')
+
+    local rule_string="${type^^} ${action}"
+    [ -n "$proto" ] && rule_string+=" -p ${proto}"
+    [ -n "$source" ] && rule_string+=" -source ${source}"
+    [ -n "$dest" ] && rule_string+=" -dest ${dest}"
+    [ -n "$port" ] && rule_string+=" -dport ${port}"
+    [ -n "$comment" ] && rule_string+=" # ${comment}"
+    
+    echo "$rule_string"
+}
+
 main() {
     local HYPERVISOR_CONFIG_FILE="$1"
     log_info "Configuring global firewall settings..."
+
+    local PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
+    local LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
+    local VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
+    local STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 
     # Read the desired firewall state from the declarative configuration file.
     local firewall_enabled=$(jq -r '.shared_volumes.firewall.enabled' "$HYPERVISOR_CONFIG_FILE")
@@ -69,7 +94,49 @@ EOF
     # Append the [RULES] section to the temporary file
     echo "" >> "$TMP_FW_CONFIG"
     echo "[RULES]" >> "$TMP_FW_CONFIG"
-    jq -r '.shared_volumes.firewall.global_firewall_rules[] | "\(.type|ascii_upcase) \(.action) -p \(.proto)" + (if .source and .source != "" and .source != "null" then " -source \(.source)" else "" end) + (if .dest and .dest != "" and .dest != "null" then " -dest \(.dest)" else "" end) + (if .port and .port != "" and .port != "null" then " -dport \(.port)" else "" end) + " # \(.comment)"' "$HYPERVISOR_CONFIG_FILE" >> "$TMP_FW_CONFIG"
+
+    # 1. Add global rules from hypervisor config
+    log_info "Aggregating global firewall rules..."
+    jq -c '.shared_volumes.firewall.global_firewall_rules[]?' "$HYPERVISOR_CONFIG_FILE" | while read -r rule; do
+        generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
+    done
+
+    # 2. Add rules from LXC configs
+    log_info "Aggregating LXC firewall rules..."
+    jq -c '.lxc_configs[].firewall.rules[]?' "$LXC_CONFIG_FILE" | while read -r rule; do
+        generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
+    done
+
+    # 3. Add rules from VM configs
+    log_info "Aggregating VM firewall rules..."
+    jq -c '.vms[].firewall.rules[]?' "$VM_CONFIG_FILE" | while read -r rule; do
+        generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
+    done
+
+    # 4. Add rules from Docker Compose files via VM assignments
+    log_info "Aggregating Docker stack firewall rules..."
+    jq -c '.vms[] | select(.docker_stacks)?' "$VM_CONFIG_FILE" | while read -r vm; do
+        local vm_ip=$(echo "$vm" | jq -r '.network_config.ip' | cut -d'/' -f1)
+        echo "$vm" | jq -c '.docker_stacks[]?' | while read -r stack_ref; do
+            local stack_name=$(echo "$stack_ref" | jq -r '.name')
+            local compose_path=$(jq -r ".docker_stacks.\"$stack_name\".compose_file_path" "$STACKS_CONFIG_FILE")
+            
+            if [ -f "${PHOENIX_BASE_DIR}/${compose_path}" ]; then
+                # Use yq to parse docker-compose.yml for ports, with jq-compatible syntax
+                cat "${PHOENIX_BASE_DIR}/${compose_path}" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
+                    # Format is either "HOST:CONTAINER" or just "CONTAINER"
+                    local host_port=$(echo "$port_mapping" | cut -d':' -f1)
+                    local rule=$(jq -n \
+                        --arg dest "$vm_ip" \
+                        --arg port "$host_port" \
+                        '{type: "in", action: "ACCEPT", proto: "tcp", source: "10.0.0.12", dest: $dest, port: $port, comment: "Allow Traefik to access Docker stack '\'$stack_name\''"}')
+                    generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
+                done
+            else
+                log_warn "Compose file not found for stack '$stack_name': ${PHOENIX_BASE_DIR}/${compose_path}"
+            fi
+        done
+    done
 
     # Replace the existing firewall configuration with the new one
     log_info "Applying new firewall configuration from temporary file..."

@@ -1,0 +1,41 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+ping:
+  entryPoint: "traefik"
+
+api:
+  dashboard: true
+
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+  traefik:
+    address: ":8080"
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+serversTransports:
+  portainer-transport:
+    serverName: "portainer.phoenix.thinkheads.ai"
+    rootCAs:
+      - "/ssl/phoenix_ca.crt"
+
+certificatesResolvers:
+  myresolver:
+    acme:
+      email: admin@thinkheads.ai
+      storage: /etc/traefik/acme.json
+      caServer: __CA_URL__/acme/acme/directory
+      keyType: EC384
+      httpChallenge:
+        entryPoint: web
