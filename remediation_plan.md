@@ -1,48 +1,67 @@
-# Phoenix Hypervisor Remediation Plan
+# VM Template Creation Remediation Plan
 
 ## 1. Executive Summary
 
-This document outlines the plan to remediate the critical networking failure in the Phoenix Hypervisor environment. The root cause has been identified as incorrect, hardcoded `/etc/hosts` entries in the setup scripts for the Traefik (LXC 102) and Step-CA (LXC 103) containers. These entries bypass the intended dual-horizon DNS architecture, causing a complete breakdown in communication between the core networking services, preventing certificate issuance and internal service routing.
+The `phoenix create 9000` command is failing due to a network deadlock during the `cloud-init` process in new VMs. The root cause is the absence of the `qemu-guest-agent` in the base cloud image, which prevents the hypervisor from configuring the network. Without a network, the VM cannot download the agent, leading to a timeout.
 
-The proposed solution is to remove the faulty `/etc/hosts` entries from the setup scripts and ensure that all components rely on the central `dnsmasq` server in the Nginx Gateway container (LXC 101) for all DNS resolution.
+This plan outlines the necessary changes to the `vm-manager.sh` script to inject the guest agent *before* the VM is created, ensuring reliable network initialization and resolving the issue.
 
-## 2. Problem Analysis
+## 2. Analysis of the Root Cause
 
-The investigation revealed the following critical issues:
+The core of the problem lies in the `create_vm_from_image` function within `usr/local/phoenix_hypervisor/bin/managers/vm-manager.sh`. The current implementation downloads a fresh Ubuntu cloud image and immediately creates a VM from it.
 
-*   **LXC 103 (Step-CA):** The setup script `phoenix_hypervisor_lxc_103.sh` incorrectly adds `/etc/hosts` entries that point internal service hostnames to the Nginx gateway's IP (`10.0.0.153`) instead of their actual IPs. This causes the CA to fail when trying to validate ACME challenges.
-*   **LXC 102 (Traefik):** The setup script `phoenix_hypervisor_lxc_102.sh` adds incorrect `/etc/hosts` entries, pointing backend services to the wrong IP (`10.0.0.101`). This prevents Traefik from discovering and routing traffic to the correct backend services.
+The orchestration logic correctly waits for the guest agent to become responsive before proceeding with network configuration. However, the agent is not present in the base image and is scheduled to be installed by `cloud-init`. This creates a classic deadlock:
 
-These misconfigurations create a situation where the core networking components cannot communicate with each other correctly, leading to the observed failures.
+1.  **Orchestrator:** "I need the guest agent to be running before I can configure the network."
+2.  **Cloud-Init:** "I need a network connection before I can download and install the guest agent."
 
-## 3. Remediation Steps
+This deadlock causes the `wait_for_guest_agent` function to time out, leading to the failure of the entire VM creation process.
 
-The following steps will be taken to resolve the issue:
+## 3. Proposed Solution
 
-1.  **Modify `phoenix_hypervisor_lxc_103.sh`:**
-    *   Remove the section that adds incorrect hostnames to the `/etc/hosts` file.
-    *   Ensure the container's DNS resolver is correctly configured to point to the Nginx gateway (`10.0.0.153`).
+The solution is to modify the `create_vm_from_image` function to mirror the logic found in the older `provision_cloud_template.sh` script. This involves two key additions:
 
-2.  **Modify `phoenix_hypervisor_lxc_102.sh`:**
-    *   Remove the section that adds incorrect hostnames to the `/etc/hosts` file.
-    *   Ensure the container's DNS resolver is correctly configured to point to the Nginx gateway (`10.0.0.153`).
+1.  **Dependency Check:** Ensure the `libguestfs-tools` package, which provides the necessary `virt-customize` utility, is installed on the hypervisor.
+2.  **Image Customization:** Use `virt-customize` to inject the `qemu-guest-agent` directly into the downloaded cloud image *before* it is used to create the VM.
 
-3.  **Redeploy Networking Containers:**
-    *   Destroy and recreate the core networking containers (LXC 101, 102, and 103) using the `phoenix-cli` to apply the corrected setup scripts.
+This ensures the guest agent is available from the very first boot, breaking the deadlock and allowing the network configuration and `cloud-init` process to complete successfully.
 
-## 4. Implementation Plan
+## 4. Code Changes for `vm-manager.sh`
 
-The remediation will be implemented by the **Code** mode, which will perform the following actions:
+The following `diff` shows the exact changes to be applied to `usr/local/phoenix_hypervisor/bin/managers/vm-manager.sh`.
 
-1.  Use `apply_diff` to remove the incorrect `/etc/hosts` entries from `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_103.sh`.
-2.  Use `apply_diff` to remove the incorrect `/etc/hosts` entries from `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_102.sh`.
-3.  Provide instructions to the user on how to redeploy the networking containers using the `phoenix-cli`.
+```diff
+--- a/usr/local/phoenix_hypervisor/bin/managers/vm-manager.sh
++++ b/usr/local/phoenix_hypervisor/bin/managers/vm-manager.sh
+@@ -338,6 +338,22 @@
+          log_fatal "Failed to download cloud image."
+      fi
+ 
++     # --- Install Dependencies ---
++     # `libguestfs-tools` is required for `virt-customize`.
++     if ! dpkg -l | grep -q "libguestfs-tools"; then
++         log_info "Installing libguestfs-tools..."
++         apt-get update
++         apt-get install -y libguestfs-tools
++     fi
++
++    # --- Customize Image ---
++    # This is a critical step. `virt-customize` allows us to modify the image offline
++    # before it's ever booted. We inject the `qemu-guest-agent`, which is essential
++    # for the Proxmox host to communicate reliably with the guest VM.
++    log_info "Installing qemu-guest-agent into the cloud image..."
++    if ! virt-customize -a "$download_path" --install qemu-guest-agent --run-command 'systemctl enable qemu-guest-agent'; then
++        log_fatal "Failed to customize cloud image."
++    fi
++
+      log_info "Radically simplified VM creation starting..."
+      local vm_name
+      vm_name=$(jq_get_vm_value "$VMID" ".name")
 
-## 5. Expected Outcome
+```
 
-Upon successful completion of this remediation plan, the Phoenix Hypervisor environment will be fully functional:
+## 5. Next Steps
 
-*   All containers will correctly use the central `dnsmasq` server for DNS resolution.
-*   The Step-CA will be able to successfully issue and validate certificates for all internal services.
-*   Traefik will be able to correctly discover and route traffic to all backend services.
-*   The entire system will be aligned with the intended dual-horizon DNS architecture, ensuring a stable and scalable networking environment.
+1.  **Review and Approve:** Please review this plan and the proposed code changes.
+2.  **Apply Changes:** Once approved, I will switch to `code` mode to apply the changes to the `vm-manager.sh` script.
+3.  **Test:** After the changes are applied, you can re-run the `phoenix create 9000` command to verify the fix.

@@ -20,7 +20,8 @@ fi
 
 log_info "Starting base setup feature installation..."
 
-# nfs-common is now installed as part of the template creation.
+# nfs-common is installed as part of the template creation via virt-customize.
+# This script handles the mounting of the persistent storage volume.
 
 # Mount Persistent Storage
 CONTEXT_FILE="$(dirname "$0")/vm_context.json"

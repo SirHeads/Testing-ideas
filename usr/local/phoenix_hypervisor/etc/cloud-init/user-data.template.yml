@@ -66,6 +66,10 @@ runcmd:
 
 # Commands to be run very early in the boot process.
 bootcmd:
+  # --- Definitive Fix: Prevent Kernel Upgrades in Templates ---
+  # Pin the current kernel version to prevent `apt upgrade` from installing a new one,
+  # which would require a reboot and complicate the template creation process.
+  - apt-mark hold $(uname -r)
   # Configures the GRUB bootloader to output boot messages to the serial console.
   # This is essential for debugging boot issues in a headless virtual environment.
   - sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0"/' /etc/default/grub

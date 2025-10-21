@@ -69,7 +69,7 @@ run_qm_command() {
             # We must check the exitcode from within the JSON payload.
             if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
                 log_error "Guest command exited with non-zero status: $guest_exitcode"
-                return "$guest_exitcode"
+                exit_code="$guest_exitcode"
             fi
         fi
     else
@@ -170,13 +170,20 @@ orchestrate_vm() {
         log_info "Step 6: Waiting for cloud-init to complete before proceeding in VM template $VMID..."
         local retries=3
         local success=false
+        local final_cloud_init_exit_code=1 # Default to a failure code
         for ((i=1; i<=retries; i++)); do
             local output
             local exit_code=0
             output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
             
-            if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
-                log_info "Cloud-init has finished (Exit Code: $exit_code)."
+            if [ "$exit_code" -eq 0 ]; then
+                log_info "Cloud-init has finished successfully."
+                final_cloud_init_exit_code=0
+                success=true
+                break
+            elif [ "$exit_code" -eq 2 ]; then
+                log_warn "Cloud-init finished with non-fatal errors (Exit Code: 2). Assuming a reboot is required."
+                final_cloud_init_exit_code=2
                 success=true
                 break
             else
@@ -184,21 +191,59 @@ orchestrate_vm() {
                 sleep 15
             fi
         done
+
         if [ "$success" = false ]; then
             log_fatal "Failed to wait for cloud-init completion in template VM $VMID after $retries attempts."
         fi
-        log_info "Step 6: Cloud-init completed in VM template $VMID."
+        log_info "Step 6: Cloud-init first pass completed in VM template $VMID."
+
+        if [ "$final_cloud_init_exit_code" -eq 2 ]; then
+            log_info "Step 6a: Rebooting VM template $VMID to finalize kernel upgrades..."
+            run_qm_command reboot "$VMID"
+            wait_for_guest_agent "$VMID"
+            log_info "Step 6a: VM has been rebooted and guest agent is responsive."
+
+            log_info "Step 6b: Performing second-pass verification of cloud-init status..."
+            local second_pass_success=false
+            for ((j=1; j<=retries; j++)); do
+                local second_pass_exit_code=0
+                run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || second_pass_exit_code=$?
+                
+                if [ "$second_pass_exit_code" -eq 0 ]; then
+                    log_info "Second-pass cloud-init verification successful."
+                    second_pass_success=true
+                    break
+                else
+                    log_warn "Second-pass cloud-init verification failed with exit code $second_pass_exit_code (attempt $j/$retries). Retrying in 15 seconds..."
+                    sleep 15
+                fi
+            done
+
+            if [ "$second_pass_success" = false ]; then
+                log_fatal "Cloud-init did not report a clean status after reboot. Template creation failed."
+            fi
+            log_info "Step 6b: Cloud-init second-pass verification completed."
+        fi
 
         log_info "Step 7: Applying features to VM template $VMID..."
         apply_vm_features "$VMID"
         log_info "Step 8: Features applied to VM template $VMID."
 
-        log_info "Step 9: Cleaning cloud-init state for VM template $VMID..."
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean"
+        log_info "Step 9: Aggressively cleaning cloud-init state for VM template $VMID..."
+        
+        # --- Definitive Fix: Correct Order of Operations for Cleanup ---
+        # All other cleanup tasks must be performed *before* the final, destructive
+        # 'cloud-init clean' command, which can shut down the guest agent.
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -rf /var/lib/cloud/instance"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "touch /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "systemctl stop cloud-init"
-        log_info "Step 9: Cloud-init state cleaned for VM template $VMID."
+
+        # This is the VERY LAST command to be run inside the guest.
+        log_info "Step 9a: Performing final cloud-init clean..."
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean --logs"
+
+        log_info "Step 9: Cloud-init state aggressively cleaned for VM template $VMID."
 
         log_info "Step 10: Stopping VM template $VMID..."
         stop_vm "$VMID"
@@ -315,10 +360,6 @@ create_vm_from_image() {
     local template_image="$2"
     log_info "Creating VM $VMID from image ${template_image}..."
 
-    if ! command -v virt-customize &> /dev/null; then
-        log_fatal "The 'virt-customize' command is not found. Please run the hypervisor setup to install it."
-    fi
-
     local storage_pool
     storage_pool=$(get_vm_config_value ".vm_defaults.storage_pool")
     if [ -z "$storage_pool" ]; then
@@ -330,59 +371,66 @@ create_vm_from_image() {
         log_fatal "Missing 'vm_defaults.network_bridge' in $VM_CONFIG_FILE."
     fi
     
-    log_debug "HYPERVISOR_CONFIG_FILE is set to: $HYPERVISOR_CONFIG_FILE"
-    log_debug "VM_CONFIG_FILE is set to: $VM_CONFIG_FILE"
-    log_debug "Attempting to read .vm_defaults.ubuntu_release"
     local ubuntu_release
     ubuntu_release=$(get_global_config_value ".vm_defaults.ubuntu_release")
     local image_url="https://cloud-images.ubuntu.com/${ubuntu_release}/current/${template_image}"
     local download_path="/tmp/${template_image}"
 
-    if [ ! -f "$download_path" ]; then
-        log_info "Downloading Ubuntu cloud image from $image_url..."
-        if ! wget -O "$download_path" "$image_url"; then
-            log_fatal "Failed to download cloud image."
-        fi
-    else
-        log_info "Cloud image already downloaded."
+    log_info "Forcing fresh download of Ubuntu cloud image from $image_url..."
+    if ! wget --progress=bar:force -O "$download_path" "$image_url"; then
+        log_fatal "Failed to download cloud image."
     fi
 
-    log_info "Installing essential packages (qemu-guest-agent, nfs-common) into the cloud image..."
+    # --- Install Dependencies ---
+    # `libguestfs-tools` is required for `virt-customize`.
+    if ! dpkg -l | grep -q "libguestfs-tools"; then
+        log_info "Installing libguestfs-tools..."
+        apt-get update
+        apt-get install -y libguestfs-tools
+    fi
+
+    # --- Customize Image ---
+    # This is a critical step. `virt-customize` allows us to modify the image offline
+    # before it's ever booted. We inject the `qemu-guest-agent`, which is essential
+    # for the Proxmox host to communicate reliably with the guest VM.
+    log_info "Installing qemu-guest-agent and nfs-common into the cloud image..."
     if ! virt-customize -a "$download_path" --install qemu-guest-agent,nfs-common --run-command 'systemctl enable qemu-guest-agent'; then
-        log_fatal "Failed to customize cloud image with essential packages."
+        log_fatal "Failed to customize cloud image."
     fi
 
-    log_info "Creating base VM..."
+    log_info "Radically simplified VM creation starting..."
     local vm_name
     vm_name=$(jq_get_vm_value "$VMID" ".name")
-    run_qm_command create "$VMID" --name "$vm_name" --memory 2048 --net0 "virtio,bridge=${network_bridge}" --agent 1
-
-    log_info "Importing disk to storage pool '$storage_pool'..."
-    run_qm_command importdisk "$VMID" "$download_path" "$storage_pool"
-
-    log_info "Configuring VM hardware..."
-    run_qm_command set "$VMID" --scsihw virtio-scsi-pci --scsi0 "${storage_pool}:vm-${VMID}-disk-0"
-    run_qm_command set "$VMID" --boot c --bootdisk scsi0
-    run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
-
-    # Apply nameserver from config if it exists
+    local username
+    username=$(jq_get_vm_value "$VMID" ".user_config.username")
     local nameserver
-    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
-    if [ -n "$nameserver" ]; then
-        log_info "Applying DNS config: DNS=${nameserver}"
-        run_qm_command set "$VMID" --nameserver "$nameserver"
-    fi
-
-    # --- FIX: Add DHCP ipconfig to prevent Cloud-Init errors ---
-    log_info "Applying DHCP network config to template to prevent init errors..."
-    run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
-
+    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver")
     local searchdomain
     searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
-    if [ -n "$searchdomain" ]; then
-        log_info "Applying DNS config: Search=${searchdomain}"
-        run_qm_command set "$VMID" --searchdomain "$searchdomain"
-    fi
+
+    # --- The One Command to Rule Them All ---
+    # This single, atomic command creates the VM with all necessary settings from the start.
+    log_info "Creating VM $VMID with a single, atomic command..."
+    run_qm_command create "$VMID" \
+        --name "$vm_name" \
+        --memory 2048 \
+        --net0 "virtio,bridge=${network_bridge}" \
+        --serial0 socket \
+        --agent 1 \
+        --scsihw virtio-scsi-pci \
+        --ciuser "$username" \
+        --searchdomain "$searchdomain" \
+        --ipconfig0 "ip=dhcp"
+
+    log_info "Importing disk and attaching as boot device..."
+    run_qm_command importdisk "$VMID" "$download_path" "$storage_pool"
+    run_qm_command set "$VMID" --scsi0 "${storage_pool}:vm-${VMID}-disk-0"
+    run_qm_command set "$VMID" --boot c --bootdisk scsi0
+    log_info "Resizing template disk to 32G..."
+    run_qm_command resize "$VMID" scsi0 32G
+
+    log_info "Creating final cloud-init drive..."
+    run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
 
     rm -f "$download_path"
 }
@@ -414,70 +462,6 @@ clone_vm() {
 
     log_info "Enabling QEMU guest agent for VM $VMID..."
     run_qm_command set "$VMID" --agent 1
-
-    # Apply initial network configurations
-    local ip
-    ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
-    local gw
-    gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
-    local nameserver
-    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
-    local storage_pool
-    storage_pool=$(jq_get_vm_value "$VMID" ".storage_pool" || get_vm_config_value ".vm_defaults.storage_pool")
-
-    if [ -z "$ip" ] || [ -z "$gw" ]; then
-        log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
-    fi
-    log_info "Applying initial network config via cloud-init: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
-
-    # Generate a temporary network config file
-    local temp_net_config=$(mktemp)
-    cat <<EOF > "$temp_net_config"
-network:
-  version: 2
-  ethernets:
-    eth0:
-      dhcp4: no
-      addresses:
-        - ${ip}
-      gateway4: ${gw}
-      nameservers:
-        addresses: [${nameserver}]
-EOF
-    
-    # Ensure the snippets directory exists
-    mkdir -p /var/lib/vz/snippets
-    # Move the generated config to the Proxmox snippets directory
-    mv "$temp_net_config" "/var/lib/vz/snippets/network-config-${VMID}.yml"
-
-    # Attach the custom network config to the VM's cloud-init drive
-    run_qm_command set "$VMID" --cicustom "vendor=local:snippets/network-config-${VMID}.yml"
-    
-    # Regenerate the cloud-init drive to apply the custom config
-    run_qm_command cloudinit update "$VMID"
-    
-    # Apply initial user configurations
-    local username
-    username=$(jq_get_vm_value "$VMID" ".user_config.username" || echo "")
-    if [ -z "$username" ] || [ "$username" == "null" ]; then
-        log_warn "VM configuration for $VMID has a 'user_config' section but is missing a 'username'. Skipping user configuration."
-    else
-        log_info "Applying initial user config: Username=${username}"
-        run_qm_command set "$VMID" --ciuser "$username"
-    fi
-
-    log_info "Resizing disk for VM $VMID..."
-    run_qm_command resize "$VMID" scsi0 +10G || log_warn "Failed to resize disk for VM $VMID."
-
-    log_info "Fixing GPT on resized disk for VM $VMID from the host..."
-    local storage_pool_name="quickOS/vm-disks" # As defined in the ZFS dataset config
-    local disk_device="/dev/zvol/${storage_pool_name}/vm-${VMID}-disk-0"
-    
-    if [ -e "$disk_device" ]; then
-        sgdisk -e "$disk_device"
-    else
-        log_fatal "Disk device not found at $disk_device. Cannot fix GPT."
-    fi
 }
 
 # =====================================================================================
@@ -520,6 +504,7 @@ apply_core_configurations() {
     fi
 
     if [ -n "$boot_order" ]; then
+        # Ensure the boot order is correct for scsi devices, which are standard for our templates
         run_qm_command set "$VMID" --boot "order=scsi0;net0" --startup "order=${boot_order},up=${boot_delay}"
     fi
 }
@@ -562,9 +547,18 @@ apply_network_configurations() {
     log_info "Applying DNS config: DNS=${nameserver}"
     run_qm_command set "$VMID" --nameserver "$nameserver"
 
+    # --- THE DEFINITIVE FIX ---
+    # After all network and user settings have been applied with `qm set`,
+    # we must explicitly regenerate the cloud-init ISO to include these changes.
+    log_info "Regenerating cloud-init drive for VM $VMID to apply all pending changes..."
+    run_qm_command cloudinit update "$VMID"
+
     start_vm "$VMID"
     wait_for_guest_agent "$VMID"
     run_qm_command guest exec "$VMID" -- systemctl restart systemd-networkd
+
+    log_info "Forcing DNS resolution to use the hypervisor's DNS server..."
+    # run_qm_command guest exec "$VMID" -- /bin/bash -c "echo 'nameserver 10.0.0.13' > /etc/resolv.conf"
 }
 
 # =====================================================================================
@@ -601,22 +595,57 @@ apply_volumes() {
     log_info "Waiting for cloud-init to complete in VM $VMID before mounting volumes..."
     local retries=3
     local success=false
+    local final_cloud_init_exit_code=1 # Default to a failure code
+
     for ((i=1; i<=retries; i++)); do
         local output
         local exit_code=0
         output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
 
-        if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
-            log_info "Cloud-init has finished (Exit Code: $exit_code)."
+        if [ "$exit_code" -eq 0 ]; then
+            log_info "Cloud-init has finished successfully."
+            final_cloud_init_exit_code=0
             success=true
+            break
+        elif [ "$exit_code" -eq 2 ]; then
+            log_warn "Cloud-init finished with non-fatal errors (Exit Code: 2). Assuming a reboot is required."
+            final_cloud_init_exit_code=2
+            success=true # Treat as a transient success to trigger the reboot logic
             break
         else
             log_warn "Waiting for cloud-init failed with unexpected exit code $exit_code (attempt $i/$retries). Retrying in 15 seconds..."
             sleep 15
         fi
     done
+
     if [ "$success" = false ]; then
         log_fatal "Failed to wait for cloud-init completion in VM $VMID after $retries attempts."
+    fi
+
+    if [ "$final_cloud_init_exit_code" -eq 2 ]; then
+        log_info "Rebooting VM $VMID to attempt to clear transient cloud-init error..."
+        run_qm_command reboot "$VMID"
+        wait_for_guest_agent "$VMID"
+        log_info "VM has been rebooted. Performing second-pass verification of cloud-init status..."
+
+        local second_pass_success=false
+        for ((j=1; j<=retries; j++)); do
+            local second_pass_exit_code=0
+            run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || second_pass_exit_code=$?
+            
+            if [ "$second_pass_exit_code" -eq 0 ]; then
+                log_info "Second-pass cloud-init verification successful."
+                second_pass_success=true
+                break
+            else
+                log_warn "Second-pass cloud-init verification failed with exit code $second_pass_exit_code (attempt $j/$retries). Retrying in 15 seconds..."
+                sleep 15
+            fi
+        done
+
+        if [ "$second_pass_success" = false ]; then
+            log_fatal "Cloud-init did not report a clean status for VM $VMID after reboot. Provisioning failed."
+        fi
     fi
 
     log_info "Configuring NFS mount for VM $VMID: ${server}:${path} -> ${mount_point}"

@@ -587,7 +587,7 @@ apply_zfs_volumes() {
     log_info "Applying ZFS volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_array "$CTID" ".zfs_volumes[]" || echo "")
+    volumes=$(jq_get_array "$CTID" "(.zfs_volumes // [])[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No ZFS volumes to apply for CTID $CTID."
         return 0
@@ -633,7 +633,7 @@ apply_dedicated_volumes() {
     log_info "Applying dedicated volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_array "$CTID" ".volumes[]" || echo "")
+    volumes=$(jq_get_array "$CTID" "(.volumes // [])[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No dedicated volumes to apply for CTID $CTID."
         return 0
@@ -668,7 +668,7 @@ apply_mount_points() {
     log_info "Applying host path mount points for CTID: $CTID..."
 
     local mounts
-    mounts=$(jq_get_array "$CTID" ".mount_points[]" || echo "")
+    mounts=$(jq_get_array "$CTID" "(.mount_points // [])[]" || echo "")
     # Find the next available mount point index
     local volume_index=0
     while pct config "$CTID" | grep -q "mp${volume_index}:"; do
@@ -1347,6 +1347,35 @@ apply_apparmor_profile() {
     systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
 # =====================================================================================
+# Function: wait_for_ca_certificate
+# Description: Waits for the Step CA (CTID 103) to generate and export its root certificate.
+#              This is a critical synchronization point for containers that depend on the CA.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if the certificate is not found after a timeout.
+# =====================================================================================
+wait_for_ca_certificate() {
+    log_info "Waiting for Step CA (CTID 103) root certificate..."
+    local ca_root_cert_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+    local max_retries=30 # 30 retries * 10 seconds = 5 minutes timeout
+    local retry_delay=10
+    local attempt=1
+
+    while [ "$attempt" -le "$max_retries" ]; do
+        if [ -f "$ca_root_cert_path" ]; then
+            log_success "Root CA certificate found at $ca_root_cert_path."
+            return 0
+        fi
+        log_info "Attempt $attempt/$max_retries: Root CA certificate not found. Retrying in $retry_delay seconds..."
+        sleep "$retry_delay"
+        attempt=$((attempt + 1))
+    done
+
+    log_fatal "Root CA certificate not found at $ca_root_cert_path after waiting. Cannot proceed."
+}
+
+# =====================================================================================
 # Function: main_lxc_orchestrator
 # Description: The main entry point for the LXC manager script. It parses the
 #              action and CTID, and then executes the appropriate lifecycle
@@ -1365,6 +1394,14 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
+
+            # Check for dependency on Step CA and wait for its certificate if needed
+            local dependencies
+            dependencies=$(jq_get_array "$ctid" "(.dependencies // [])[]" || echo "")
+            if echo "$dependencies" | grep -q "103"; then
+                wait_for_ca_certificate
+            fi
+
             if [ "$ctid" -eq 101 ] || [ "$ctid" -eq 103 ]; then
                 manage_ca_password_on_hypervisor "103"
                 manage_provisioner_password_on_hypervisor "103"
@@ -1461,11 +1498,15 @@ main_lxc_orchestrator() {
                     log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
 
                     # Set correct permissions for the shared SSL directory to ensure readability by all containers
-                    log_info "Setting read permissions on shared SSL directory..."
-                    if ! chmod -R 644 "$ca_output_dir"; then
+                    log_info "Setting directory permissions to 755 (rwxr-xr-x)..."
+                    if ! chmod 755 "$ca_output_dir"; then
                         log_fatal "Failed to set permissions on shared SSL directory."
                     fi
-                    log_success "Permissions on shared SSL directory set successfully."
+                    log_info "Setting certificate file permissions to 644 (rw-r--r--)..."
+                    if ! chmod 644 "$ca_root_cert_dest_path"; then
+                        log_fatal "Failed to set permissions on the root CA certificate."
+                    fi
+                    log_success "Permissions on shared SSL assets set successfully."
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."

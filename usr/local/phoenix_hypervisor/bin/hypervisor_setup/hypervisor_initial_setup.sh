@@ -159,8 +159,8 @@ update_and_upgrade_system() {
 #              and are dependencies for other features.
 # =====================================================================================
 install_core_utilities() {
-    log_info "Installing core utilities (s-tui, samba)..."
-    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools" || log_fatal "Failed to install core utilities"
+    log_info "Installing core utilities (s-tui, samba, yq)..."
+    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools yq" || log_fatal "Failed to install core utilities"
     log_info "Installed core utilities."
 }
 

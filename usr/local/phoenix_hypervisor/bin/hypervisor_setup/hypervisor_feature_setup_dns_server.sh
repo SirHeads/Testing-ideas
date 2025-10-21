@@ -112,9 +112,6 @@ EOF
     # --- END VALIDATION ---
     systemctl enable dnsmasq
 
-    log_info "Switching /etc/resolv.conf to use localhost for DNS..."
-    echo "nameserver 127.0.0.1" > /etc/resolv.conf || log_fatal "Failed to overwrite /etc/resolv.conf."
-
     log_success "dnsmasq server setup completed successfully."
 }
 
