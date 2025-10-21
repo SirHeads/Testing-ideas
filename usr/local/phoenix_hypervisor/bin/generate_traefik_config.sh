@@ -17,37 +17,50 @@ source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
 # --- CONFIGURATION ---
 LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
+HYPERVISOR_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 OUTPUT_FILE="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
-DOMAIN_NAME=$(get_global_config_value '.domain_name')
-INTERNAL_DOMAIN_NAME="internal.${DOMAIN_NAME}"
+INTERNAL_DOMAIN_NAME="internal.thinkheads.ai"
+EXTERNAL_DOMAIN_NAME=$(get_global_config_value '.domain_name')
 
 # --- MAIN LOGIC ---
 main() {
     log_info "--- Starting Traefik Dynamic Configuration Generation ---"
 
     # --- AGGREGATE ALL GUESTS THAT NEED A TRAEFIK ROUTE ---
+    # This query is designed to be resilient. It safely checks for the existence of
+    # traefik_service definitions in both LXC and VM configs. If a guest doesn't
+    # have the definition, it's simply skipped, preventing errors when the system
+    # is in a partially created state.
     local traefik_services_json=$(jq -n \
         --slurpfile vms "$VM_CONFIG_FILE" \
         --slurpfile lxcs "$LXC_CONFIG_FILE" \
         --arg internal_domain "$INTERNAL_DOMAIN_NAME" \
-        --arg portainer_hostname "$(get_global_config_value '.portainer_api.portainer_hostname')" \
-        --arg portainer_port "$(get_global_config_value '.network.portainer_server_port')" \
+        --arg external_domain "$EXTERNAL_DOMAIN_NAME" \
         '
         [
-            # 1. Process Portainer VM
-            ($vms[0].vms[]? | select(.portainer_role == "primary") | {
-                "name": "portainer",
-                "rule": ("Host(`" + $portainer_hostname + "`)"),
-                "url": ("https://\(.network_config.ip | split("/")[0]):" + $portainer_port),
-                "transport": "portainer-transport"
-            }),
-            # 2. Process LXCs with exposed ports
-            ($lxcs[0].lxc_configs | values[]? | select(.ports? and (.ports | length > 0)) | {
-                "name": .name,
-                "rule": ("Host(`" + .name + "." + $internal_domain + "`)"),
-                "url": ("http://\(.network_config.ip | split("/")[0]):\(.ports[0] | split(":")[1])")
-            })
-        ] | flatten | map(select(. != null))
+            # Process VMs
+            ($vms[0].vms[]? | select(.traefik_service? and .traefik_service != null) |
+                . as $vm_config |
+                .traefik_service as $service_def |
+                {
+                    "name": $service_def.name,
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)",
+                    "transport": ($service_def.name + "-transport"),
+                    "serverName": "\($service_def.name).\($internal_domain)"
+                }
+            ),
+            # Process LXCs
+            ($lxcs[0].lxc_configs | values[]? | select(.traefik_service? and .traefik_service != null) |
+                . as $lxc_config |
+                .traefik_service as $service_def |
+                {
+                    "name": $service_def.name,
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
+                }
+            )
+        ]
         '
     )
 
@@ -58,7 +71,7 @@ main() {
         echo "http:"
         echo "  routers:"
         echo "$traefik_services_json" | jq -r '
-            .[] | 
+            .[] |
             "    \(.name)-router:\n" +
             "      rule: \"\(.rule)\"\n" +
             "      service: \"\(.name)-service\"\n" +
@@ -78,6 +91,17 @@ main() {
             "          - url: \"\(.url)\"\n" +
             (if .transport then "        serversTransport: \"\(.transport)\"\n" else "" end) +
             "        passHostHeader: true"
+        '
+
+        echo ""
+        echo "  serversTransports:"
+        echo "$traefik_services_json" | jq -r '
+            .[] | select(.transport) |
+            "    \(.transport):\n" +
+            "      insecureSkipVerify: true\n" +
+            "      serverName: \"\(.serverName)\"\n" +
+            "      rootCAs:\n" +
+            "        - \"/ssl/phoenix_ca.crt\""
         '
     } > "$OUTPUT_FILE"
 

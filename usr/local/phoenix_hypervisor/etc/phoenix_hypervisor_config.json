@@ -321,6 +321,19 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.0/24",
+                    "comment": "Allow all traffic within the internal network"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "iface": "vmbr0",
+                    "comment": "Allow all traffic from the internal bridge (for guest agents, etc.)"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow HTTPS traffic to Nginx gateway"
@@ -441,6 +454,15 @@
                     "proto": "tcp",
                     "port": "80",
                     "comment": "Allow Step-CA to send ACME challenges to Nginx"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "dest": "10.0.0.12",
+                    "proto": "tcp",
+                    "port": "443",
+                    "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges with Traefik"
                 }
             ]
         }

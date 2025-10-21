@@ -22,13 +22,8 @@ entryPoints:
 providers:
   file:
     directory: /etc/traefik/dynamic
+    filename: dynamic_conf.yml
     watch: true
-
-serversTransports:
-  portainer-transport:
-    serverName: "portainer.phoenix.thinkheads.ai"
-    rootCAs:
-      - "/ssl/phoenix_ca.crt"
 
 certificatesResolvers:
   myresolver:
@@ -37,5 +32,4 @@ certificatesResolvers:
       storage: /etc/traefik/acme.json
       caServer: __CA_URL__/acme/acme/directory
       keyType: EC384
-      httpChallenge:
-        entryPoint: web
+      tlsChallenge: {}

@@ -439,6 +439,10 @@
                         "enable_lifecycle_snapshots": {
                             "type": "boolean",
                             "description": "If true, the orchestrator will create 'pre-configured' and 'final-form' snapshots during the create lifecycle."
+                        },
+                        "trigger_sync_on_completion": {
+                            "type": "boolean",
+                            "description": "If true, triggers a 'phoenix sync all' command after this LXC container is successfully created and started during the 'LetsGo' workflow."
                         }
                     },
                     "dns_records": {

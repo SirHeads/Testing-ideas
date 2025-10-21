@@ -126,6 +126,8 @@ orchestrate_vm() {
 
     if [ -n "$config_file_override" ]; then
         VM_CONFIG_FILE="$config_file_override"
+    elif [ -z "$VM_CONFIG_FILE" ]; then
+        log_fatal "VM_CONFIG_FILE environment variable is not set and no override was provided."
     fi
 
     log_info "Starting orchestration for VMID: $VMID"
@@ -370,6 +372,11 @@ create_vm_from_image() {
         log_info "Applying DNS config: DNS=${nameserver}"
         run_qm_command set "$VMID" --nameserver "$nameserver"
     fi
+
+    # --- FIX: Add DHCP ipconfig to prevent Cloud-Init errors ---
+    log_info "Applying DHCP network config to template to prevent init errors..."
+    run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
+
     local searchdomain
     searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
     if [ -n "$searchdomain" ]; then
@@ -405,6 +412,9 @@ clone_vm() {
     log_info "Cloning from VM $clone_from_vmid to new VM $VMID with name '$new_vm_name'."
     run_qm_command clone "$clone_from_vmid" "$VMID" --name "$new_vm_name" --full
 
+    log_info "Enabling QEMU guest agent for VM $VMID..."
+    run_qm_command set "$VMID" --agent 1
+
     # Apply initial network configurations
     local ip
     ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
@@ -412,21 +422,39 @@ clone_vm() {
     gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
     local nameserver
     nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
+    local storage_pool
+    storage_pool=$(jq_get_vm_value "$VMID" ".storage_pool" || get_vm_config_value ".vm_defaults.storage_pool")
+
     if [ -z "$ip" ] || [ -z "$gw" ]; then
         log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
     fi
-    log_info "Applying initial network config: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
-    run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
-    if [ -n "$nameserver" ]; then
-        run_qm_command set "$VMID" --nameserver "$nameserver"
-    fi
-    local searchdomain
-    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
-    if [ -n "$searchdomain" ];
-    then
-        log_info "Applying DNS config: Search=${searchdomain}"
-        run_qm_command set "$VMID" --searchdomain "$searchdomain"
-    fi
+    log_info "Applying initial network config via cloud-init: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
+
+    # Generate a temporary network config file
+    local temp_net_config=$(mktemp)
+    cat <<EOF > "$temp_net_config"
+network:
+  version: 2
+  ethernets:
+    eth0:
+      dhcp4: no
+      addresses:
+        - ${ip}
+      gateway4: ${gw}
+      nameservers:
+        addresses: [${nameserver}]
+EOF
+    
+    # Ensure the snippets directory exists
+    mkdir -p /var/lib/vz/snippets
+    # Move the generated config to the Proxmox snippets directory
+    mv "$temp_net_config" "/var/lib/vz/snippets/network-config-${VMID}.yml"
+
+    # Attach the custom network config to the VM's cloud-init drive
+    run_qm_command set "$VMID" --cicustom "vendor=local:snippets/network-config-${VMID}.yml"
+    
+    # Regenerate the cloud-init drive to apply the custom config
+    run_qm_command cloudinit update "$VMID"
     
     # Apply initial user configurations
     local username
@@ -440,6 +468,16 @@ clone_vm() {
 
     log_info "Resizing disk for VM $VMID..."
     run_qm_command resize "$VMID" scsi0 +10G || log_warn "Failed to resize disk for VM $VMID."
+
+    log_info "Fixing GPT on resized disk for VM $VMID from the host..."
+    local storage_pool_name="quickOS/vm-disks" # As defined in the ZFS dataset config
+    local disk_device="/dev/zvol/${storage_pool_name}/vm-${VMID}-disk-0"
+    
+    if [ -e "$disk_device" ]; then
+        sgdisk -e "$disk_device"
+    else
+        log_fatal "Disk device not found at $disk_device. Cannot fix GPT."
+    fi
 }
 
 # =====================================================================================
@@ -498,14 +536,20 @@ apply_network_configurations() {
 
     local ip
     ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
-    if [ "$ip" == "dhcp" ]; then
+    ip=$(echo -n "$ip" | tr -d '[:cntrl:]') # Sanitize for hidden characters
+
+    if [ -z "$ip" ]; then
+        log_info "No IP address configured for VM $VMID. Skipping IP configuration."
+    elif [ "$ip" == "dhcp" ]; then
         log_info "Applying network config: IP=dhcp"
         run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
     else
         local gw
         gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
-        if [ -z "$ip" ] || [ -z "$gw" ]; then
-            log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
+        gw=$(echo -n "$gw" | tr -d '[:cntrl:]') # Sanitize for hidden characters
+
+        if [ -z "$gw" ]; then
+            log_fatal "VM configuration for $VMID specifies a static IP but is missing a gateway."
         fi
         log_info "Applying network config: IP=${ip}, Gateway=${gw}"
         run_qm_command set "$VMID" --ipconfig0 "ip=${ip},gw=${gw}"
@@ -830,6 +874,7 @@ apply_vm_firewall_rules() {
 
     local firewall_enabled
     firewall_enabled=$(jq_get_vm_value "$VMID" ".firewall.enabled" || echo "false")
+    log_info "Firewall enabled status for VM $VMID from config: '$firewall_enabled'"
     local conf_file="/etc/pve/qemu-server/${VMID}.conf"
 
     if [ ! -f "$conf_file" ]; then
@@ -837,22 +882,30 @@ apply_vm_firewall_rules() {
     fi
 
     if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall."
+        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall by writing 'firewall: 0' to $conf_file"
         if grep -q "^firewall:" "$conf_file"; then
+            log_info "Found existing firewall line in $conf_file. Modifying it."
             sed -i "s/^firewall:.*/firewall: 0/" "$conf_file"
         else
+            log_info "No existing firewall line in $conf_file. Appending it."
             echo "firewall: 0" >> "$conf_file"
         fi
+        log_info "Contents of $conf_file after modification:"
+        cat "$conf_file"
         return 0
     fi
 
     # Enable the firewall for the VM itself by editing the config file
-    log_info "Enabling firewall flag for VM $VMID in $conf_file..."
+    log_info "Enabling firewall flag for VM $VMID by writing 'firewall: 1' to $conf_file..."
     if grep -q "^firewall:" "$conf_file"; then
+        log_info "Found existing firewall line in $conf_file. Modifying it."
         sed -i "s/^firewall:.*/firewall: 1/" "$conf_file"
     else
+        log_info "No existing firewall line in $conf_file. Appending it."
         echo "firewall: 1" >> "$conf_file"
     fi
+    log_info "Contents of $conf_file after modification:"
+    cat "$conf_file"
 
     # Enable firewall on the net0 interface
     log_info "Enabling firewall on net0 interface for VM $VMID..."

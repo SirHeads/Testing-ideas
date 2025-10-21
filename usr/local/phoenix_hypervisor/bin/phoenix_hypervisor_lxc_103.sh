@@ -121,7 +121,8 @@ add_acme_provisioner() {
 
     log_info "Attempting to add ACME provisioner with http-01 challenge enabled..."
     local add_provisioner_output
-    if ! add_provisioner_output=$(/bin/bash -c "STEPDEBUG=1 /usr/bin/step ca provisioner add acme --type ACME --challenge http-01 --ca-url https://$CA_DNS$CA_ADDRESS --root /root/.step/certs/root_ca.crt" 2>&1); then
+    log_info "Attempting to add ACME provisioner with http-01 and tls-alpn-01 challenges enabled..."
+    if ! add_provisioner_output=$(/bin/bash -c "STEPDEBUG=1 /usr/bin/step ca provisioner add acme --type ACME --challenge http-01 --challenge tls-alpn-01 --ca-url https://$CA_DNS$CA_ADDRESS --root /root/.step/certs/root_ca.crt" 2>&1); then
         log_fatal "Failed to add ACME provisioner to Smallstep CA in container $CTID. Output: $add_provisioner_output"
     fi
     log_success "ACME provisioner added successfully. Output: $add_provisioner_output"

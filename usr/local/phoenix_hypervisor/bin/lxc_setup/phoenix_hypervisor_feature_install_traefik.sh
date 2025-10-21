@@ -125,7 +125,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=${TRAEFIK_INSTALL_DIR}/traefik --configfile=${TRAEFIK_CONFIG_DIR}/traefik.yml
-ExecReload=/bin/kill -HUP \$MAINPID
+ExecReload=/usr/bin/pkill -HUP traefik
 Restart=always
 RestartSec=5
 

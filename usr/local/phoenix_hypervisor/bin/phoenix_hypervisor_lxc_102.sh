@@ -112,6 +112,11 @@ bootstrap_step_ca() {
     fi
     log_info "Locally mounted root CA certificate added to trust store successfully."
 
+    # Update the system's CA trust store
+    log_info "Updating system CA trust store..."
+    update-ca-certificates || log_fatal "Failed to update system CA trust store."
+    log_info "System CA trust store updated successfully."
+
     # Bootstrap the step CLI with the CA's URL and fingerprint
     log_info "Bootstrapping step CLI with CA information..."
     log_info "Testing connectivity to Step CA at $CA_URL..."
@@ -138,8 +143,9 @@ configure_traefik() {
     log_info "Configuring Traefik..."
 
     # Wipe and recreate Traefik dynamic configuration directory
-    rm -rf /etc/traefik/dynamic
+    log_info "Ensuring Traefik dynamic configuration directory exists and has correct permissions..."
     mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
+    chmod 755 /etc/traefik/dynamic || log_warn "Failed to set permissions on /etc/traefik/dynamic."
 
     # Copy the Traefik template and replace the CA_URL placeholder
     log_info "Copying Traefik configuration template..."
@@ -202,41 +208,21 @@ EOF
 #   None. Exits with a fatal error if service setup fails.
 # =====================================================================================
 setup_traefik_service() {
-    log_info "Setting up systemd service for Traefik..."
+    log_info "Starting Traefik service..."
 
-    # Create the systemd service file content
-    local SERVICE_CONTENT="[Unit]
-Description=Traefik Ingress Controller
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/traefik --configfile=/etc/traefik/traefik.yml
-ExecReload=/bin/kill -HUP \$MAINPID
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target"
-
-    # Push the service file to the container
-    if ! /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"/etc/systemd/system/traefik.service\""; then
-        log_fatal "Failed to create systemd service file in container $CTID."
-    fi
-
-    # Reload systemd, enable and start the service
-    if ! systemctl daemon-reload; then
-        log_fatal "Failed to reload systemd daemon in container $CTID."
-    fi
-    if ! systemctl enable traefik; then
-        log_fatal "Failed to enable traefik service in container $CTID."
-    fi
     if ! systemctl restart traefik; then
         log_fatal "Failed to restart traefik service in container $CTID."
     fi
+    
+    log_info "Traefik service started. Waiting 5 seconds for initial ACME challenge to complete..."
+    sleep 5
 
-    log_info "Traefik service set up and started successfully."
+    log_info "Restarting Traefik service to ensure it loads the new ACME certificate..."
+    if ! systemctl restart traefik; then
+        log_warn "Failed to perform the final restart of Traefik. The service might be using a fallback certificate."
+    fi
+
+    log_info "Traefik service setup complete."
 }
 
 # =====================================================================================

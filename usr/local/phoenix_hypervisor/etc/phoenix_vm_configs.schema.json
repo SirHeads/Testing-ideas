@@ -278,6 +278,18 @@
                                 "ip"
                             ]
                         }
+                    },
+                    "trigger_sync_on_completion": {
+                        "type": "boolean",
+                        "description": "If true, triggers a 'phoenix sync all' command after this VM is successfully created and started during the 'LetsGo' workflow."
+                    },
+                    "dependencies": {
+                        "type": "array",
+                        "description": "An array of guest IDs that this VM depends on. The orchestrator will ensure these guests are created before this one.",
+                        "items": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                        }
                     }
                 },
                 "required": [

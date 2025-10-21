@@ -120,11 +120,25 @@ EOF
         echo "$vm" | jq -c '.docker_stacks[]?' | while read -r stack_ref; do
             local stack_name=$(echo "$stack_ref" | jq -r '.name')
             local compose_path=$(jq -r ".docker_stacks.\"$stack_name\".compose_file_path" "$STACKS_CONFIG_FILE")
+            local stack_env=$(echo "$stack_ref" | jq -r '.environment')
             
             if [ -f "${PHOENIX_BASE_DIR}/${compose_path}" ]; then
-                # Use yq to parse docker-compose.yml for ports, with jq-compatible syntax
-                cat "${PHOENIX_BASE_DIR}/${compose_path}" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
-                    # Format is either "HOST:CONTAINER" or just "CONTAINER"
+                # Read the compose file content
+                local compose_content=$(cat "${PHOENIX_BASE_DIR}/${compose_path}")
+
+                # Find all variables like ${VAR_NAME} in the compose file
+                local vars_to_replace=$(echo "$compose_content" | grep -oP '\$\{\K[^}]+')
+
+                # Replace each variable with its value from the stacks config
+                for var in $vars_to_replace; do
+                    local var_value=$(jq -r ".docker_stacks.\"$stack_name\".environments.\"$stack_env\".variables[] | select(.name == \"$var\") | .value" "$STACKS_CONFIG_FILE")
+                    if [ -n "$var_value" ]; then
+                        compose_content=$(echo "$compose_content" | sed "s|\${${var}}|${var_value}|g")
+                    fi
+                done
+
+                # Use yq to parse the resolved docker-compose content for ports
+                echo "$compose_content" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
                     local host_port=$(echo "$port_mapping" | cut -d':' -f1)
                     local rule=$(jq -n \
                         --arg dest "$vm_ip" \

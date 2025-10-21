@@ -115,19 +115,11 @@ manage_provisioner_password_on_hypervisor() {
 # =====================================================================================
 validate_inputs() {
     local CTID="$1"
-    shift
-    local config_file_override=""
-    if [ "$1" == "--config" ]; then
-        config_file_override="$2"
-        shift 2
-    fi
 
     log_info "Starting input validation for CTID $CTID..."
     # Check if LXC_CONFIG_FILE environment variable is set
-    if [ -n "$config_file_override" ]; then
-        LXC_CONFIG_FILE="$config_file_override"
-    elif [ -z "$LXC_CONFIG_FILE" ]; then
-        log_fatal "LXC_CONFIG_FILE environment variable is not set and no override was provided."
+    if [ -z "$LXC_CONFIG_FILE" ]; then
+        log_fatal "LXC_CONFIG_FILE environment variable is not set."
     fi
     log_info "LXC_CONFIG_FILE: $LXC_CONFIG_FILE"
 
@@ -372,7 +364,7 @@ apply_lxc_configurations() {
     # --- Apply pct options ---
     # These are Proxmox-specific features that can be enabled on the container.
     local pct_options
-    pct_options=$(jq_get_array "$CTID" ".pct_options[]" || echo "")
+    pct_options=$(jq_get_array "$CTID" ".pct_options // [] | .[]" || echo "")
     if [ -n "$pct_options" ]; then
         log_info "Applying pct options for CTID $CTID..."
         local features_to_set=()
