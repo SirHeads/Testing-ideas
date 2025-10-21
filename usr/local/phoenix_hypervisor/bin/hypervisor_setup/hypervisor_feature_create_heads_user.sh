@@ -94,6 +94,7 @@ main() {
 
     # --- Create 'heads' system user ---
     log_info "Checking for 'heads' system user..."
+    local user_created=false
     # Idempotency check: only create the user if they do not already exist.
     if id "heads" &>/dev/null; then
         log_info "User 'heads' already exists. Skipping creation."
@@ -102,6 +103,7 @@ main() {
         useradd -m -s /bin/bash heads
         if [ $? -eq 0 ]; then
             log_info "Successfully created system user 'heads'."
+            user_created=true
         else
             log_fatal "Failed to create system user 'heads'."
         fi
@@ -153,8 +155,12 @@ main() {
     fi
 
     # --- Set Password Interactively ---
-    # Call the function to handle the interactive password prompt.
-    set_heads_password
+    # Call the function to handle the interactive password prompt only if the user was just created.
+    if [ "$user_created" = true ]; then
+        set_heads_password
+    else
+        log_info "Skipping password prompt as 'heads' user already exists."
+    fi
 
     log_info "'heads' user creation and configuration script completed successfully."
 }

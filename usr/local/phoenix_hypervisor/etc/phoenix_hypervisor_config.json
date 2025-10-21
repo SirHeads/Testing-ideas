@@ -47,7 +47,8 @@
                 "path": "/quickOS/vm-persistent-data",
                 "clients": [
                     "10.0.0.101",
-                    "10.0.0.102"
+                    "10.0.0.102",
+                    "10.0.0.13"
                 ],
                 "options": [
                     "rw",
@@ -179,27 +180,11 @@
                 "storage_class": "shared"
             },
             {
-                "name": "shared-iso",
-                "pool": "fastData",
-                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "dir",
-                "proxmox_content_type": "iso,vztmpl",
-                "storage_class": "shared"
-            },
-            {
                 "name": "shared-bulk-data",
                 "pool": "fastData",
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=1.4T",
                 "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images,rootdir",
-                "storage_class": "shared"
-            },
-            {
-                "name": "fastData-shared-iso",
-                "pool": "fastData",
-                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
-                "proxmox_storage_type": "dir",
-                "proxmox_content_type": "iso,vztmpl",
                 "storage_class": "shared"
             },
             {
@@ -217,6 +202,14 @@
                 "proxmox_storage_type": "zfspool",
                 "proxmox_content_type": "images,rootdir",
                 "storage_class": "shared"
+            },
+            {
+                "name": "shared-iso",
+                "pool": "fastData",
+                "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "iso,vztmpl",
+                "storage_class": "shared"
             }
         ]
     },
@@ -224,7 +217,7 @@
         "quickos_vm": "quickOS-vm-disks",
         "quickos_lxc": "quickOS-lxc-disks",
         "fastData_shared_backups": "fastData-shared-backups",
-        "fastdata_iso": "fastData-shared-iso",
+        "fastData_shared_iso": "fastData-shared-iso",
         "quickos_lxc_persistent_data": "quickOS-lxc-persistent-data"
     },
     "mount_point_base": "/mnt/pve",
@@ -328,6 +321,19 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.0/24",
+                    "comment": "Allow all traffic within the internal network"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "iface": "vmbr0",
+                    "comment": "Allow all traffic from the internal bridge (for guest agents, etc.)"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow HTTPS traffic to Nginx gateway"
@@ -426,6 +432,7 @@
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.12",
+                    "dest": "10.0.0.101",
                     "proto": "tcp",
                     "port": "9443",
                     "comment": "Allow Traefik to access Portainer"
@@ -434,9 +441,28 @@
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.13",
+                    "dest": "10.0.0.101",
                     "proto": "tcp",
                     "port": "9443",
                     "comment": "Allow Proxmox host to access Portainer for health checks"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "dest": "10.0.0.153",
+                    "proto": "tcp",
+                    "port": "80",
+                    "comment": "Allow Step-CA to send ACME challenges to Nginx"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "dest": "10.0.0.12",
+                    "proto": "tcp",
+                    "port": "443",
+                    "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges with Traefik"
                 }
             ]
         }
@@ -461,8 +487,11 @@
                 "records": [
                     {
                         "hostname": "portainer",
-                        "ip_internal": "10.0.0.101",
                         "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "drphoenix",
+                        "ip_external": "10.0.0.102"
                     }
                 ]
             },
@@ -476,6 +505,10 @@
                     {
                         "hostname": "ca",
                         "ip_internal": "10.0.0.10"
+                    },
+                    {
+                        "hostname": "portainer",
+                        "ip_internal": "10.0.0.101"
                     },
                     {
                         "hostname": "granite-embedding",

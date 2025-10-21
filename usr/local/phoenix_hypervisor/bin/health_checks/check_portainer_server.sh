@@ -29,7 +29,9 @@ main() {
 
     # Check 2: Verify that the Portainer server container is running inside the VM
     log_info "Checking if container '${CONTAINER_NAME}' is running in VM ${PORTAINER_VMID}..."
-    if ! qm guest exec "$PORTAINER_VMID" -- /bin/bash -c "docker ps --filter 'name=${CONTAINER_NAME}' --filter 'status=running' | grep -q '${CONTAINER_NAME}'"; then
+    local exit_code=$(qm guest exec "$PORTAINER_VMID" -- /bin/bash -c "docker ps --filter 'name=${CONTAINER_NAME}' --filter 'status=running' | grep -q '${CONTAINER_NAME}'" | jq -r '.exitcode')
+
+    if [ "$exit_code" -ne 0 ]; then
         log_error "Portainer server container '${CONTAINER_NAME}' is not running in VM ${PORTAINER_VMID}."
         log_info "Debug Information:"
         log_info "  - Ensure the 'docker' feature has been successfully applied to VM ${PORTAINER_VMID}."

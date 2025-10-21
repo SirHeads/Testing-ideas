@@ -1,73 +1,48 @@
-# Firewall Audit Report
+# Firewall and Connectivity Audit Plan
 
-## 1. Executive Summary
+## 1. Objective
 
-This report details the firewall architecture and rule-set for the Phoenix Hypervisor environment. The system utilizes Proxmox's built-in firewall (`pve-firewall`), managed through a declarative, Infrastructure-as-Code (IaC) approach. All firewall rules are defined in the central JSON configuration files, ensuring a single source of truth and enabling automated, idempotent application of the security policy.
+To diagnose and confirm the root cause of the network connectivity failures between the Traefik container (LXC 102), the Step-CA container (LXC 103), and the Portainer VM (1001). The primary hypothesis is that Proxmox firewall rules are incorrectly blocking this traffic.
 
-## 2. Architecture Overview
+## 2. Audit Steps
 
-The firewall management is orchestrated by the `phoenix-cli` tool, which applies rules defined in two key files:
+This plan outlines a series of diagnostic commands to be executed to gather a complete picture of the firewall configuration and network state.
 
-*   **`phoenix_hypervisor_config.json`**: Contains the `global_firewall_rules` that apply to the entire Proxmox cluster. This includes baseline rules for essential services like SSH, NFS, and Samba, as well as default policies for inbound and outbound traffic.
-*   **`phoenix_lxc_configs.json`**: Defines container-specific firewall rules. Each container configuration can have its own `firewall` object specifying a set of rules that apply only to that container.
+### Step 1: Inspect Proxmox Cluster Firewall Rules
 
-The `hypervisor_feature_setup_firewall.sh` script, executed during the `phoenix-cli setup` process, is responsible for reading these configurations and writing them to the Proxmox firewall configuration file at `/etc/pve/firewall/cluster.fw`.
+We will dump the live firewall rules from the Proxmox host to verify that the rules defined in the JSON configuration have been correctly applied and that there are no conflicting rules.
 
-This declarative model ensures that the firewall state is version-controlled, auditable, and consistently applied across the environment.
+*   **Command:** `cat /etc/pve/firewall/cluster.fw`
 
-## 3. Firewall Rule Inventory
+### Step 2: Inspect Firewall Settings for Each Guest
 
-This section will provide a detailed inventory of all firewall rules, categorized by their scope (global or container-specific).
+Each VM and container has its own firewall toggle in Proxmox. We need to verify that the firewall is enabled for the networking LXCs and the Portainer VM as intended.
 
-### 3.1. Global Firewall Rules
+*   **Commands:**
+    *   `pct config 101 | grep firewall`
+    *   `pct config 102 | grep firewall`
+    *   `pct config 103 | grep firewall`
+    *   `qm config 1001 | grep firewall`
 
-The following rules are applied to the entire Proxmox cluster and are defined in `phoenix_hypervisor_config.json`. The default policy is to **DROP** all incoming traffic and **ACCEPT** all outgoing traffic.
+### Step 3: Live Network Traffic Analysis
 
-| Direction | Action | Protocol | Port | Source/Destination | Comment |
-|---|---|---|---|---|---|
-| In | ACCEPT | tcp | 80 | - | Allow HTTP traffic to Nginx gateway |
-| In | ACCEPT | tcp | 443 | - | Allow HTTPS traffic to Nginx gateway |
-| In | ACCEPT | tcp | 9001 | dest=10.0.0.102 | Allow Portainer agent communication |
-| In | ACCEPT | tcp | 2049 | - | Allow NFS traffic |
-| In | ACCEPT | udp | 2049 | - | Allow NFS traffic |
-| In | ACCEPT | tcp | 111 | - | Allow rpcbind traffic |
-| In | ACCEPT | udp | 111 | - | Allow rpcbind traffic |
-| In | ACCEPT | tcp | 139 | - | Allow Samba NetBIOS |
-| In | ACCEPT | tcp | 445 | - | Allow Samba SMB |
-| In | ACCEPT | udp | 137 | - | Allow Samba NetBIOS Name Service |
-| In | ACCEPT | udp | 138 | - | Allow Samba NetBIOS Datagram Service |
+We will use `tcpdump` on the Proxmox host to monitor traffic on the `vmbr0` bridge. This will allow us to see in real-time if packets from Traefik (10.0.0.12) to Portainer (10.0.0.101) are being dropped.
 
-### 3.2. Container-Specific Firewall Rules
+*   **Command:** `tcpdump -i vmbr0 -n host 10.0.0.12 and host 10.0.0.101`
+    *   *This command will be run in the background while we attempt to trigger the failing behavior.*
 
-The following rules are defined in `phoenix_lxc_configs.json` and apply to individual containers.
+### Step 4: Re-run Failing Connectivity Test
 
-| CTID | Name | Direction | Action | Protocol | Port | Source/Destination |
-|---|---|---|---|---|---|---|
-| 801 | granite-embedding | In | ACCEPT | tcp | 8000 | source=10.0.0.153 |
-| 101 | Nginx-Phoenix | In | ACCEPT | tcp | 80 | - |
-| 101 | Nginx-Phoenix | In | ACCEPT | tcp | 443 | - |
-| 101 | Nginx-Phoenix | Out | ACCEPT | tcp | 9443 | dest=10.0.0.101 |
-| 102 | Traefik-Internal | In | ACCEPT | tcp | 443 | source=10.0.0.153 |
-| 102 | Traefik-Internal | In | ACCEPT | tcp | 80 | source=10.0.0.153 |
+While `tcpdump` is running, we will re-execute the `curl` command from within the Traefik container that previously timed out. The output of `tcpdump` will tell us if the packets are even reaching their destination or if they are being dropped by the host firewall.
 
-## 4. Analysis and Recommendations
+*   **Command:** `pct exec 102 -- curl -v --cacert /ssl/phoenix_ca.crt https://portainer.internal.thinkheads.ai`
 
-This section will analyze the effectiveness of the current firewall configuration and provide recommendations for potential improvements.
+## 3. Expected Outcome
 
-### 4.1. Strengths
+The output from these commands will provide a definitive answer to the following questions:
 
-*   **Declarative Management:** Managing firewall rules as code is a significant strength, providing auditability and reproducibility.
-*   **Centralized Configuration:** All rules are defined in a central location, making it easy to understand the overall security posture.
-*   **Idempotent Application:** The orchestration scripts ensure that the firewall rules are applied consistently and reliably.
+*   Are the correct firewall rules loaded on the Proxmox host?
+*   Are the firewalls for the individual guests enabled as expected?
+*   Are network packets from Traefik to Portainer being dropped, and if so, at what point?
 
-### 4.2. Areas for Improvement
-
-*   **Implicit Trust Model:** The current global firewall rules are quite permissive for services like NFS and Samba, allowing access from the entire `/24` subnet. While this is convenient for a single-node hypervisor, it represents an implicit trust model that could be hardened.
-*   **Lack of Egress Filtering:** The default outbound policy is `ACCEPT`. While this is common, implementing egress filtering would provide an additional layer of security, preventing unauthorized outbound connections from compromised containers.
-*   **Container-to-Container Traffic:** There are no explicit rules governing traffic between containers on the same bridge. All containers in the `10.0.0.0/24` subnet can communicate with each other unless a specific rule denies it.
-
-### 4.3. Recommendations
-
-*   **Implement a More Granular Trust Model:** For services like NFS and Samba, consider creating more specific rules that only allow access from the IP addresses of the VMs and containers that require it. This would reduce the attack surface if a container were to be compromised.
-*   **Introduce Egress Filtering:** As a long-term goal, consider changing the default outbound policy to `DROP` and creating explicit `ACCEPT` rules for the outbound traffic that is required by each container. This would provide a significant security enhancement.
-*   **Develop a Micro-segmentation Strategy:** For a higher level of security, consider implementing a micro-segmentation strategy that restricts communication between containers to only what is explicitly required. This could be achieved through a combination of more granular firewall rules and network segmentation.
+This information will allow us to formulate a precise and effective remediation plan.

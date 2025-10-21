@@ -30,7 +30,7 @@
             "memory_mb": 8192,
             "disk_size_gb": 32,
             "start_at_boot": true,
-            "boot_order": 1,
+            "boot_order": 4,
             "boot_delay": 2,
             "features": [
                 "base_setup",
@@ -38,6 +38,13 @@
                 "trusted_ca"
             ],
             "portainer_role": "primary",
+            "dependencies": [
+                "102"
+            ],
+            "traefik_service": {
+                "name": "portainer",
+                "port": 9443
+            },
             "network_config": {
                 "ip": "10.0.0.101/24",
                 "gw": "10.0.0.1",
@@ -61,10 +68,18 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.0/24",
+                        "source": "10.0.0.12",
                         "proto": "tcp",
                         "port": "9443",
                         "comment": "Allow Traefik to access Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Proxmox host to access Portainer API"
                     }
                 ]
             }
@@ -77,7 +92,7 @@
             "memory_mb": 4096,
             "disk_size_gb": 64,
             "start_at_boot": true,
-            "boot_order": 2,
+            "boot_order": 5,
             "boot_delay": 2,
             "features": [
                 "base_setup",
@@ -86,6 +101,10 @@
             ],
             "portainer_role": "agent",
             "portainer_environment_name": "portainer-agent",
+            "trigger_sync_on_completion": true,
+            "dependencies": [
+                "1001"
+            ],
             "network_config": {
                 "ip": "10.0.0.102/24",
                 "gw": "10.0.0.1",
@@ -129,6 +148,20 @@
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "6333",
+                        "comment": "Allow access to Qdrant HTTP API"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "6334",
+                        "comment": "Allow access to Qdrant gRPC API"
                     }
                 ]
             }

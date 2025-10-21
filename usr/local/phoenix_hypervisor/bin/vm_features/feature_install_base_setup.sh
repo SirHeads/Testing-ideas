@@ -65,14 +65,14 @@ EOF
 sysctl -p
 log_info "Step 3: IPv6 disabled."
 
-# --- Firewall Configuration for Portainer Roles ---
-log_info "Step 3: Checking for Portainer role to configure firewall..."
-PORTAINER_ROLE=$(jq -r '.portainer_role // "none"' "$CONTEXT_FILE")
-
-if [ "$PORTAINER_ROLE" != "none" ]; then
-    log_info "Step 3: Portainer role '$PORTAINER_ROLE' detected. Configuring firewall..."
-    
-    log_info "Step 3: Firewall configuration is now managed by Proxmox VE. Skipping ufw setup."
+# --- Disable Internal Firewall (ufw) ---
+log_info "Step 4: Disabling internal firewall (ufw) to rely on Proxmox VE firewall..."
+if command -v ufw &> /dev/null; then
+    log_info "ufw is present, disabling it now."
+    ufw disable || log_warn "Failed to disable ufw, but continuing."
+    systemctl stop ufw || log_warn "Failed to stop ufw service, but continuing."
+    systemctl disable ufw || log_warn "Failed to disable ufw service, but continuing."
+    log_info "ufw has been disabled and stopped."
 else
-    log_info "Step 3: No Portainer role. Skipping firewall configuration."
+    log_info "ufw not found, skipping."
 fi

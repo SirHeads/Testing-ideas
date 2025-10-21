@@ -1,163 +1,117 @@
 #!/bin/bash
 #
 # File: generate_traefik_config.sh
-# Description: This script generates a complete Traefik dynamic configuration file
-#              by reading from the central LXC and VM JSON configuration files.
+# Description: This script dynamically generates the Traefik dynamic configuration file
+#              by reading the LXC and VM configuration files. It discovers all services
+#              that need to be exposed via Traefik and creates the necessary routers
+#              and services.
 #
-# Version: 1.0.0
+# Version: 2.0.0
 # Author: Roo
 
-set -e
-
 # --- SCRIPT INITIALIZATION ---
-source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
+source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
 
-# --- Configuration Paths ---
-LXC_CONFIG_FILE="/tmp/phoenix_run/phoenix_lxc_configs.json"
-VM_CONFIG_FILE="/tmp/phoenix_run/phoenix_vm_configs.json"
-HYPERVISOR_CONFIG_FILE="/tmp/phoenix_run/phoenix_hypervisor_config.json"
-OUTPUT_FILE="/tmp/dynamic_conf.yml"
+# --- CONFIGURATION ---
+LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
+VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
+HYPERVISOR_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
+OUTPUT_FILE="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
+INTERNAL_DOMAIN_NAME="internal.thinkheads.ai"
+EXTERNAL_DOMAIN_NAME=$(get_global_config_value '.domain_name')
 
-# --- Main Logic ---
+# --- MAIN LOGIC ---
 main() {
-    log_info "Generating Traefik dynamic configuration..."
+    log_info "--- Starting Traefik Dynamic Configuration Generation ---"
 
-    # Start with a clean file
-    rm -f "$OUTPUT_FILE"
-    touch "$OUTPUT_FILE"
+    # --- AGGREGATE ALL GUESTS THAT NEED A TRAEFIK ROUTE ---
+    # This query is designed to be resilient. It safely checks for the existence of
+    # traefik_service definitions in both LXC and VM configs. If a guest doesn't
+    # have the definition, it's simply skipped, preventing errors when the system
+    # is in a partially created state.
+    local traefik_services_json=$(jq -n \
+        --slurpfile vms "$VM_CONFIG_FILE" \
+        --slurpfile lxcs "$LXC_CONFIG_FILE" \
+        --arg internal_domain "$INTERNAL_DOMAIN_NAME" \
+        --arg external_domain "$EXTERNAL_DOMAIN_NAME" \
+        '
+        [
+            # Process VMs
+            ($vms[0].vms[]? | select(.traefik_service? and .traefik_service != null) |
+                . as $vm_config |
+                .traefik_service as $service_def |
+                {
+                    "name": $service_def.name,
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)",
+                    "transport": ($service_def.name + "-transport"),
+                    "serverName": "\($service_def.name).\($internal_domain)"
+                }
+            ),
+            # Process LXCs
+            ($lxcs[0].lxc_configs | values[]? | select(.traefik_service? and .traefik_service != null) |
+                . as $lxc_config |
+                .traefik_service as $service_def |
+                {
+                    "name": $service_def.name,
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
+                }
+            )
+        ]
+        '
+    )
 
-    # Generate the main http block
-    cat <<EOF > "$OUTPUT_FILE"
-http:
-  routers:
-EOF
+    log_info "Aggregated Traefik services JSON: $(echo "$traefik_services_json" | jq -c)"
 
-    # --- Process LXC Containers ---
-    log_info "Processing LXC configurations..."
-    for ctid in $(jq -r '.lxc_configs | keys[]' "$LXC_CONFIG_FILE"); do
-        local lxc_config=$(jq -r ".lxc_configs.\"$ctid\"" "$LXC_CONFIG_FILE")
-        local name=$(echo "$lxc_config" | jq -r '.name')
-        local ip=$(echo "$lxc_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
-        
-        # Check for services to expose via Traefik (e.g., based on a new "expose" flag or specific names)
-        # For now, we'll hardcode the known services for simplicity
-        case "$name" in
-            "granite-embedding"|"granite-3.3-8b-fp8"|"ollama-gpu0"|"llamacpp-gpu0")
-                local hostname="${name}.internal.thinkheads.ai"
-                local port=$(echo "$lxc_config" | jq -r '.ports[0]' | cut -d':' -f1)
-                
-                cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-router:
-      rule: "Host(\`${hostname}\`)"
-      service: "${name}-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-EOF
-            ;;
-        esac
-    done
+    # --- GENERATE YAML FROM JSON ---
+    {
+        echo "http:"
+        echo "  routers:"
+        echo "$traefik_services_json" | jq -r '
+            .[] |
+            "    \(.name)-router:\n" +
+            "      rule: \"\(.rule)\"\n" +
+            "      service: \"\(.name)-service\"\n" +
+            "      entryPoints:\n" +
+            "        - websecure\n" +
+            "      tls:\n" +
+            "        certResolver: myresolver"
+        '
 
-    # --- Process VMs (for Portainer) ---
-    log_info "Processing VM configurations..."
-    local domain_name=$(jq -r '.domain_name' "$HYPERVISOR_CONFIG_FILE")
+        echo ""
+        echo "  services:"
+        echo "$traefik_services_json" | jq -r '
+            .[] |
+            "    \(.name)-service:\n" +
+            "      loadBalancer:\n" +
+            "        servers:\n" +
+            "          - url: \"\(.url)\"\n" +
+            (if .transport then "        serversTransport: \"\(.transport)\"\n" else "" end) +
+            "        passHostHeader: true"
+        '
+
+        echo ""
+        echo "  serversTransports:"
+        echo "$traefik_services_json" | jq -r '
+            .[] | select(.transport) |
+            "    \(.transport):\n" +
+            "      insecureSkipVerify: true\n" +
+            "      serverName: \"\(.serverName)\"\n" +
+            "      rootCAs:\n" +
+            "        - \"/ssl/phoenix_ca.crt\""
+        '
+    } > "$OUTPUT_FILE"
+
+    log_success "Traefik dynamic configuration generated successfully at ${OUTPUT_FILE}"
     
-    for vmid in $(jq -r '.vms[] | .vmid' "$VM_CONFIG_FILE"); do
-        local vm_config=$(jq -r ".vms[] | select(.vmid == $vmid)" "$VM_CONFIG_FILE")
-        local portainer_role=$(echo "$vm_config" | jq -r '.portainer_role')
-        local name=$(echo "$vm_config" | jq -r '.name')
-
-        if [[ "$portainer_role" == "primary" ]]; then
-            local hostname="portainer.${domain_name}" # Force lowercase to match cert
-            cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-router:
-      rule: "Host(\`${hostname}\`)"
-      service: "${name}-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-EOF
-        elif [[ "$portainer_role" == "agent" ]]; then
-            local hostname="${name}.${domain_name}"
-            cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-router:
-      rule: "Host(\`${hostname}\`)"
-      service: "${name}-service"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-EOF
-        fi
-    done
-
-    # --- Generate Services ---
-    cat <<EOF >> "$OUTPUT_FILE"
-
-  services:
-EOF
-
-    # --- Process LXC Services ---
-    for ctid in $(jq -r '.lxc_configs | keys[]' "$LXC_CONFIG_FILE"); do
-        local lxc_config=$(jq -r ".lxc_configs.\"$ctid\"" "$LXC_CONFIG_FILE")
-        local name=$(echo "$lxc_config" | jq -r '.name')
-        
-        case "$name" in
-            "granite-embedding"|"granite-3.3-8b-fp8"|"ollama-gpu0"|"llamacpp-gpu0")
-                local ip=$(echo "$lxc_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
-                local port=$(echo "$lxc_config" | jq -r '.ports[0]' | cut -d':' -f1)
-                
-                cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-service:
-      loadBalancer:
-        servers:
-          - url: "http://${ip}:${port}"
-EOF
-            ;;
-        esac
-    done
-
-    # --- Process VM Services (Portainer) ---
-    for vmid in $(jq -r '.vms[] | .vmid' "$VM_CONFIG_FILE"); do
-        local vm_config=$(jq -r ".vms[] | select(.vmid == $vmid)" "$VM_CONFIG_FILE")
-        local portainer_role=$(echo "$vm_config" | jq -r '.portainer_role')
-        local name=$(echo "$vm_config" | jq -r '.name')
-        local ip=$(echo "$vm_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
-
-        if [[ "$portainer_role" == "primary" ]]; then
-            cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-service:
-      loadBalancer:
-        servers:
-          - url: "https://${ip}:9443"
-        serversTransport: portainer-transport
-EOF
-        elif [[ "$portainer_role" == "agent" ]]; then
-            cat <<EOF >> "$OUTPUT_FILE"
-    ${name}-service:
-      loadBalancer:
-        servers:
-          - url: "https://${ip}:9001"
-EOF
-        fi
-    done
-
-    # --- Add serversTransports for specific services ---
-    local domain_name=$(jq -r '.domain_name' "$HYPERVISOR_CONFIG_FILE")
-    cat <<EOF >> "$OUTPUT_FILE"
-
-  serversTransports:
-    portainer-transport:
-      serverName: "portainer.${domain_name}"
-EOF
-
-    log_success "Traefik dynamic configuration generated successfully at $OUTPUT_FILE"
-    echo "$OUTPUT_FILE"
+    # --- Add a final check to ensure the file is not empty ---
+    if [ ! -s "$OUTPUT_FILE" ] || [ $(grep -cv '^#' "$OUTPUT_FILE") -le 1 ]; then
+        log_warn "Generated Traefik config is empty or contains no services. Writing a placeholder to prevent Traefik from crashing."
+        echo "http:" > "$OUTPUT_FILE"
+    fi
 }
 
-# If the script is executed directly, call the main function
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
-fi
+main

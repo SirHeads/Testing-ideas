@@ -1,52 +1,97 @@
-# Phoenix Hypervisor Traffic Flow
+# Network Traffic and DNS Resolution Flow Analysis
 
-This document clarifies the flow of network traffic within the Phoenix Hypervisor environment, detailing the protocol used at each hop. Understanding this flow is crucial for troubleshooting and for appreciating the security design.
+This document provides a visual analysis of the intended versus the actual network traffic and DNS resolution flows within the Phoenix Hypervisor environment. The diagrams highlight the critical DNS misconfigurations that are causing the system to fail.
 
-## High-Level Overview
+## Intended Traffic Flow
 
-The network architecture is designed with a "TLS everywhere" philosophy for external and inter-service communication, while using plain HTTP for the final hop to the backend service within the trusted internal mesh.
+This diagram illustrates the correct, intended flow of traffic and DNS resolution, as designed in the architecture.
 
 ```mermaid
 graph TD
-    A[External Client] -- "1. HTTPS" --> B[LXC 101: Nginx Gateway];
-    B -- "2. HTTPS" --> C[LXC 102: Traefik Proxy];
-    C -- "3. HTTP" --> D[Backend Service e.g., Qdrant];
+    subgraph "External Client"
+        A[Client]
+    end
 
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style B fill:#bbf,stroke:#333,stroke-width:2px
-    style C fill:#ccf,stroke:#333,stroke-width:2px
-    style D fill:#cfc,stroke:#333,stroke-width:2px
+    subgraph "Phoenix Hypervisor"
+        subgraph "DNS Resolution"
+            DNS[LXC 101: dnsmasq]
+        end
+
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
+        end
+
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
+
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+        end
+    end
+
+    A -- "1. HTTPS to portainer.phoenix.thinkheads.ai" --> B
+    B -- "2. DNS Query for ca.internal.thinkheads.ai" --> DNS
+    DNS -- "3. Returns 10.0.0.10" --> B
+    B -- "4. Validates Certs with Step-CA" --> D
+    B -- "5. Proxies to traefik.internal.thinkheads.ai" --> C
+    C -- "6. DNS Query for portainer.internal.thinkheads.ai" --> DNS
+    DNS -- "7. Returns 10.0.0.101" --> C
+    C -- "8. Proxies to Portainer" --> E
+
+    style DNS fill:#cde4ff
 ```
 
-## Detailed Step-by-Step Breakdown
+## Actual (Broken) Traffic Flow
 
-### 1. External Client to Nginx Gateway (HTTPS)
+This diagram shows the actual, broken flow caused by the incorrect `/etc/hosts` entries in the setup scripts.
 
-*   **Source:** External Client (e.g., a user's web browser)
-*   **Destination:** LXC 101 (Nginx Gateway) at `10.0.0.153` on port `443`.
-*   **Protocol:** **HTTPS**
-*   **Description:** The client initiates a secure connection to the Nginx gateway. Nginx terminates the TLS connection using a certificate issued by our internal Step-CA. For this to work, the client must trust our internal root CA certificate (`phoenix_ca.crt`).
+```mermaid
+graph TD
+    subgraph "External Client"
+        A[Client]
+    end
 
-### 2. Nginx Gateway to Traefik Proxy (HTTPS)
+    subgraph "Phoenix Hypervisor"
+        subgraph "DNS Resolution (Bypassed)"
+            DNS[LXC 101: dnsmasq]
+        end
 
-*   **Source:** LXC 101 (Nginx Gateway)
-*   **Destination:** LXC 102 (Traefik Proxy) at `10.0.0.12` on port `443`.
-*   **Protocol:** **HTTPS**
-*   **Description:** Nginx re-encrypts the traffic and proxies the request to the Traefik internal mesh. This connection is secured by a certificate that Traefik obtains from the Step-CA. Nginx is able to trust this certificate because the root CA is installed in its trust store.
+        subgraph "Gateway Layer"
+            B[LXC 101: Nginx Gateway]
+        end
 
-### 3. Traefik Proxy to Backend Service (HTTP)
+        subgraph "Internal Service Mesh"
+            C[LXC 102: Traefik Proxy]
+            D[LXC 103: Step-CA]
+        end
 
-*   **Source:** LXC 102 (Traefik Proxy)
-*   **Destination:** Backend Service (e.g., Qdrant in VM 1002 at `10.0.0.102`) on its designated port (e.g., `8000`).
-*   **Protocol:** **HTTP**
-*   **Description:** This is the final hop in the chain. Traefik terminates the TLS connection and forwards the request to the backend service using plain HTTP. This is considered secure because this traffic never leaves the trusted, isolated environment of the Proxmox hypervisor's internal network bridge. This design simplifies the configuration of the backend services, as they do not need to be concerned with TLS termination.
+        subgraph "Application Layer"
+            E[VM 1001: Portainer]
+        end
+    end
 
-## Summary of Encryption Boundaries
+    subgraph "Incorrect /etc/hosts Entries"
+        C_HOSTS["/etc/hosts in LXC 102<br>10.0.0.101 portainer.internal.thinkheads.ai"]
+        D_HOSTS["/etc/hosts in LXC 103<br>10.0.0.153 traefik.internal.thinkheads.ai"]
+    end
 
-*   **Encrypted:**
-    *   Traffic from the external client to the Nginx gateway.
-    *   Traffic from the Nginx gateway to the Traefik proxy.
-*   **Unencrypted:**
-    *   Traffic from the Traefik proxy to the final backend service.
+    A -- "1. HTTPS to portainer.phoenix.thinkheads.ai" --> B
+    B -- "2. Proxies to traefik.internal.thinkheads.ai" --> C
+    C -- "3. ACME Challenge to ca.internal.thinkheads.ai" --> D
+    D -- "4. Tries to validate challenge with traefik.internal.thinkheads.ai" --> B
+    B -- "5. Fails to route challenge" --> D
 
-This hybrid approach provides a strong security posture for all external and inter-service communication, while simplifying the configuration of the individual backend applications.
+    style C_HOSTS fill:#ffcccc
+    style D_HOSTS fill:#ffcccc
+```
+
+## Analysis
+
+The root cause of the failure is the static, incorrect `/etc/hosts` entries being injected into the Traefik and Step-CA containers. This misconfiguration completely bypasses the central `dnsmasq` server, leading to the following critical issues:
+
+1.  **Step-CA (LXC 103) Failure:** The Step-CA container has a hardcoded entry pointing `traefik.internal.thinkheads.ai` to the Nginx gateway's IP (`10.0.0.153`). When Traefik attempts an ACME challenge, the Step-CA tries to validate the challenge by sending a request to the Nginx gateway instead of directly to Traefik. The Nginx gateway is not configured to handle these internal validation requests, causing the ACME challenge to fail.
+2.  **Traefik (LXC 102) Failure:** The Traefik container has hardcoded entries for all backend services, pointing them to the wrong IP address. This prevents Traefik from discovering and routing traffic to the correct services.
+
+The combination of these two failures creates a complete breakdown of the internal networking and certificate management systems. The system is unable to issue or validate certificates, and internal services are unreachable.

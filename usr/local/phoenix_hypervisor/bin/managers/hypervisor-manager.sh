@@ -169,9 +169,9 @@ setup_hypervisor() {
     # Define the sequence of setup scripts to be executed. The order is critical for proper setup.
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
+        "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_setup_firewall.sh"
         "hypervisor_feature_setup_nfs.sh"
-        "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_configure_vfio.sh"
         "hypervisor_feature_install_nvidia.sh"
         "hypervisor_feature_initialize_nvidia_gpus.sh"

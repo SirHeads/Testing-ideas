@@ -1,19 +1,32 @@
-# Phoenix Hypervisor Network Audit Report
+# Live Network Diagnostics Plan
 
-## 1. Introduction
+## 1. Objective
 
-This document provides a comprehensive audit of the network and security architecture of the Phoenix Hypervisor environment. The audit is divided into five key areas, each with its own detailed report.
+To definitively prove, through live network traffic analysis, that the Proxmox host firewall is the root cause of the connectivity failures between the core networking services.
 
-## 2. Table of Contents
+## 2. Diagnostic Steps
 
-*   [SSL Certificate Audit Report](./ssl_audit_report.md)
-*   [Firewall Audit Report](./firewall_audit_report.md)
-*   [Internal Mesh Audit Report](./internal_mesh_audit_report.md)
-*   [External Gateway Audit Report](./external_gateway_audit_report.md)
-*   [DNS Audit Report](./dns_audit_report.md)
+This plan will use `tcpdump` to monitor network traffic in real-time, allowing us to observe the behavior of packets as they traverse the virtual network.
 
-## 3. Summary of Findings
+### Step 1: Start Packet Capture on the Proxmox Host
 
-The Phoenix Hypervisor environment is built on a solid foundation of declarative configuration and automation. The network architecture is well-designed, with a clear separation of concerns between the external gateway, internal service mesh, and backend services.
+We will start a `tcpdump` process on the Proxmox host, specifically listening for traffic between the Traefik container (10.0.0.12) and the Portainer VM (10.0.0.101). This will run in the background and capture all packets related to our test.
 
-The audit has identified several areas where the security and resilience of the environment can be further enhanced. These are detailed in the individual reports, along with specific, actionable recommendations.
+*   **Command:** `tcpdump -i vmbr0 -n host 10.0.0.12 and host 10.0.0.101`
+
+### Step 2: Trigger the Failing Network Request
+
+While the packet capture is running, we will re-execute the `curl` command from within the Traefik container that has been consistently failing.
+
+*   **Command:** `pct exec 102 -- curl -v --cacert /ssl/phoenix_ca.crt https://portainer.internal.thinkheads.ai`
+
+### Step 3: Analyze the Packet Capture
+
+The output of `tcpdump` will provide the definitive evidence we need. We will be looking for one of two outcomes:
+
+1.  **No packets are seen:** This would indicate a routing issue *before* the firewall, which is highly unlikely given our previous findings.
+2.  **Only outbound packets are seen:** This is the expected outcome. We should see SYN packets from Traefik (10.0.0.12) trying to initiate a connection, but no corresponding SYN-ACK packets from Portainer (10.0.0.101). This will prove that the firewall is dropping the incoming packets and is the root cause of the failure.
+
+## 3. Next Steps
+
+The results of this live diagnostic will provide the final piece of evidence. Once we have confirmed the firewall is the issue, we can proceed with confidence to correct the `phoenix_hypervisor_config.json` file.

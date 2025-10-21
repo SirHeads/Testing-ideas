@@ -43,7 +43,7 @@ main() {
     log_info "Starting trusted CA installation for CTID $CTID."
 
     # 1. Copy the root CA certificate from the hypervisor to the container
-    log_info "Copying root CA certificate from hypervisor to container..."
+    log_info "Copying root CA certificate from mounted path to trust store..."
     if ! pct push "$CTID" "$CA_CERT_SOURCE_PATH" "$CA_CERT_DEST_PATH"; then
         log_fatal "Failed to copy root CA certificate to container $CTID."
     fi

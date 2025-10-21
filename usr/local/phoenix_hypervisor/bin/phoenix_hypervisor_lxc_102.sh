@@ -85,14 +85,6 @@ bootstrap_step_ca() {
     fi
     log_info "CA entry added to /etc/hosts."
 
-    # Add internal hostnames to /etc/hosts to ensure proper routing
-    log_info "Adding internal hostnames to /etc/hosts..."
-    cat <<EOF >> /etc/hosts
-10.0.0.101 granite-embedding.internal.thinkheads.ai
-10.0.0.101 granite-3b.internal.thinkheads.ai
-10.0.0.101 ollama.internal.thinkheads.ai
-10.0.0.101 llamacpp.internal.thinkheads.ai
-EOF
 
     # Retrieve CA fingerprint from the mounted root certificate
     local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
@@ -120,6 +112,11 @@ EOF
     fi
     log_info "Locally mounted root CA certificate added to trust store successfully."
 
+    # Update the system's CA trust store
+    log_info "Updating system CA trust store..."
+    update-ca-certificates || log_fatal "Failed to update system CA trust store."
+    log_info "System CA trust store updated successfully."
+
     # Bootstrap the step CLI with the CA's URL and fingerprint
     log_info "Bootstrapping step CLI with CA information..."
     log_info "Testing connectivity to Step CA at $CA_URL..."
@@ -146,51 +143,16 @@ configure_traefik() {
     log_info "Configuring Traefik..."
 
     # Wipe and recreate Traefik dynamic configuration directory
-    rm -rf /etc/traefik/dynamic
+    log_info "Ensuring Traefik dynamic configuration directory exists and has correct permissions..."
     mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
+    chmod 755 /etc/traefik/dynamic || log_warn "Failed to set permissions on /etc/traefik/dynamic."
 
-    # Create traefik.yml
-    cat <<EOF > /etc/traefik/traefik.yml
-global:
-  checkNewVersion: false
-  sendAnonymousUsage: false
+    # Copy the Traefik template and replace the CA_URL placeholder
+    log_info "Copying Traefik configuration template..."
+    cp "/tmp/phoenix_run/traefik.yml.template" "/etc/traefik/traefik.yml" || log_fatal "Failed to copy Traefik template."
 
-log:
-  level: INFO
-
-ping:
-  entryPoint: "traefik"
-
-api:
-  dashboard: true
-
-entryPoints:
-  web:
-    address: ":80"
-  websecure:
-    address: ":443"
-  traefik:
-    address: ":8080"
-
-providers:
-  file:
-    directory: /etc/traefik/dynamic
-    watch: true
-
-serversTransport:
-  rootCAs:
-    - "/ssl/phoenix_ca.crt"
-
-certificatesResolvers:
-  myresolver:
-    acme:
-      email: admin@thinkheads.ai
-      storage: /etc/traefik/acme.json
-      caServer: ${CA_URL}/acme/acme/directory
-      keyType: EC384
-      httpChallenge:
-        entryPoint: web
-EOF
+    log_info "Injecting CA URL into Traefik configuration..."
+    sed -i "s|__CA_URL__|${CA_URL}|g" "/etc/traefik/traefik.yml" || log_fatal "Failed to inject CA URL."
  
      # Force a fresh certificate request by deleting the old acme.json
      log_info "Removing existing acme.json to force fresh certificate request..."
@@ -233,19 +195,8 @@ http:
         - traefik
 EOF
 
-    # Generate and copy the dynamic configuration
-    log_info "Generating Traefik dynamic configuration..."
-    local generated_config_path
-    if ! generated_config_path=$("/tmp/phoenix_run/generate_traefik_config.sh"); then
-        log_fatal "Failed to generate Traefik dynamic configuration."
-    fi
-
-    log_info "Copying generated dynamic configuration to Traefik container..."
-    if ! cp "$generated_config_path" /etc/traefik/dynamic/dynamic_conf.yml; then
-        log_fatal "Failed to copy generated dynamic configuration to Traefik container."
-    fi
-
-    log_info "Traefik configured successfully."
+    # Dynamic configuration is now handled by the sync_all command at the host level.
+    log_info "Traefik static configuration complete."
 }
 
 # =====================================================================================
@@ -257,38 +208,21 @@ EOF
 #   None. Exits with a fatal error if service setup fails.
 # =====================================================================================
 setup_traefik_service() {
-    log_info "Setting up systemd service for Traefik..."
+    log_info "Starting Traefik service..."
 
-    # Create the systemd service file content
-    local SERVICE_CONTENT="[Unit]
-Description=Traefik Proxy
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/traefik --configFile=/etc/traefik/traefik.yml
-Restart=always
-User=root
-
-[Install]
-WantedBy=multi-user.target"
-
-    # Push the service file to the container
-    if ! /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"/etc/systemd/system/traefik.service\""; then
-        log_fatal "Failed to create systemd service file in container $CTID."
-    fi
-
-    # Reload systemd, enable and start the service
-    if ! systemctl daemon-reload; then
-        log_fatal "Failed to reload systemd daemon in container $CTID."
-    fi
-    if ! systemctl enable traefik; then
-        log_fatal "Failed to enable traefik service in container $CTID."
-    fi
     if ! systemctl restart traefik; then
         log_fatal "Failed to restart traefik service in container $CTID."
     fi
+    
+    log_info "Traefik service started. Waiting 5 seconds for initial ACME challenge to complete..."
+    sleep 5
 
-    log_info "Traefik service set up and started successfully."
+    log_info "Restarting Traefik service to ensure it loads the new ACME certificate..."
+    if ! systemctl restart traefik; then
+        log_warn "Failed to perform the final restart of Traefik. The service might be using a fallback certificate."
+    fi
+
+    log_info "Traefik service setup complete."
 }
 
 # =====================================================================================

@@ -51,6 +51,13 @@ MANAGER_DIR="$SCRIPT_DIR/managers"
 # shared tasks. This promotes code reuse and consistency.
 source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
 
+# --- EXPORT GUEST CONFIGURATION PATHS ---
+# Make the paths to the LXC and VM configuration files available as environment
+# variables for all child scripts (e.g., manager scripts). This ensures a
+# single source of truth for configuration paths.
+export LXC_CONFIG_FILE=$(get_global_config_value ".core_paths.lxc_config_file")
+export VM_CONFIG_FILE=$(get_global_config_value ".core_paths.vm_config_file")
+
 # -----------------------------------------------------------------------------
 # FUNCTION: print_usage
 # DESCRIPTION: Displays a help message outlining the script's usage, available
@@ -194,7 +201,10 @@ resolve_dependencies() {
         if [ -n "$clone_dep" ] && [ "$clone_dep" != "null" ]; then
             graph["$node"]+="$clone_dep "
         fi
-        # Add other VM dependency types here if they are introduced in the future.
+       local deps=$(jq -r ".vms[] | select(.vmid == $node) | .dependencies[]? // \"\"" "$vm_config_file")
+       for dep in $deps; do
+           graph["$node"]+="$dep "
+       done
     done
 
     # --- Log the constructed graph ---
@@ -393,9 +403,22 @@ main() {
                     else
                         log_warn "Unknown guest type for '$target'. Skipping startup."
                     fi
+
+                   # Check if a sync should be triggered after this guest starts
+                   local trigger_sync="false"
+                   if is_lxc_target "$target"; then
+                       trigger_sync=$(jq -r ".lxc_configs[\"$target\"].trigger_sync_on_completion // \"false\"" "$lxc_config_file")
+                   elif is_vm_target "$target"; then
+                       trigger_sync=$(jq -r ".vms[] | select(.vmid == $target) | .trigger_sync_on_completion // \"false\"" "$vm_config_file")
+                   fi
+
+                   if [ "$trigger_sync" == "true" ]; then
+                       log_info "Guest '$target' triggered a sync. Handing off to Portainer manager for environment synchronization..."
+                       "$SCRIPT_DIR/managers/portainer-manager.sh" "sync" "all" --config "$HYPERVISOR_CONFIG_FILE"
+                       log_info "Sync complete. Resuming 'LetsGo' workflow..."
+                   fi
                 done
-                log_info "All guests started successfully. Handing off to Portainer manager for environment synchronization..."
-                "$SCRIPT_DIR/managers/portainer-manager.sh" "sync" "all" --config "$HYPERVISOR_CONFIG_FILE"
+                log_info "All guests started successfully."
                 log_info "'LetsGo' command complete."
                 ;;
             *)
@@ -435,12 +458,13 @@ main() {
         if [ "$VERB" == "converge" ]; then
             log_info "Converging target '$target'. Routing to manager for 'create'..."
             if is_lxc_target "$target"; then
-                source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "create" "$target"
+                "$MANAGER_DIR/lxc-manager.sh" "create" "$target"
             elif is_vm_target "$target"; then
                 "$MANAGER_DIR/vm-manager.sh" "create" "$target"
             else
                 log_warn "Target '$target' is not a valid LXC or VM. Skipping convergence."
             fi
+            log_info "Finished converging target '$target'."
             continue # Move to the next target
         fi
 
@@ -461,10 +485,10 @@ main() {
         log_info "Processing target '$target' for action '$VERB'..."
         if is_lxc_target "$target"; then
             log_info "Target '$target' is an LXC container. Routing to lxc-manager.sh..."
-            source "$MANAGER_DIR/lxc-manager.sh" && main_lxc_orchestrator "$VERB" "$target"
+            "$MANAGER_DIR/lxc-manager.sh" "$VERB" "$target"
         elif is_vm_target "$target"; then
             log_info "Target '$target' is a VM. Routing to vm-manager.sh..."
-            source "$MANAGER_DIR/vm-manager.sh" && main_vm_orchestrator "$VERB" "$target"
+            "$MANAGER_DIR/vm-manager.sh" "$VERB" "$target"
         else
             # Handle non-guest targets (e.g., setup commands)
             case "$VERB" in

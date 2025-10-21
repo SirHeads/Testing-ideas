@@ -94,20 +94,19 @@ generate_nginx_certs() {
     echo "INFO: Retrieved CA Fingerprint: $CA_FINGERPRINT"
 
     # Install the Root CA certificate that was pushed into this container
-    echo "INFO: Installing the Root CA certificate from /tmp/root_ca.crt..."
-    local LOCAL_ROOT_CA_PATH="/tmp/root_ca.crt"
+    echo "INFO: Installing the Root CA certificate into the system trust store..."
+    local TRUST_STORE_PATH="/usr/local/share/ca-certificates/phoenix_ca.crt"
 
-    if [ ! -f "$LOCAL_ROOT_CA_PATH" ]; then
-        echo "FATAL: Root CA certificate not found at $LOCAL_ROOT_CA_PATH. It should have been pushed by the lxc-manager." >&2
+    if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
+        echo "FATAL: Root CA certificate not found at the shared mount point $ROOT_CA_CERT_PATH." >&2
         exit 1
     fi
-    
-    if ! step certificate install "$LOCAL_ROOT_CA_PATH"; then
-        echo "FATAL: Failed to install the Root CA certificate from $LOCAL_ROOT_CA_PATH into the trust store." >&2
-        exit 1
-    fi
-    # Do not remove the file, it might be needed again. The OS handles the trust store.
-    echo "INFO: Root CA certificate installed successfully."
+
+    # Copy the certificate to the trust store and update the system
+    cp "$ROOT_CA_CERT_PATH" "$TRUST_STORE_PATH" || { echo "FATAL: Failed to copy root CA to trust store." >&2; exit 1; }
+    update-ca-certificates || { echo "FATAL: Failed to update CA certificates." >&2; exit 1; }
+
+    echo "INFO: Root CA certificate installed and trusted successfully."
 
     # Bootstrap the step CLI with the CA's URL and fingerprint
     echo "INFO: Bootstrapping step CLI with CA information..."
@@ -140,20 +139,7 @@ generate_nginx_certs() {
 
     echo "Nginx server certificates generated successfully."
 
-    echo "Generating placeholder certificate for portainer.phoenix.thinkheads.ai to ensure Nginx starts..."
-    local placeholder_cert_cmd=(
-        step ca certificate "portainer.phoenix.thinkheads.ai"
-        "/ssl/portainer.phoenix.thinkheads.ai.crt"
-        "/ssl/portainer.phoenix.thinkheads.ai.key"
-        --provisioner-password-file "/ssl/provisioner_password.txt"
-        --provisioner "admin@thinkheads.ai"
-        --force
-    )
-    if ! "${placeholder_cert_cmd[@]}"; then
-        echo "WARNING: Failed to generate placeholder certificate for portainer.phoenix.thinkheads.ai. Nginx may fail to start if this is the first run." >&2
-    else
-        echo "Placeholder certificate for portainer.phoenix.thinkheads.ai generated successfully."
-    fi
+    # Placeholder certificate generation is removed to centralize certificate management.
 }
 
 # --- Package Installation ---
