@@ -195,8 +195,6 @@ deploy_portainer_instances() {
                 log_info "Copying Portainer Dockerfile to hypervisor's NFS share: ${hypervisor_portainer_dir}/Dockerfile"
                 cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/Dockerfile" "${hypervisor_portainer_dir}/Dockerfile" || log_fatal "Failed to copy Dockerfile to hypervisor's NFS share."
 
-                log_info "Copying CA certificate to Portainer build context: ${hypervisor_portainer_dir}/phoenix_ca.crt"
-                cp "${CENTRALIZED_CA_CERT_PATH}" "${hypervisor_portainer_dir}/phoenix_ca.crt" || log_fatal "Failed to copy CA certificate to Portainer build context."
                 # --- END FIX ---
 
                 # --- BEGIN CERTIFICATE GENERATION ---
@@ -244,19 +242,12 @@ deploy_portainer_instances() {
                 cp "$cert_path" "${cert_dir}/cert.pem" || log_fatal "Failed to copy certificate to Portainer certs directory."
                 cp "$key_path" "${cert_dir}/key.pem" || log_fatal "Failed to copy key to Portainer certs directory."
                 
-                # --- BEGIN FIX: Correct file permissions for the container ---
-                log_info "Setting read permissions on certificate files for Portainer container..."
-                chmod 644 "${cert_dir}/cert.pem" "${cert_dir}/key.pem" "${cert_dir}/ca.pem" || log_fatal "Failed to set permissions on certificate files."
                 # --- END FIX ---
 
                 log_info "Waiting for 2 seconds for the certificate to be available in the mount point..."
                 sleep 2
 
-                log_info "Reloading Nginx in container 101 to apply the new certificate..."
-                if ! pct exec 101 -- systemctl reload nginx; then
-                    log_fatal "Failed to reload Nginx in container 101. The new certificate may not be active."
-                fi
-                log_success "Nginx reloaded successfully."
+                # This logic is being moved to a more appropriate location
 
                 # --- BEGIN FINAL FIX: Copy the new cert directly to the shared SSL mount ---
                 log_info "FINAL FIX: Creating Nginx include file with the new certificate..."
@@ -294,6 +285,16 @@ deploy_portainer_instances() {
                 fi
                 
                 pct exec 103 -- rm -f "$container_root_ca_tmp_path"
+
+                # --- BEGIN FIX: Copy the definitive Root CA to the build context ---
+                log_info "Copying definitive Root CA to Portainer build context for Dockerfile..."
+                cp "$ca_path" "${hypervisor_portainer_dir}/phoenix_ca.crt" || log_fatal "Failed to copy Root CA to Portainer build context."
+                # --- END FIX ---
+
+                # --- BEGIN FIX: Correct file permissions for the container ---
+                log_info "Setting read permissions on certificate files for Portainer container..."
+                chmod 644 "${cert_dir}/cert.pem" "${cert_dir}/key.pem" "${cert_dir}/ca.pem" || log_fatal "Failed to set permissions on certificate files."
+                # --- END FIX ---
                 # --- END CERTIFICATE GENERATION ---
 
                 # Ensure the compose file and config.json are present on the VM's persistent storage
@@ -465,8 +466,8 @@ setup_portainer_admin_user() {
         local body
         body=$(echo "$response" | sed '$d')
 
-        # Case 1: API is fully up and running.
-        if [ "$http_status" -eq 200 ] && echo "$body" | jq -e '.status == "UP"' > /dev/null; then
+        # Case 1: API is fully up and running (returns JSON with a 'Version' field).
+        if [ "$http_status" -eq 200 ] && echo "$body" | jq -e '.Version' > /dev/null; then
             log_success "Portainer API is up and running."
             break
         # Case 2: API is not initialized, presenting the setup page (returns 200 OK with HTML).
@@ -492,9 +493,15 @@ setup_portainer_admin_user() {
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Admin user creation attempt ${attempt}/${MAX_RETRIES}..."
-        local INIT_RESPONSE=$(curl -s ${CURL_EXTRA_ARGS} --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/users/admin/init" \
-          -H "Content-Type: application/json" -d "${INIT_PAYLOAD}")
+        local curl_cmd_init=("curl" "-s" "${CURL_EXTRA_ARGS}")
+        if [ -n "$CA_CERT_PATH" ]; then
+            curl_cmd_init+=("--cacert" "$CA_CERT_PATH")
+        fi
+        curl_cmd_init+=("-X" "POST" "${PORTAINER_URL}/api/users/admin/init" "-H" "Content-Type: application/json" "-d" "${INIT_PAYLOAD}")
 
+        log_debug "Executing curl command for admin user creation: ${curl_cmd_init[*]}"
+        local INIT_RESPONSE=$("${curl_cmd_init[@]}")
+ 
         log_debug "Raw admin user creation response (attempt ${attempt}): ${INIT_RESPONSE}"
 
         # Check for successful creation (HTTP 200 OK with a user ID)
@@ -534,6 +541,34 @@ sync_all() {
 
     # --- STAGE 1: CORE INFRASTRUCTURE (Always Run) ---
     log_info "--- Stage 1: Synchronizing Core Infrastructure (DNS & Firewall) ---"
+
+    # Ensure the Proxmox host trusts our internal CA before proceeding
+    local step_ca_ctid="103"
+    if pct status "$step_ca_ctid" > /dev/null 2>&1; then
+        if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_install_trusted_ca.sh"; then
+            log_fatal "Failed to install trusted CA on the host. Aborting."
+        fi
+    else
+        log_warn "Step-CA container (${step_ca_ctid}) not found. Skipping host trust installation. This may be expected during initial setup."
+    fi
+
+    # --- BEGIN DYNAMIC NGINX CONFIGURATION ---
+    log_info "Generating and applying dynamic NGINX gateway configuration..."
+    if ! "${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"; then
+        log_fatal "Failed to generate dynamic NGINX configuration."
+    fi
+    if ! pct push 101 "${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway" /etc/nginx/sites-available/gateway; then
+        log_fatal "Failed to push generated gateway config to NGINX container."
+    fi
+    log_info "Waiting for 3 seconds for file system to sync before reloading NGINX..."
+    sleep 3
+    log_info "Reloading Nginx in container 101 to apply the new configuration..."
+    if ! pct exec 101 -- systemctl reload nginx; then
+        log_fatal "Failed to reload Nginx in container 101. The new configuration may not be active."
+    fi
+    log_success "NGINX gateway configuration applied and reloaded successfully."
+    # --- END DYNAMIC NGINX CONFIGURATION ---
+
     # Sync DNS server configuration
     if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh"; then
         log_fatal "DNS synchronization failed. Aborting."
@@ -587,8 +622,13 @@ sync_all() {
         local SSL_DIR="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
         log_info "Fetching the definitive Intermediate CA certificate from Step CA..."
         local intermediate_ca_path="${SSL_DIR}/portainer-intermediate-ca.crt"
-        # (Error handling and CA fetching logic remains the same)
-        # ... [omitted for brevity, assuming it's correct] ...
+        local source_ca_path_in_container="/root/.step/certs/intermediate_ca.crt"
+
+        log_info "Pulling Intermediate CA from LXC 103 at ${source_ca_path_in_container} to ${intermediate_ca_path}..."
+        if ! pct pull 103 "$source_ca_path_in_container" "$intermediate_ca_path"; then
+            log_fatal "Failed to pull Intermediate CA certificate from Step-CA container. Source: ${source_ca_path_in_container}, Destination: ${intermediate_ca_path}"
+        fi
+        log_success "Successfully pulled Intermediate CA certificate."
 
         # Deploy Portainer instances (idempotent)
         deploy_portainer_instances "$intermediate_ca_path"
@@ -596,9 +636,46 @@ sync_all() {
         # Get JWT and sync environments and stacks
         local JWT=$(get_portainer_jwt)
         local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
-        # (The rest of the environment and stack sync logic remains the same)
-        # ... [omitted for brevity, assuming it's correct] ...
 
+        # --- Securely store the JWT for NGINX to use ---
+        local nginx_token_dir="/mnt/pve/quickOS/lxc-persistent-data/101/api_tokens"
+        local nginx_token_path="${nginx_token_dir}/portainer_jwt.token"
+        log_info "Ensuring NGINX token directory exists and has correct permissions: ${nginx_token_dir}"
+        mkdir -p "$nginx_token_dir" || log_fatal "Failed to create NGINX token directory."
+        chmod 755 "$nginx_token_dir"
+        log_info "Storing Portainer JWT for NGINX at ${nginx_token_path}"
+        echo -n "$JWT" > "$nginx_token_path" || log_fatal "Failed to write Portainer JWT for NGINX."
+        chmod 644 "$nginx_token_path"
+
+        # --- Synchronize Portainer Endpoints ---
+        sync_portainer_endpoints "$JWT" "$CA_CERT_PATH"
+        
+        # --- BEGIN DOCKER STACK DEPLOYMENT ---
+        log_info "--- Synchronizing all declared Docker stacks ---"
+        local vms_with_stacks
+        vms_with_stacks=$(jq -c '.vms[] | select(.docker_stacks and (.docker_stacks | length > 0))' "$VM_CONFIG_FILE")
+
+        echo "$vms_with_stacks" | jq -c '.' | while read -r vm_config; do
+            local VMID=$(echo "$vm_config" | jq -r '.vmid')
+            local agent_ip=$(echo "$vm_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
+            local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
+            local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
+            
+            log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
+            local ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+            
+            if [ -z "$ENDPOINT_ID" ]; then
+                log_warn "Could not find Portainer endpoint for VM ${VMID}. Skipping stack deployment for this VM."
+                continue
+            fi
+
+            echo "$vm_config" | jq -c '.docker_stacks[]' | while read -r stack_config; do
+                sync_stack "$VMID" "$stack_config" "$JWT" "$ENDPOINT_ID"
+            done
+        done
+        log_info "--- Docker stack synchronization complete ---"
+        # --- END DOCKER STACK DEPLOYMENT ---
+ 
         log_success "Portainer and Docker stack synchronization complete."
 
         # --- FINAL STAGE: Re-sync Traefik ---
@@ -811,6 +888,62 @@ wait_for_portainer_api_and_setup_admin() {
     # This call will now happen within the security window.
     # We use --insecure because the certificate is for the hostname, not the direct IP.
     setup_portainer_admin_user "$PORTAINER_URL" "" "--insecure"
+}
+
+# =====================================================================================
+# Function: sync_portainer_endpoints
+# Description: Ensures that all Portainer agent endpoints defined in the configuration
+#              are registered with the Portainer server.
+# Arguments:
+#   $1 - The Portainer JWT.
+#   $2 - The path to the CA certificate.
+# =====================================================================================
+sync_portainer_endpoints() {
+    local JWT="$1"
+    local CA_CERT_PATH="$2"
+    local PORTAINER_HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
+    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:443"
+
+    log_info "--- Synchronizing Portainer Endpoints ---"
+
+    local agents_to_register
+    agents_to_register=$(jq -c '.vms[] | select(.portainer_role == "agent")' "$VM_CONFIG_FILE")
+
+    echo "$agents_to_register" | jq -c '.' | while read -r agent_config; do
+        local VMID=$(echo "$agent_config" | jq -r '.vmid')
+        local AGENT_NAME=$(echo "$agent_config" | jq -r '.portainer_environment_name')
+        local AGENT_IP=$(echo "$agent_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
+        local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
+        local ENDPOINT_URL="tcp://${AGENT_IP}:${AGENT_PORT}"
+
+        log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
+        
+        local EXISTING_ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+
+        if [ -n "$EXISTING_ENDPOINT_ID" ]; then
+            log_info "Endpoint for VM ${VMID} already exists with ID ${EXISTING_ENDPOINT_ID}. Skipping creation."
+        else
+            log_info "Endpoint for VM ${VMID} not found. Creating it now..."
+            
+            local CREATE_PAYLOAD=$(jq -n \
+                --arg name "$AGENT_NAME" \
+                --arg url "$ENDPOINT_URL" \
+                --argjson group_id 1 \
+                '{Name: $name, URL: $url, Type: 2, GroupId: $group_id, TLS: true, TLSSkipVerify: false, TLSCACert: "/certs/ca.pem", TLSCert: "/certs/cert.pem", TLSKey: "/certs/key.pem"}')
+
+            local CREATE_RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
+                -H "Authorization: Bearer ${JWT}" \
+                -H "Content-Type: application/json" \
+                -d "${CREATE_PAYLOAD}")
+
+            if echo "$CREATE_RESPONSE" | jq -e '.Id' > /dev/null; then
+                log_success "Successfully created endpoint for VM ${VMID}."
+            else
+                log_fatal "Failed to create endpoint for VM ${VMID}. Response: ${CREATE_RESPONSE}"
+            fi
+        fi
+    done
+    log_info "--- Portainer Endpoint Synchronization Complete ---"
 }
 
 # =====================================================================================

@@ -19,11 +19,23 @@ server {
     }
 }
 
+# Map block to dynamically route to the correct upstream service
+map $host $upstream_service {
+    default https://traefik.internal.thinkheads.ai:443;
+}
+
 # Server block for HTTPS traffic
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     server_name *.phoenix.thinkheads.ai;
+
+    # --- BEGIN DYNAMIC AUTHENTICATION ---
+    # Import the NJS module for file reading
+    js_import /etc/nginx/scripts/http.js;
+    # Read the Portainer JWT into a variable
+    js_set $portainer_jwt http.get_portainer_jwt;
+    # --- END DYNAMIC AUTHENTICATION ---
 
     # Define the resolver to use our host-based DNS
     resolver 10.0.0.13 valid=10s;
@@ -54,12 +66,19 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # --- BEGIN DYNAMIC AUTHENTICATION ---
+        # Add the Authorization header if the token exists
+        if ($portainer_jwt) {
+            proxy_set_header Authorization "Bearer $portainer_jwt";
+        }
+        # --- END DYNAMIC AUTHENTICATION ---
+
         proxy_ssl_server_name on;
         proxy_ssl_trusted_certificate /ssl/phoenix_ca.crt; # Trust our internal CA
 
         # Forward all traffic to the Traefik internal proxy
-        set $upstream_traefik https://traefik.internal.thinkheads.ai:443;
-        proxy_pass $upstream_traefik;
+        proxy_pass $upstream_service;
 
         proxy_read_timeout 300;
         proxy_connect_timeout 300;

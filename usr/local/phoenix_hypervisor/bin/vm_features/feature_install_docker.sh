@@ -195,4 +195,30 @@ step ca certificate "portainer.phoenix.thinkheads.ai" "${CERT_DIR}/cert.pem" "${
 log_info "Portainer server certificate generated successfully."
 
 
+log_info "Step 11: Starting Portainer service based on role..."
+PORTAINER_ROLE=$(jq -r '.portainer_role // ""' "$CONTEXT_FILE")
+
+if [ "$PORTAINER_ROLE" == "primary" ]; then
+    log_info "Role is 'primary'. Starting Portainer server..."
+    cd /persistent-storage/portainer
+    if ! docker compose up -d; then
+        log_fatal "Failed to start Portainer server using docker-compose."
+    fi
+    log_info "Portainer server started successfully."
+elif [ "$PORTAINER_ROLE" == "agent" ]; then
+    log_info "Role is 'agent'. Starting Portainer agent..."
+    if ! docker run -d \
+      -p 9001:9001 \
+      --name portainer_agent \
+      --restart=always \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+      portainer/agent; then
+        log_fatal "Failed to start Portainer agent."
+    fi
+    log_info "Portainer agent started successfully."
+else
+    log_warn "No 'portainer_role' defined for this VM or role is unknown ('$PORTAINER_ROLE'). No service started."
+fi
+
 log_info "--- Docker Installation Complete ---"

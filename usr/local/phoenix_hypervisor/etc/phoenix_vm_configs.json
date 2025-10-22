@@ -100,7 +100,7 @@
                 "trusted_ca"
             ],
             "portainer_role": "agent",
-            "portainer_environment_name": "portainer-agent",
+            "portainer_environment_name": "drphoenix",
             "trigger_sync_on_completion": true,
             "dependencies": [
                 "1001"

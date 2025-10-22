@@ -143,9 +143,23 @@ generate_nginx_certs() {
 }
 
 # --- Package Installation ---
-echo "Updating package lists and installing Nginx and the NJS module..."
+echo "Updating package lists and installing Nginx with the NJS module..."
 apt-get update
-apt-get install -y nginx libnginx-mod-http-js
+
+# Install Nginx and the NJS module with robust error handling
+if ! apt-get install -y nginx libnginx-mod-http-js; then
+    echo "FATAL: Failed to install nginx and libnginx-mod-http-js." >&2
+    exit 1
+fi
+
+# Verify that the NJS module was installed correctly
+MODULE_PATH="/usr/lib/nginx/modules/ngx_http_js_module.so"
+if [ ! -f "$MODULE_PATH" ]; then
+    echo "FATAL: NJS module not found at $MODULE_PATH after installation." >&2
+    exit 1
+fi
+
+echo "Nginx and NJS module installed and verified successfully."
 
 # The libnginx-mod-http-js package automatically creates a symlink in
 # /etc/nginx/modules-enabled/ to load the module.

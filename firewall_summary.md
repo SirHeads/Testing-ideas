@@ -1,48 +1,60 @@
-# Phoenix Hypervisor Firewall Rule Summary
+# Firewall Verification Commands
 
-This document provides a comprehensive summary of all firewall rules defined within the Phoenix Hypervisor ecosystem. The rules are managed declaratively through the `phoenix_hypervisor_config.json` and `phoenix_lxc_configs.json` files.
+## Part 1: Proxmox Host Firewall Verification
 
-## 1. Global Firewall Rules
+### Objective
+Verify that the global firewall rules defined in `phoenix_hypervisor_config.json` are correctly applied to the Proxmox host.
 
-These rules are applied at the hypervisor level and govern traffic for the entire system.
+### Commands to be executed on the Proxmox Host
 
-| Direction | Action | Protocol | Port | Source | Destination | Comment |
-|---|---|---|---|---|---|---|
-| In | ACCEPT | tcp | 80 | any | any | Allow HTTP traffic to Nginx gateway |
-| In | ACCEPT | tcp | 443 | any | any | Allow HTTPS traffic to Nginx gateway |
-| In | ACCEPT | tcp | 9001 | any | 10.0.0.102 | Allow Portainer agent communication |
-| In | ACCEPT | tcp | 2049 | any | any | Allow NFS traffic |
-| In | ACCEPT | udp | 2049 | any | any | Allow NFS traffic |
-| In | ACCEPT | tcp | 111 | any | any | Allow rpcbind traffic |
-| In | ACCEPT | udp | 111 | any | any | Allow rpcbind traffic |
-| In | ACCEPT | tcp | 139 | any | any | Allow Samba NetBIOS |
-| In | ACCEPT | tcp | 445 | any | any | Allow Samba SMB |
-| In | ACCEPT | udp | 137 | any | any | Allow Samba NetBIOS Name Service |
-| In | ACCEPT | udp | 138 | any | any | Allow Samba NetBIOS Datagram Service |
-| Out | ACCEPT | udp | 53 | 10.0.0.0/24 | 0.0.0.0/0 | Allow outbound DNS traffic from all guests |
-| Out | ACCEPT | tcp | 53 | 10.0.0.0/24 | 0.0.0.0/0 | Allow outbound DNS traffic (TCP) from all guests |
+1.  **List All Firewall Rules:**
+    *   **Purpose:** Dumps all active firewall rules for the Proxmox host. This provides a complete picture that we can compare against our configuration.
+    *   **Command:**
+        ```bash
+        pve-firewall rules
+        ```
 
-## 2. LXC Container Firewall Rules
+2.  **Verify Specific Ingress Rules:**
+    *   **Purpose:** Checks for the presence of key ingress rules defined in the configuration.
+    *   **Commands:**
+        ```bash
+        # Verify HTTP is allowed to Nginx Gateway
+        pve-firewall rules | grep "ACCEPT.*dport 80" && echo "SUCCESS: HTTP rule found." || echo "FAILURE: HTTP rule missing."
 
-These rules are applied to individual LXC containers.
+        # Verify HTTPS is allowed to Nginx Gateway
+        pve-firewall rules | grep "ACCEPT.*dport 443" && echo "SUCCESS: HTTPS rule found." || echo "FAILURE: HTTPS rule missing."
 
-### CTID 101: Nginx-Phoenix
+        # Verify internal ICMP is allowed
+        pve-firewall rules | grep "ACCEPT.*icmp.*src 10.0.0.0/24" && echo "SUCCESS: Internal ICMP rule found." || echo "FAILURE: Internal ICMP rule missing."
+        ```
 
-| Direction | Action | Protocol | Port | Source | Destination |
-|---|---|---|---|---|---|
-| In | ACCEPT | tcp | 80 | any | any |
-| In | ACCEPT | tcp | 443 | any | any |
-| Out | ACCEPT | tcp | 9443 | any | 10.0.0.101 |
+3.  **Verify Default Input Policy:**
+    *   **Purpose:** Confirms that the default policy for incoming traffic is `DROP`, as specified in the configuration for a secure-by-default posture.
+    *   **Command:**
+        ```bash
+        pve-firewall status | grep "policy_in: DROP" && echo "SUCCESS: Default input policy is DROP." || echo "FAILURE: Default input policy is not DROP."
+        ```
 
-### CTID 102: Traefik-Internal
+## Part 2: VM 1001 Firewall Verification
 
-| Direction | Action | Protocol | Port | Source | Destination |
-|---|---|---|---|---|---|
-| In | ACCEPT | tcp | 443 | 10.0.0.153 | any |
-| In | ACCEPT | tcp | 80 | 10.0.0.153 | any |
+### Objective
+Verify that the VM-specific firewall rules defined in `phoenix_vm_configs.json` are correctly applied to VM 1001.
 
-### CTID 801: granite-embedding
+### Commands to be executed on the Proxmox Host
 
-| Direction | Action | Protocol | Port | Source | Destination |
-|---|---|---|---|---|---|
-| In | ACCEPT | tcp | 8000 | 10.0.0.153 | any |
+1.  **List Firewall Rules for VM 1001:**
+    *   **Purpose:** Dumps all active firewall rules specifically for VM 1001.
+    *   **Command:**
+        ```bash
+        pve-firewall vmrules 1001
+        ```
+
+2.  **Verify Specific Ingress Rules for VM 1001:**
+    *   **Purpose:** Checks for the presence of the rules that allow Traefik and the Proxmox host to access the Portainer API.
+    *   **Commands:**
+        ```bash
+        # Verify Traefik access to Portainer
+        pve-firewall vmrules 1001 | grep "ACCEPT.*src 10.0.0.12.*dport 9443" && echo "SUCCESS: Traefik access rule found." || echo "FAILURE: Traefik access rule missing."
+
+        # Verify Proxmox host access to Portainer
+        pve-firewall vmrules 1001 | grep "ACCEPT.*src 10.0.0.13.*dport 9443" && echo "SUCCESS: Proxmox host access rule found." || echo "FAILURE: Proxmox host access rule missing."
