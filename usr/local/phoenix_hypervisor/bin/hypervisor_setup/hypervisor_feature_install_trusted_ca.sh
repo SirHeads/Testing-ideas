@@ -39,9 +39,14 @@ install_host_trusted_ca() {
         log_fatal "Failed to pull Root CA certificate from Step-CA container."
     fi
 
+    log_info "Forcing reconfiguration of ca-certificates to ensure new CA is recognized..."
+    if ! dpkg-reconfigure -f noninteractive ca-certificates; then
+        log_fatal "Failed to reconfigure ca-certificates package."
+    fi
+
     log_info "Updating the host's certificate trust store..."
     if ! update-ca-certificates; then
-        log_fatal "Failed to update the host's certificate trust store."
+        log_fatal "Failed to update the host's certificate trust store after reconfiguration."
     fi
 
     log_success "Internal Root CA certificate successfully installed on the Proxmox host."

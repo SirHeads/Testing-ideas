@@ -107,6 +107,8 @@ bootstrap_step_ca() {
 
     # Add the locally mounted root CA certificate to the trust store
     log_info "Adding locally mounted root CA certificate to trust store..."
+    cp "${ROOT_CA_CERT_PATH}" /usr/local/share/ca-certificates/phoenix_ca.crt
+    update-ca-certificates
     if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
         log_fatal "Failed to install locally mounted root CA certificate into trust store."
     fi
@@ -214,12 +216,13 @@ setup_traefik_service() {
         log_fatal "Failed to restart traefik service in container $CTID."
     fi
     
-    log_info "Traefik service started. Waiting 5 seconds for initial ACME challenge to complete..."
-    sleep 5
+    log_info "Traefik service started. Waiting 15 seconds for initial ACME challenge to complete..."
+    sleep 15
 
-    log_info "Restarting Traefik service to ensure it loads the new ACME certificate..."
-    if ! systemctl restart traefik; then
-        log_warn "Failed to perform the final restart of Traefik. The service might be using a fallback certificate."
+    log_info "Reloading Traefik service to ensure it loads the new ACME certificate..."
+    if ! systemctl reload traefik; then
+        log_warn "Failed to reload Traefik. The service might be using a fallback certificate. Attempting a full restart..."
+        systemctl restart traefik || log_error "Failed to restart Traefik after reload failed."
     fi
 
     log_info "Traefik service setup complete."

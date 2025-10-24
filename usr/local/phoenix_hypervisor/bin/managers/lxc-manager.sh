@@ -977,6 +977,18 @@ run_application_script() {
             local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
             local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
 
+            # --- REMEDIATION: Generate dynamic config on the host before packaging ---
+            log_info "Generating dynamic Nginx gateway configuration on the host..."
+            local nginx_generator_script="${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"
+            if [ ! -f "$nginx_generator_script" ]; then
+                log_fatal "Nginx config generator script not found at $nginx_generator_script."
+            fi
+            if ! "$nginx_generator_script"; then
+                log_fatal "Failed to generate dynamic Nginx configuration on the host."
+            fi
+            log_info "Dynamic Nginx configuration generated successfully."
+            # --- END REMEDIATION ---
+
             # Create a tarball of the nginx configs on the host
             log_info "Creating tarball of Nginx configs at ${temp_tarball}"
             if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
@@ -1499,7 +1511,7 @@ main_lxc_orchestrator() {
 
                     # Set correct permissions for the shared SSL directory to ensure readability by all containers
                     log_info "Setting directory permissions to 755 (rwxr-xr-x)..."
-                    if ! chmod 755 "$ca_output_dir"; then
+                    if ! chmod 777 "$ca_output_dir"; then
                         log_fatal "Failed to set permissions on shared SSL directory."
                     fi
                     log_info "Setting certificate file permissions to 644 (rw-r--r--)..."

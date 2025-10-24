@@ -44,7 +44,7 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
                     "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)",
                     "transport": ($service_def.name + "-transport"),
                     "serverName": "\($service_def.name).\($internal_domain)"
@@ -56,7 +56,7 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
                     "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
                 }
             )

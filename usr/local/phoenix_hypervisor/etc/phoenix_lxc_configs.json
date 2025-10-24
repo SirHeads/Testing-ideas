@@ -671,6 +671,14 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow Traefik to connect for ACME challenges"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Step-CA to respond to ACME challenges from Traefik"
                     }
                 ]
             },
@@ -741,6 +749,22 @@
                         "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Traefik to connect to Step-CA for ACME"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Step-CA to respond to ACME challenges from Traefik"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.13",
@@ -751,10 +775,10 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.101",
+                        "dest": "10.0.0.111",
                         "proto": "tcp",
                         "port": "9443",
-                        "comment": "Allow Traefik to proxy to Portainer"
+                        "comment": "Allow Traefik to connect to the Portainer API"
                     },
                     {
                         "type": "out",

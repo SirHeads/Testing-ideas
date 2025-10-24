@@ -20,9 +20,7 @@ server {
 }
 
 # Map block to dynamically route to the correct upstream service
-map $host $upstream_service {
-    default https://traefik.internal.thinkheads.ai:443;
-}
+##MAP_BLOCK##
 
 
 # Server block for HTTPS traffic

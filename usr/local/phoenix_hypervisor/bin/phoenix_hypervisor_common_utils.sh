@@ -181,17 +181,21 @@ export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_confi
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 export PHOENIX_DEBUG="true" # Set to "true" to enable debug logging and 'set -x' in feature scripts
 
-# --- Dynamic LXC_CONFIG_FILE Path ---
+# --- Dynamic Configuration File Paths ---
 # This logic allows the script to be used both on the host and inside a container's temporary execution environment.
-# It dynamically sets the path to the LXC configuration file based on the script's execution context.
+# It dynamically sets the paths for all configuration files based on the script's execution context.
 SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
     # We are running inside the container's temporary execution environment.
+    export HYPERVISOR_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_hypervisor_config.json"
     export LXC_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_lxc_configs.json"
+    export VM_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_vm_configs.json"
 else
-    # We are running on the host. Use the standard absolute path.
+    # We are running on the host. Use the standard absolute paths.
+    export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
     export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+    export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
 fi
 
 # --- Environment Setup ---

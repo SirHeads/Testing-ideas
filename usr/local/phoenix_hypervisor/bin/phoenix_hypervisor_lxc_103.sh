@@ -77,7 +77,7 @@ initialize_step_ca() {
     fi
     log_debug "Provisioner password file found at $CA_PROVISIONER_PASSWORD_FILE inside container."
 
-    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
+    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
         log_fatal "Failed to initialize Smallstep CA in container $CTID."
     fi
     log_success "Smallstep CA initialized successfully."

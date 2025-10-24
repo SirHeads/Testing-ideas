@@ -31,6 +31,14 @@ http:
         - websecure
       tls:
         certResolver: myresolver
+
+    portainer-router:
+      rule: "Host(`portainer.internal.thinkheads.ai`)"
+      service: "portainer-service"
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: myresolver
   
   services:
     granite-embedding-service:
@@ -52,3 +60,8 @@ http:
       loadBalancer:
         servers:
           - url: "http://llamacpp.internal.thinkheads.ai:8081"
+
+    portainer-service:
+      loadBalancer:
+        servers:
+          - url: "https://portainer.internal.thinkheads.ai:9443"

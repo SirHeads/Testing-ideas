@@ -62,6 +62,33 @@ install_nfs_packages() {
 }
 
 # =====================================================================================
+# Function: configure_nfs_locking
+# Description: Ensures the NFS locking daemon (statd) is enabled, which is
+#              necessary for stable NFS mounts from clients.
+# =====================================================================================
+configure_nfs_locking() {
+  log_info "Configuring NFS locking..."
+  local nfs_common_config="/etc/default/nfs-common"
+  
+  if grep -q "NEED_STATD=yes" "$nfs_common_config"; then
+    log_info "NFS locking (statd) is already enabled."
+  else
+    log_info "Enabling NFS locking (statd)..."
+    echo "NEED_STATD=yes" >> "$nfs_common_config" || log_fatal "Failed to enable NFS locking in $nfs_common_config"
+  fi
+  
+  # Unmask the service before trying to restart it.
+  log_info "Unmasking nfs-common service..."
+  systemctl unmask nfs-common.service || log_warn "Failed to unmask nfs-common service. This may not be an error if it was not masked."
+  systemctl daemon-reload || log_warn "Failed to reload systemd daemon. The unmask operation may not take effect immediately."
+
+  # Restart the dependent services to apply the change.
+  retry_command "systemctl restart nfs-common" || log_warn "Failed to restart nfs-common service."
+  retry_command "systemctl restart nfs-kernel-server" || log_warn "Failed to restart nfs-kernel-server."
+  log_info "NFS locking configured and services restarted."
+}
+
+# =====================================================================================
 # Function: get_server_ip
 # Description: Retrieves the primary IP address of the hypervisor from the declarative
 #              configuration file. This IP is used as the server address when adding
@@ -233,6 +260,7 @@ add_nfs_storage() {
 # =====================================================================================
 main() {
   install_nfs_packages
+  configure_nfs_locking
   configure_nfs_exports
   configure_nfs_firewall
   add_nfs_storage

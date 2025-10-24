@@ -107,6 +107,48 @@ setup_traefik_directories() {
 }
 
 # =====================================================================================
+# Function: setup_traefik_tls
+# Description: Generates a client certificate for Traefik and places it along with the CA
+#              certificate in the appropriate directory for mTLS with the Docker Proxy.
+# =====================================================================================
+setup_traefik_tls() {
+    log_info "Setting up TLS for Traefik Docker provider..."
+    local CERT_DIR="/etc/traefik/certs"
+    local FQDN="traefik.phoenix.thinkheads.ai"
+    local INTERNAL_FQDN="traefik.internal.thinkheads.ai"
+
+    pct exec "$CTID" -- mkdir -p "$CERT_DIR"
+
+    # Generate Client Certificate
+    log_info "Generating client certificate for ${FQDN}..."
+    local TEMP_CERT_PATH="/tmp/${FQDN}.crt"
+    local TEMP_KEY_PATH="/tmp/${FQDN}.key"
+    pct exec 103 -- step ca certificate "${FQDN}" "$TEMP_CERT_PATH" "$TEMP_KEY_PATH" --san "${INTERNAL_FQDN}" \
+        --provisioner admin@thinkheads.ai \
+        --password-file /etc/step-ca/ssl/provisioner_password.txt --force
+
+    # Transfer certificates to Traefik container
+    log_info "Transferring certificates to Traefik container..."
+    local HOST_TEMP_CERT="/tmp/traefik_${CTID}.crt"
+    local HOST_TEMP_KEY="/tmp/traefik_${CTID}.key"
+    pct pull 103 "$TEMP_CERT_PATH" "$HOST_TEMP_CERT"
+    pct pull 103 "$TEMP_KEY_PATH" "$HOST_TEMP_KEY"
+    pct push "$CTID" "$HOST_TEMP_CERT" "${CERT_DIR}/cert.pem"
+    pct push "$CTID" "$HOST_TEMP_KEY" "${CERT_DIR}/key.pem"
+
+    # Transfer CA certificate
+    local HOST_TEMP_CA="/tmp/traefik_ca.pem"
+    pct pull 103 "/root/.step/certs/root_ca.crt" "$HOST_TEMP_CA"
+    pct push "$CTID" "$HOST_TEMP_CA" "${CERT_DIR}/ca.pem"
+
+    # Clean up temp files
+    rm -f "$HOST_TEMP_CERT" "$HOST_TEMP_KEY" "$HOST_TEMP_CA"
+    pct exec 103 -- rm -f "$TEMP_CERT_PATH" "$TEMP_KEY_PATH"
+
+    log_success "TLS certificates for Traefik Docker provider installed successfully."
+}
+
+# =====================================================================================
 # Function: create_systemd_service
 # Description: Creates and enables a systemd service for Traefik.
 # Arguments:
@@ -174,6 +216,7 @@ main() {
 
     install_traefik_binary
     setup_traefik_directories
+    setup_traefik_tls
     create_systemd_service
 
     log_info "Traefik feature installation completed for CTID $CTID."

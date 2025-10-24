@@ -21,7 +21,7 @@
     "timezone": "America/New_York",
     "network": {
         "external_registry_url": "docker.io/SirHeads",
-        "portainer_server_ip": "10.0.0.101",
+        "portainer_server_ip": "10.0.0.111",
         "portainer_server_port": 9443,
         "portainer_agent_port": 9001,
         "interfaces": {
@@ -46,7 +46,7 @@
             {
                 "path": "/quickOS/vm-persistent-data",
                 "clients": [
-                    "10.0.0.101",
+                    "10.0.0.111",
                     "10.0.0.102",
                     "10.0.0.13"
                 ],
@@ -432,7 +432,7 @@
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.12",
-                    "dest": "10.0.0.101",
+                    "dest": "10.0.0.111",
                     "proto": "tcp",
                     "port": "9443",
                     "comment": "Allow Traefik to access Portainer"
@@ -441,10 +441,10 @@
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.13",
-                    "dest": "10.0.0.101",
+                    "dest": "10.0.0.153",
                     "proto": "tcp",
-                    "port": "9443",
-                    "comment": "Allow Proxmox host to access Portainer for health checks"
+                    "port": "443",
+                    "comment": "Allow Proxmox host to access the Nginx gateway for Portainer API calls"
                 },
                 {
                     "type": "in",
@@ -463,6 +463,15 @@
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges with Traefik"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.12",
+                    "dest": "10.0.0.10",
+                    "proto": "tcp",
+                    "port": "9000",
+                    "comment": "Allow Traefik to connect to Step-CA for ACME challenges"
                 }
             ]
         }
@@ -491,7 +500,7 @@
                     },
                     {
                         "hostname": "drphoenix",
-                        "ip_external": "10.0.0.102"
+                        "ip_external": "10.0.0.153"
                     }
                 ]
             },
@@ -508,23 +517,31 @@
                     },
                     {
                         "hostname": "portainer",
-                        "ip_internal": "10.0.0.101"
+                        "ip_internal": "10.0.0.12"
+                    },
+                    {
+                        "hostname": "drphoenix",
+                        "ip_internal": "10.0.0.102"
                     },
                     {
                         "hostname": "granite-embedding",
-                        "ip_internal": "10.0.0.141"
+                        "ip_internal": "10.0.0.12"
                     },
                     {
                         "hostname": "granite-3b",
-                        "ip_internal": "10.0.0.142"
+                        "ip_internal": "10.0.0.12"
                     },
                     {
                         "hostname": "ollama",
-                        "ip_internal": "10.0.0.155"
+                        "ip_internal": "10.0.0.12"
                     },
                     {
                         "hostname": "llamacpp",
-                        "ip_internal": "10.0.0.157"
+                        "ip_internal": "10.0.0.12"
+                    },
+                    {
+                        "hostname": "portainer.phoenix",
+                        "ip_internal": "10.0.0.12"
                     }
                 ]
             }

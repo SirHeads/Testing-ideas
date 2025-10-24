@@ -60,6 +60,12 @@ main() {
         log_fatal "Failed to update certificate store."
     fi
 
+    # 4. Restart Docker to apply the new trust settings
+    log_info "Restarting Docker daemon to apply new CA certificate..."
+    if ! systemctl restart docker; then
+        log_warn "Failed to restart Docker daemon. This might cause issues with trust."
+    fi
+
     log_info "--- Trusted CA installation completed for VMID $VMID ---"
 }
 

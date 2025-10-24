@@ -32,4 +32,5 @@ certificatesResolvers:
       storage: /etc/traefik/acme.json
       caServer: __CA_URL__/acme/acme/directory
       keyType: EC384
-      tlsChallenge: {}
+      httpChallenge:
+        entryPoint: web

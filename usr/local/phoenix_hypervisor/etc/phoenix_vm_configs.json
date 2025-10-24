@@ -46,7 +46,7 @@
                 "port": 9443
             },
             "network_config": {
-                "ip": "10.0.0.101/24",
+                "ip": "10.0.0.111/24",
                 "gw": "10.0.0.1",
                 "nameserver": "10.0.0.13"
             },
@@ -97,7 +97,8 @@
             "features": [
                 "base_setup",
                 "docker",
-                "trusted_ca"
+                "trusted_ca",
+                "docker_proxy"
             ],
             "portainer_role": "agent",
             "portainer_environment_name": "drphoenix",
@@ -132,22 +133,33 @@
                     "environment": "development"
                 }
             ],
-            "dns_records": [
-                {
-                    "hostname": "drphoenix.phoenix.thinkheads.ai",
-                    "ip": "10.0.0.102"
-                }
-            ],
+            "dns_records": [],
             "firewall": {
                 "enabled": true,
                 "rules": [
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.101",
+                        "source": "10.0.0.111",
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Proxmox host to access agent for health checks"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Proxmox host to access agent for health checks"
                     },
                     {
                         "type": "in",

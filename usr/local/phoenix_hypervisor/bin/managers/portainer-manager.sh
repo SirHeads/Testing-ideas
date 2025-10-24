@@ -1,8 +1,7 @@
 #!/bin/bash
-#
 # File: portainer-manager.sh
 # Description: This script manages all Portainer-related operations for the Phoenix Hypervisor system.
-#              It handles the deployment of Portainer server and agents, and the synchronizatio
+#              It handles the deployment of Portainer server and agents, and the synchronization
 #              of Docker stacks via the Portainer API.
 #
 # Dependencies:
@@ -114,7 +113,7 @@ get_portainer_jwt() {
 
     while [ -z "$JWT" ] && [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Authentication attempt ${attempt}/${MAX_RETRIES}..."
-        JWT_RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/auth" \
+        JWT_RESPONSE=$(curl -s  --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/auth" \
           -H "Content-Type: application/json" \
           -d "${AUTH_PAYLOAD}")
         
@@ -164,7 +163,7 @@ deploy_portainer_instances() {
     local vms_with_portainer
     vms_with_portainer=$(jq -c '.vms[] | select(.portainer_role == "primary" or .portainer_role == "agent")' "$VM_CONFIG_FILE")
 
-    echo "$vms_with_portainer" | jq -c '.' | while read -r vm_config; do
+    while read -r vm_config; do
         local VMID=$(echo "$vm_config" | jq -r '.vmid')
         local PORTAINER_ROLE=$(echo "$vm_config" | jq -r '.portainer_role')
         local VM_NAME=$(echo "$vm_config" | jq -r '.name')
@@ -213,66 +212,47 @@ deploy_portainer_instances() {
                 chmod 755 "$shared_ssl_dir"
                 # --- END DIRECTORY PERMISSIONS FIX ---
                 local domain_name=$(get_global_config_value '.domain_name')
-                local portainer_hostname="portainer.${domain_name}"
-                local cert_path="${shared_ssl_dir}/${portainer_hostname}.crt"
-                local key_path="${shared_ssl_dir}/${portainer_hostname}.key"
+                local wildcard_hostname="*.${domain_name}"
+                local cert_filename="${domain_name}.crt"
+                local key_filename="${domain_name}.key"
+                local cert_path="${shared_ssl_dir}/${cert_filename}"
+                local key_path="${shared_ssl_dir}/${key_filename}"
 
                 # Define a temporary path inside the Step-CA container for generation
-                local temp_cert_path="/tmp/${portainer_hostname}.crt"
-                local temp_key_path="/tmp/${portainer_hostname}.key"
+                local temp_cert_path="/tmp/wildcard.crt"
+                local temp_key_path="/tmp/wildcard.key"
 
-                # Generate the certificate inside the Step-CA container
-                pct exec 103 -- step ca certificate "${portainer_hostname}" "$temp_cert_path" "$temp_key_path" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/provisioner_password.txt --force
+                # Generate the wildcard certificate inside the Step-CA container
+                log_info "Generating wildcard certificate for '${wildcard_hostname}'..."
+                pct exec 103 -- step ca certificate "${wildcard_hostname}" "$temp_cert_path" "$temp_key_path" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/provisioner_password.txt --force
 
                 # Pull the generated files to their final destination on the host
-                log_info "Pulling certificate and key to the shared SSL directory on the host..."
+                log_info "Pulling wildcard certificate and key to the shared SSL directory on the host..."
                 pct pull 103 "$temp_cert_path" "$cert_path"
                 pct pull 103 "$temp_key_path" "$key_path"
 
-                # --- BEGIN PERMISSIONS FIX ---
+                # Set world-readable permissions on the new certificate and key
                 log_info "Setting world-readable permissions on the new certificate and key..."
                 chmod 644 "$cert_path" "$key_path"
-                # --- END PERMISSIONS FIX ---
 
                 # Clean up temporary files inside the Step-CA container
                 pct exec 103 -- rm -f "$temp_cert_path" "$temp_key_path"
 
-                # --- BEGIN FIX: Copy generated certs to Portainer's cert directory ---
+                # Copy generated certs to Portainer's cert directory for its own use
                 log_info "Copying generated certificate and key to Portainer's certs directory..."
                 cp "$cert_path" "${cert_dir}/cert.pem" || log_fatal "Failed to copy certificate to Portainer certs directory."
                 cp "$key_path" "${cert_dir}/key.pem" || log_fatal "Failed to copy key to Portainer certs directory."
-                
-                # --- END FIX ---
 
-                log_info "Waiting for 2 seconds for the certificate to be available in the mount point..."
-                sleep 2
-
-                # This logic is being moved to a more appropriate location
-
-                # --- BEGIN FINAL FIX: Copy the new cert directly to the shared SSL mount ---
-                log_info "FINAL FIX: Creating Nginx include file with the new certificate..."
-                local shared_ssl_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
-                echo "ssl_certificate /ssl/portainer.phoenix.thinkheads.ai.crt;" > "${shared_ssl_dir}/portainer.phoenix.thinkheads.ai.conf"
-                echo "ssl_certificate_key /ssl/portainer.phoenix.thinkheads.ai.key;" >> "${shared_ssl_dir}/portainer.phoenix.thinkheads.ai.conf"
-
-                log_info "FINAL FIX: Reloading Nginx to use the new certificate..."
-                # --- BEGIN DIAGNOSTIC LOGGING ---
-                log_info "DIAGNOSTIC: Checking permissions of the certificate on the host..."
-                ls -l "$cert_path" "$key_path"
-                log_info "DIAGNOSTIC: Checking permissions of the shared SSL directory on the host..."
-                ls -ld "$shared_ssl_dir"
-                log_info "DIAGNOSTIC: Checking permissions of the certificate inside the Nginx container..."
-                pct exec 101 -- ls -l "/ssl/portainer.phoenix.thinkheads.ai.crt" "/ssl/portainer.phoenix.thinkheads.ai.key"
-                # --- END DIAGNOSTIC LOGGING ---
+                # Reload Nginx to ensure it picks up the new wildcard certificate
+                log_info "Reloading Nginx to use the new wildcard certificate..."
                 if ! pct exec 101 -- systemctl reload nginx; then
-                    log_fatal "FINAL FIX: Failed to reload Nginx after copying the new certificate."
+                    log_fatal "Failed to reload Nginx after deploying the new wildcard certificate."
                 fi
-                log_success "FINAL FIX: Nginx reloaded successfully with the new certificate."
-                # --- END FINAL FIX ---
+                log_success "Nginx reloaded successfully with the new wildcard certificate."
 
                 # Pull the Root CA from the Step-CA container and place it in the Portainer certs directory
-                log_info "Pulling Root CA certificate for Portainer server's trust store..."
-                local container_root_ca_source_path="/root/.step/certs/root_ca.crt"
+                log_info "Pulling Intermediate CA certificate for Portainer server's trust store..."
+                local container_root_ca_source_path="/root/.step/certs/intermediate_ca.crt"
                 local container_root_ca_tmp_path="/tmp/portainer_root_ca_for_server.crt"
                 local copy_cmd="cp ${container_root_ca_source_path} ${container_root_ca_tmp_path}"
                 
@@ -360,25 +340,29 @@ deploy_portainer_instances() {
                 local domain_name=$(get_global_config_value '.domain_name')
                 local agent_fqdn="${agent_name}.${domain_name}"
 
-                # --- BEGIN AGENT CERTIFICATE GENERATION ---
-                local agent_cert_dir="${persistent_volume_path}/certs"
-                mkdir -p "$agent_cert_dir"
-                local agent_cert_path="${agent_cert_dir}/cert.pem"
-                local agent_key_path="${agent_cert_dir}/key.pem"
-                local agent_ca_path="${agent_cert_dir}/ca.pem"
 
-                log_info "Generating Portainer Agent certificate for ${agent_fqdn}..."
-                local temp_agent_cert_path="/tmp/${agent_fqdn}.crt"
-                local temp_agent_key_path="/tmp/${agent_fqdn}.key"
-                
-                pct exec 103 -- step ca certificate "${agent_fqdn}" "$temp_agent_cert_path" "$temp_agent_key_path" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/provisioner_password.txt --force
-                pct pull 103 "$temp_agent_cert_path" "$agent_cert_path"
-                pct pull 103 "$temp_agent_key_path" "$agent_key_path"
-                
-                # Copy the definitive Intermediate CA certificate to the agent's trust store.
-                log_info "Copying definitive Intermediate CA certificate to Portainer agent's trust store..."
-                cp "${intermediate_ca_path}" "$agent_ca_path" || log_fatal "Failed to copy definitive intermediate CA to agent's certs directory."
-                # --- END AGENT CERTIFICATE GENERATION ---
+                # --- BEGIN CERTIFICATE VERIFICATION IN VM ---
+                local cert_dir_in_vm="${vm_mount_point}/certs"
+                local cert_check_cmd="test -f '${cert_dir_in_vm}/cert.pem' && test -f '${cert_dir_in_vm}/key.pem' && test -f '${cert_dir_in_vm}/ca.pem'"
+
+                log_info "Verifying agent certificates exist inside VM $VMID before starting agent..."
+                local cert_check_retries=5
+                local cert_check_delay=3
+                local cert_check_attempt=1
+                while [ "$cert_check_attempt" -le "$cert_check_retries" ]; do
+                    if qm guest exec "$VMID" -- /bin/bash -c "$cert_check_cmd"; then
+                        log_success "Agent certificates found in VM $VMID."
+                        break
+                    fi
+                    log_warn "Agent certificates not yet found in VM $VMID. Retrying in ${cert_check_delay} seconds... (Attempt ${cert_check_attempt}/${cert_check_retries})"
+                    sleep "$cert_check_delay"
+                    cert_check_attempt=$((cert_check_attempt + 1))
+                done
+
+                if [ "$cert_check_attempt" -gt "$cert_check_retries" ]; then
+                    log_fatal "Agent certificates did not appear in VM $VMID after multiple retries. Aborting agent deployment."
+                fi
+                # --- END CERTIFICATE VERIFICATION IN VM ---
 
                 log_info "Ensuring clean restart for Portainer agent on VM $VMID..."
                 qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly on VM $VMID. Proceeding with deployment."
@@ -418,7 +402,7 @@ deploy_portainer_instances() {
                 log_warn "Unknown Portainer role '$PORTAINER_ROLE' for VM $VMID. Skipping deployment."
                 ;;
         esac
-    done
+    done < <(echo "$vms_with_portainer" | jq -c '.')
     log_success "Portainer server and agent instances deployment process completed."
 
     # The dynamic configuration is now handled by the centralized generate_traefik_config.sh script.
@@ -454,7 +438,7 @@ setup_portainer_admin_user() {
     log_info "Waiting for Portainer API to become available..."
     local status_attempt=1
     while [ "$status_attempt" -le "$MAX_RETRIES" ]; do
-        local curl_args=(-s -w "\nHTTP_STATUS:%{http_code}" "${CURL_EXTRA_ARGS}")
+        local curl_args=(-s  -w "\nHTTP_STATUS:%{http_code}" "${CURL_EXTRA_ARGS}")
         if [ -n "$CA_CERT_PATH" ]; then
             curl_args+=(--cacert "$CA_CERT_PATH")
         fi
@@ -543,6 +527,25 @@ sync_all() {
     log_info "--- Stage 1: Synchronizing Core Infrastructure (DNS & Firewall) ---"
 
     # Ensure the Proxmox host trusts our internal CA before proceeding
+    # --- Definitive Fix: Ensure Root CA is present on the host ---
+    log_info "Ensuring Step-CA root certificate is present on the Proxmox host..."
+    local host_ca_path="/usr/local/share/ca-certificates/phoenix_ca.crt"
+    if [ ! -f "$host_ca_path" ]; then
+        log_info "Root CA not found on host. Copying it from Step-CA container (103)..."
+        pct pull 103 /root/.step/certs/root_ca.crt "$host_ca_path" || log_fatal "Failed to copy root CA from Step-CA container."
+    fi
+    # --- End Definitive Fix ---
+
+    # Ensure the Proxmox host trusts our internal CA before proceeding
+    local step_ca_ctid="103"
+    if pct status "$step_ca_ctid" > /dev/null 2>&1; then
+        if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_install_trusted_ca.sh"; then
+            log_fatal "Failed to install trusted CA on the host. Aborting."
+        fi
+    else
+        log_warn "Step-CA container (${step_ca_ctid}) not found. Skipping host trust installation. This may be expected during initial setup."
+    fi
+
     local step_ca_ctid="103"
     if pct status "$step_ca_ctid" > /dev/null 2>&1; then
         if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_install_trusted_ca.sh"; then
@@ -564,7 +567,7 @@ sync_all() {
     sleep 3
     log_info "Reloading Nginx in container 101 to apply the new configuration..."
     if ! pct exec 101 -- systemctl reload nginx; then
-        log_fatal "Failed to reload Nginx in container 101. The new configuration may not be active."
+        log_fatal "Failed to reload Nginx in container 101. The new configuration may not be active." "pct exec 101 -- journalctl -u nginx -n 50"
     fi
     log_success "NGINX gateway configuration applied and reloaded successfully."
     # --- END DYNAMIC NGINX CONFIGURATION ---
@@ -606,7 +609,7 @@ sync_all() {
         # Reload the Traefik service to apply the new configuration
         log_info "Reloading Traefik service..."
         if ! pct exec "$traefik_ctid" -- systemctl reload traefik; then
-            log_warn "Failed to reload Traefik service. A restart may be required to apply changes."
+            log_warn "Failed to reload Traefik service. A restart may be required to apply changes." "pct exec 102 -- journalctl -u traefik -n 50"
         fi
         log_success "Traefik synchronization complete."
     else
@@ -631,21 +634,82 @@ sync_all() {
         log_success "Successfully pulled Intermediate CA certificate."
 
         # Deploy Portainer instances (idempotent)
+        # --- BEGIN AGENT CERTIFICATE GENERATION (MOVED) ---
+        # Generate certificates for all agents before syncing endpoints.
+        local agents_to_certify
+        agents_to_certify=$(jq -c '.vms[] | select(.portainer_role == "agent")' "$VM_CONFIG_FILE")
+        while read -r agent_config; do
+            local VMID=$(echo "$agent_config" | jq -r '.vmid')
+            local agent_name=$(echo "$agent_config" | jq -r '.name')
+            local domain_name=$(get_global_config_value '.domain_name')
+            local agent_fqdn="${agent_name}.${domain_name}"
+            local agent_internal_fqdn="${agent_name}.internal.thinkheads.ai"
+            local persistent_volume_path=$(echo "$agent_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
+            
+            local agent_cert_dir="${persistent_volume_path}/certs"
+            mkdir -p "$agent_cert_dir"
+            local agent_cert_path="${agent_cert_dir}/cert.pem"
+            local agent_key_path="${agent_cert_dir}/key.pem"
+            local agent_ca_path="${agent_cert_dir}/ca.pem"
+
+            log_info "Generating Portainer Agent certificate for ${agent_fqdn}..."
+            local temp_agent_cert_path="/tmp/${agent_fqdn}.crt"
+            local temp_agent_key_path="/tmp/${agent_fqdn}.key"
+            
+            pct exec 103 -- step ca certificate "${agent_fqdn}" "$temp_agent_cert_path" "$temp_agent_key_path" --san "${agent_internal_fqdn}" --provisioner admin@thinkheads.ai --password-file /etc/step-ca/ssl/provisioner_password.txt --force
+            pct pull 103 "$temp_agent_cert_path" "$agent_cert_path"
+            pct pull 103 "$temp_agent_key_path" "$agent_key_path"
+
+            log_info "Copying definitive Intermediate CA certificate to Portainer agent's trust store..."
+            cp "${intermediate_ca_path}" "$agent_ca_path" || log_fatal "Failed to copy definitive intermediate CA to agent's certs directory."
+
+        done < <(echo "$agents_to_certify" | jq -c '.')
+        # --- END AGENT CERTIFICATE GENERATION ---
+
         deploy_portainer_instances "$intermediate_ca_path"
+
+        # --- BEGIN TRAEFIK RE-CONFIGURATION ---
+        log_info "--- Re-synchronizing Traefik to include newly deployed services ---"
+        if pct status "$traefik_ctid" > /dev/null 2>&1; then
+            if ! "${PHOENIX_BASE_DIR}/bin/generate_traefik_config.sh"; then
+                log_fatal "Failed to re-generate Traefik config."
+            fi
+            if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml" /etc/traefik/dynamic/dynamic_conf.yml; then
+                log_fatal "Failed to re-push Traefik config."
+            fi
+            pct exec "$traefik_ctid" -- chmod 644 /etc/traefik/dynamic/dynamic_conf.yml
+            if ! pct exec "$traefik_ctid" -- systemctl reload traefik; then
+                log_warn "Failed to reload Traefik post-Portainer sync."
+            fi
+            log_success "Traefik re-synchronization complete."
+        else
+            log_warn "Traefik container (102) is not running. Skipping Traefik re-sync."
+        fi
+        # --- END TRAEFIK RE-CONFIGURATION ---
+
+        # --- BEGIN PORTAINER API HEALTH CHECK ---
+        log_info "--- Performing health check on Portainer API endpoint ---"
+        local health_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh"
+        local max_retries=10
+        local retry_delay=10
+        local attempt=1
+        while [ "$attempt" -le "$max_retries" ]; do
+            if "$health_check_script"; then
+                log_success "Portainer API health check passed."
+                break
+            fi
+            log_warn "Portainer API health check failed on attempt $attempt/$max_retries. Retrying in $retry_delay seconds..."
+            sleep "$retry_delay"
+            attempt=$((attempt + 1))
+        done
+        if [ "$attempt" -gt "$max_retries" ]; then
+            log_fatal "Portainer API did not become healthy after $max_retries attempts. Aborting."
+        fi
+        # --- END PORTAINER API HEALTH CHECK ---
 
         # Get JWT and sync environments and stacks
         local JWT=$(get_portainer_jwt)
         local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
-
-        # --- Securely store the JWT for NGINX to use ---
-        local nginx_token_dir="/mnt/pve/quickOS/lxc-persistent-data/101/api_tokens"
-        local nginx_token_path="${nginx_token_dir}/portainer_jwt.token"
-        log_info "Ensuring NGINX token directory exists and has correct permissions: ${nginx_token_dir}"
-        mkdir -p "$nginx_token_dir" || log_fatal "Failed to create NGINX token directory."
-        chmod 755 "$nginx_token_dir"
-        log_info "Storing Portainer JWT for NGINX at ${nginx_token_path}"
-        echo -n "$JWT" > "$nginx_token_path" || log_fatal "Failed to write Portainer JWT for NGINX."
-        chmod 644 "$nginx_token_path"
 
         # --- Synchronize Portainer Endpoints ---
         sync_portainer_endpoints "$JWT" "$CA_CERT_PATH"
@@ -655,14 +719,14 @@ sync_all() {
         local vms_with_stacks
         vms_with_stacks=$(jq -c '.vms[] | select(.docker_stacks and (.docker_stacks | length > 0))' "$VM_CONFIG_FILE")
 
-        echo "$vms_with_stacks" | jq -c '.' | while read -r vm_config; do
+        while read -r vm_config; do
             local VMID=$(echo "$vm_config" | jq -r '.vmid')
             local agent_ip=$(echo "$vm_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
             local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
             local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
             
             log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
-            local ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+            local ENDPOINT_ID=$(curl -s  --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
             
             if [ -z "$ENDPOINT_ID" ]; then
                 log_warn "Could not find Portainer endpoint for VM ${VMID}. Skipping stack deployment for this VM."
@@ -672,7 +736,7 @@ sync_all() {
             echo "$vm_config" | jq -c '.docker_stacks[]' | while read -r stack_config; do
                 sync_stack "$VMID" "$stack_config" "$JWT" "$ENDPOINT_ID"
             done
-        done
+        done < <(echo "$vms_with_stacks" | jq -c '.')
         log_info "--- Docker stack synchronization complete ---"
         # --- END DOCKER STACK DEPLOYMENT ---
  
@@ -683,8 +747,14 @@ sync_all() {
         # Re-run the Traefik sync logic to ensure it picks up any services
         # that were just created by the Portainer sync.
         if pct status "$traefik_ctid" > /dev/null 2>&1; then
-            if ! "${PHOENIX_BASE_DIR}/bin/generate_traefik_config.sh"; then log_fatal "Failed to re-generate Traefik config."; fi
-            if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml" /etc/traefik/dynamic/dynamic_conf.yml; then log_fatal "Failed to re-push Traefik config."; fi
+            local drphoenix_endpoint_id=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r '.[] | select(.Name=="drphoenix") | .Id')
+            if [ -z "$drphoenix_endpoint_id" ]; then
+                log_warn "Could not find drphoenix endpoint ID. Skipping final Traefik sync."
+            else
+                local container_data=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints/${drphoenix_endpoint_id}/docker/containers/json" -H "Authorization: Bearer ${JWT}")
+                if ! "${PHOENIX_BASE_DIR}/bin/managers/traefik-manager.sh" "$container_data"; then log_fatal "Failed to re-generate Traefik config."; fi
+                if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml" /etc/traefik/dynamic/dynamic_conf.yml; then log_fatal "Failed to re-push Traefik config."; fi
+            fi
             pct exec "$traefik_ctid" -- chmod 644 /etc/traefik/dynamic/dynamic_conf.yml
             # The 'traefik check' command is not valid. The reload command will fail if the config is invalid.
             if ! pct exec "$traefik_ctid" -- systemctl reload traefik; then log_warn "Failed to reload Traefik post-Portainer sync."; fi
@@ -736,7 +806,7 @@ sync_stack() {
         local agent_ip=$(jq -r ".vms[] | select(.vmid == $VMID) | .network_config.ip" "$VM_CONFIG_FILE" | cut -d'/' -f1)
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
         local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
-        ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+        ENDPOINT_ID=$(curl -s  --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         if [ -z "$ENDPOINT_ID" ]; then
             log_fatal "Could not find Portainer environment for VMID ${VMID} (URL: ${ENDPOINT_URL}). Ensure agent is running and environment is created."
         fi
@@ -775,6 +845,25 @@ sync_stack() {
     mkdir -p "$hypervisor_stack_dir" || log_fatal "Failed to create stack directory on hypervisor: $hypervisor_stack_dir"
     chmod 777 "$hypervisor_stack_dir" || log_warn "Failed to set permissions on stack directory: $hypervisor_stack_dir"
     cp "$FULL_COMPOSE_PATH" "${hypervisor_stack_dir}/docker-compose.yml" || log_fatal "Failed to copy compose file to hypervisor's persistent storage."
+
+    # --- BEGIN TRAEFIK LABEL INJECTION ---
+    log_info "Injecting Traefik labels into compose file for stack '${STACK_NAME}'..."
+    local services_to_label=$(echo "$STACK_DEFINITION" | jq -r '.services | keys[] // ""')
+    for service_name in $services_to_label; do
+        local labels=$(echo "$STACK_DEFINITION" | jq -c ".services.\"${service_name}\".traefik_labels // []")
+        if [ "$(echo "$labels" | jq 'length')" -gt 0 ]; then
+            log_info "  Injecting labels for service: ${service_name}"
+            local yq_script=""
+            echo "$labels" | jq -r '.[]' | while read -r label; do
+                yq_script+=" .services.\"${service_name}\".labels += [\"${label}\"] |"
+            done
+            yq_script=${yq_script%?} # Remove trailing pipe
+            yq eval -i "$yq_script" "${hypervisor_stack_dir}/docker-compose.yml"
+        fi
+    done
+    log_success "Traefik label injection complete."
+    # --- END TRAEFIK LABEL INJECTION ---
+
     # --- END FILE-BASED DEPLOYMENT LOGIC ---
 
     # --- Handle Environment Variables ---
@@ -805,18 +894,18 @@ sync_stack() {
             local FILE_CONTENT=$(cat "${PHOENIX_BASE_DIR}/${SOURCE_PATH}")
 
             # Check if config already exists
-            local EXISTING_CONFIG_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
+            local EXISTING_CONFIG_ID=$(curl -s  --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
             if [ -n "$EXISTING_CONFIG_ID" ]; then
                 log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating to ensure content is fresh."
-                if ! curl -s --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10; then
+                if ! curl -s  --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10; then
                     log_warn "Failed to delete old Portainer Config '${CONFIG_NAME}'. Proceeding, but this might cause issues."
                 fi
             fi
 
             log_info "Creating Portainer Config '${CONFIG_NAME}'..."
             local CONFIG_PAYLOAD=$(jq -n --arg name "${CONFIG_NAME}" --arg data "${FILE_CONTENT}" '{Name: $name, Data: $data}')
-            local CONFIG_RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
+            local CONFIG_RESPONSE=$(curl -s  --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
               -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}" --retry 5 --retry-delay 10)
             local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
             log_info "DEBUG: Portainer Config creation response: ${CONFIG_RESPONSE}"
@@ -832,7 +921,7 @@ sync_stack() {
     fi
 
     local STACK_EXISTS_ID
-    STACK_EXISTS_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg name "${STACK_NAME}-${ENVIRONMENT_NAME}" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
+    STACK_EXISTS_ID=$(curl -s  --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}" --retry 5 --retry-delay 10 | jq -r --arg name "${STACK_NAME}-${ENVIRONMENT_NAME}" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
     local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}" # Unique stack name in Portainer
 
@@ -844,7 +933,7 @@ sync_stack() {
             --argjson configs "$CONFIG_IDS_JSON" \
             '{StackFilePath: $path, Env: $env, Configs: $configs, Prune: true}')
         log_info "DEBUG: PUT JSON_PAYLOAD: ${JSON_PAYLOAD}"
-        local RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
+        local RESPONSE=$(curl -s  --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}" --retry 5 --retry-delay 10)
         log_info "DEBUG: PUT API RESPONSE: ${RESPONSE}"
         if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
@@ -861,7 +950,7 @@ sync_stack() {
             --argjson configs "$CONFIG_IDS_JSON" \
             '{Name: $name, ComposeFilePathInContainer: $path, Env: $env, Configs: $configs}')
         log_info "DEBUG: POST JSON_PAYLOAD: ${JSON_PAYLOAD}"
-        local RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
+        local RESPONSE=$(curl -s  --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}" --retry 5 --retry-delay 10)
         log_info "DEBUG: POST API RESPONSE: ${RESPONSE}"
         if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
@@ -909,32 +998,84 @@ sync_portainer_endpoints() {
     local agents_to_register
     agents_to_register=$(jq -c '.vms[] | select(.portainer_role == "agent")' "$VM_CONFIG_FILE")
 
-    echo "$agents_to_register" | jq -c '.' | while read -r agent_config; do
+    while read -r agent_config; do
         local VMID=$(echo "$agent_config" | jq -r '.vmid')
-        local AGENT_NAME=$(echo "$agent_config" | jq -r '.portainer_environment_name')
-        local AGENT_IP=$(echo "$agent_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
+        local AGENT_NAME=$(echo "$agent_config" | jq -r '.portainer_environment_name' | tr -d '[:space:]')
+        log_info "Sanitized AGENT_NAME for payload: '[${AGENT_NAME}]'"
+        local AGENT_HOSTNAME="${AGENT_NAME}.internal.thinkheads.ai"
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="tcp://${AGENT_IP}:${AGENT_PORT}"
+        local ENDPOINT_URL="tcp://${AGENT_HOSTNAME}:${AGENT_PORT}"
 
         log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
         
-        local EXISTING_ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
+        local EXISTING_ENDPOINT_ID=$(curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
+
+        # Prepare certificate paths and wait for them to be ready
+        local persistent_volume_path=$(echo "$agent_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
+        local agent_ca_cert_path="${persistent_volume_path}/certs/ca.pem"
+        local agent_tls_cert_path="${persistent_volume_path}/certs/cert.pem"
+        local agent_tls_key_path="${persistent_volume_path}/certs/key.pem"
+
+        local cert_files=("$agent_ca_cert_path" "$agent_tls_cert_path" "$agent_tls_key_path")
+        local cert_wait_retries=5
+        local cert_wait_delay=2
+        for i in $(seq 1 $cert_wait_retries); do
+            if [ -s "${cert_files[0]}" ] && [ -s "${cert_files[1]}" ] && [ -s "${cert_files[2]}" ]; then
+                log_info "All agent certificates are present and non-empty."
+                break
+            fi
+            log_warn "Agent certificates not yet available or are empty. Retrying in ${cert_wait_delay}s... (Attempt ${i}/${cert_wait_retries})"
+            sleep "$cert_wait_delay"
+        done
+
+        if ! [ -s "${cert_files[0]}" ] || ! [ -s "${cert_files[1]}" ] || ! [ -s "${cert_files[2]}" ]; then
+            log_fatal "One or more agent certificates are missing or empty after multiple retries. Aborting endpoint operation."
+        fi
+
+        # Construct the full payload for creation or update
+        # Create a temporary file for the single certificate
+        local temp_single_cert="/tmp/single_cert.pem"
+        awk '/-----BEGIN CERTIFICATE-----/{p=1} p; /-----END CERTIFICATE-----/{exit}' "$agent_tls_cert_path" > "$temp_single_cert"
+
+        local API_PAYLOAD=$(jq -n \
+            --arg name "$AGENT_NAME" \
+            --arg url "$ENDPOINT_URL" \
+            --argjson groupID 1 \
+            --rawfile caCert "$agent_ca_cert_path" \
+            '{
+                "Name": $name,
+                "URL": $url,
+                "Type": 2,
+                "GroupID": $groupID,
+                "TLS": true,
+                "TLSSkipVerify": false,
+                "TLSCACert": $caCert
+            }')
 
         if [ -n "$EXISTING_ENDPOINT_ID" ]; then
-            log_info "Endpoint for VM ${VMID} already exists with ID ${EXISTING_ENDPOINT_ID}. Skipping creation."
-        else
-            log_info "Endpoint for VM ${VMID} not found. Creating it now..."
+            log_info "Endpoint '${AGENT_NAME}' already exists with ID ${EXISTING_ENDPOINT_ID}. Updating..."
+            # Update payload doesn't need Type or GroupID
+            local UPDATE_PAYLOAD=$(echo "$API_PAYLOAD" | jq 'del(.Type) | del(.GroupID)')
             
-            local CREATE_PAYLOAD=$(jq -n \
-                --arg name "$AGENT_NAME" \
-                --arg url "$ENDPOINT_URL" \
-                --argjson group_id 1 \
-                '{Name: $name, URL: $url, Type: 2, GroupId: $group_id, TLS: true, TLSSkipVerify: false, TLSCACert: "/certs/ca.pem", TLSCert: "/certs/cert.pem", TLSKey: "/certs/key.pem"}')
+            log_debug "Portainer Endpoint Update Payload: ${UPDATE_PAYLOAD}"
+            local UPDATE_RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/endpoints/${EXISTING_ENDPOINT_ID}" \
+                -H "Authorization: Bearer ${JWT}" \
+                -H "Content-Type: application/json" \
+                -d "${UPDATE_PAYLOAD}")
 
+            if echo "$UPDATE_RESPONSE" | jq -e '.Id' > /dev/null; then
+                log_success "Successfully updated endpoint for VM ${VMID}."
+            else
+                log_fatal "Failed to update endpoint for VM ${VMID}. Response: ${UPDATE_RESPONSE}"
+            fi
+        else
+            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now..."
+            
+            log_debug "Portainer Endpoint Create Payload: ${API_PAYLOAD}"
             local CREATE_RESPONSE=$(curl -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
                 -H "Authorization: Bearer ${JWT}" \
                 -H "Content-Type: application/json" \
-                -d "${CREATE_PAYLOAD}")
+                -d "${API_PAYLOAD}")
 
             if echo "$CREATE_RESPONSE" | jq -e '.Id' > /dev/null; then
                 log_success "Successfully created endpoint for VM ${VMID}."
@@ -942,7 +1083,7 @@ sync_portainer_endpoints() {
                 log_fatal "Failed to create endpoint for VM ${VMID}. Response: ${CREATE_RESPONSE}"
             fi
         fi
-    done
+    done < <(echo "$agents_to_register" | jq -c '.')
     log_info "--- Portainer Endpoint Synchronization Complete ---"
 }
 

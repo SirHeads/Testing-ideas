@@ -188,6 +188,8 @@ if [ ! -f "$PROVISIONER_PASSWORD_FILE" ]; then
 fi
 
 step ca certificate "portainer.phoenix.thinkheads.ai" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" \
+    --san "portainer.phoenix.thinkheads.ai" \
+    --san "portainer.internal.thinkheads.ai" \
     --provisioner "admin@thinkheads.ai" \
     --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" \
     --force

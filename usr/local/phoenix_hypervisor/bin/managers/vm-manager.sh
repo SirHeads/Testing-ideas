@@ -697,6 +697,60 @@ stop_vm() {
 }
 
 # =====================================================================================
+# Function: handle_docker_proxy_feature
+# Description: A special handler for the 'docker_proxy' feature. This function runs on the
+#              Proxmox host and performs all the necessary orchestration for setting up the
+#              proxy's certificates before the actual feature script runs inside the VM.
+#
+# Arguments:
+#   $1 - The VMID of the target VM.
+#
+# Returns:
+#   None. Exits with a fatal error if any step fails.
+# =====================================================================================
+handle_docker_proxy_feature() {
+    local VMID="$1"
+    log_info "--- Pre-processing for 'docker_proxy' feature on host for VMID: ${VMID} ---"
+
+    local VM_HOSTNAME=$(jq_get_vm_value "$VMID" ".name")
+    local INTERNAL_DOMAIN="internal.thinkheads.ai"
+    local FQDN="${VM_HOSTNAME}.${INTERNAL_DOMAIN}"
+    
+    # Define the path on the shared NFS volume for this VM
+    local persistent_volume_path
+    persistent_volume_path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" | head -n 1)
+    if [ -z "$persistent_volume_path" ]; then
+        log_fatal "No NFS volume found for VM $VMID. Cannot stage certificates."
+    fi
+    local SHARED_CERT_DIR="${persistent_volume_path}/.phoenix_certs"
+
+    # --- 1. CERTIFICATE GENERATION (on Host) ---
+    log_info "Generating server certificate for the Docker socket proxy via LXC 103..."
+    local TEMP_CERT_PATH_IN_CA="/tmp/${FQDN}.crt"
+    local TEMP_KEY_PATH_IN_CA="/tmp/${FQDN}.key"
+
+    # Generate the certificate inside the Step-CA container
+    pct exec 103 -- step ca certificate "${FQDN}" "$TEMP_CERT_PATH_IN_CA" "$TEMP_KEY_PATH_IN_CA" --san "${FQDN}" \
+        --provisioner admin@thinkheads.ai \
+        --password-file /etc/step-ca/ssl/provisioner_password.txt --force
+
+    # --- 2. CERTIFICATE TRANSFER (CA -> Host -> Shared Storage) ---
+    log_info "Transferring certificates to shared storage for VM ${VMID}..."
+    mkdir -p "${SHARED_CERT_DIR}"
+    
+    # Pull certs from CA container to the shared directory
+    pct pull 103 "$TEMP_CERT_PATH_IN_CA" "${SHARED_CERT_DIR}/server.crt"
+    pct pull 103 "$TEMP_KEY_PATH_IN_CA" "${SHARED_CERT_DIR}/server.key"
+    pct pull 103 "/root/.step/certs/root_ca.crt" "${SHARED_CERT_DIR}/ca.pem"
+
+    # Clean up temp files in the CA container
+    pct exec 103 -- rm -f "$TEMP_CERT_PATH_IN_CA" "$TEMP_KEY_PATH_IN_CA"
+
+    log_success "Server and CA certificates successfully staged for VM ${VMID} at ${SHARED_CERT_DIR}."
+    log_info "--- Pre-processing for 'docker_proxy' feature complete ---"
+}
+
+# =====================================================================================
 # Function: apply_vm_features
 # Description: Asynchronously executes feature installation scripts inside the VM,
 #              providing real-time log streaming and robust completion detection.
@@ -736,6 +790,12 @@ apply_vm_features() {
     mkdir -p "$hypervisor_scripts_dir"
 
     for feature in $features; do
+        # --- SPECIAL HANDLING FOR DOCKER PROXY ---
+        if [ "$feature" == "docker_proxy" ]; then
+            handle_docker_proxy_feature "$VMID"
+        fi
+        # --- END SPECIAL HANDLING ---
+
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
         if [ ! -f "$feature_script_path" ]; then
             log_fatal "Feature script not found: $feature_script_path"
@@ -766,6 +826,10 @@ apply_vm_features() {
         # --- Definitive Fix: Copy Portainer config.json ---
         log_info "Copying Portainer config.json to VM's persistent storage..."
         cp "${PHOENIX_BASE_DIR}/etc/portainer/config.json" "${hypervisor_scripts_dir}/portainer_config.json"
+
+        # --- Definitive Fix: Copy HAProxy config ---
+        log_info "Copying HAProxy config to VM's persistent storage..."
+        cp "${PHOENIX_BASE_DIR}/etc/haproxy/haproxy.cfg" "${hypervisor_scripts_dir}/haproxy.cfg"
 
         # --- Definitive Fix: Copy Step-CA root certificate ---
         log_info "Copying Step-CA root certificate to VM's persistent storage..."
@@ -911,30 +975,17 @@ apply_vm_firewall_rules() {
     fi
 
     if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall by writing 'firewall: 0' to $conf_file"
-        if grep -q "^firewall:" "$conf_file"; then
-            log_info "Found existing firewall line in $conf_file. Modifying it."
-            sed -i "s/^firewall:.*/firewall: 0/" "$conf_file"
-        else
-            log_info "No existing firewall line in $conf_file. Appending it."
-            echo "firewall: 0" >> "$conf_file"
-        fi
-        log_info "Contents of $conf_file after modification:"
-        cat "$conf_file"
+        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall..."
+        run_qm_command set "$VMID" --firewall 0
         return 0
     fi
 
-    # Enable the firewall for the VM itself by editing the config file
-    log_info "Enabling firewall flag for VM $VMID by writing 'firewall: 1' to $conf_file..."
-    if grep -q "^firewall:" "$conf_file"; then
-        log_info "Found existing firewall line in $conf_file. Modifying it."
-        sed -i "s/^firewall:.*/firewall: 1/" "$conf_file"
-    else
-        log_info "No existing firewall line in $conf_file. Appending it."
-        echo "firewall: 1" >> "$conf_file"
-    fi
-    log_info "Contents of $conf_file after modification:"
-    cat "$conf_file"
+    # Enable the firewall for the VM itself using the correct qm command
+    # The '--firewall' flag is not a valid option for `qm set`. The correct procedure
+    # is to enable the firewall on the network interface directly, which is handled below.
+    # This line is being removed to prevent fatal errors.
+    # log_info "Enabling firewall for VM $VMID..."
+    # run_qm_command set "$VMID" --firewall 1
 
     # Enable firewall on the net0 interface
     log_info "Enabling firewall on net0 interface for VM $VMID..."
@@ -946,7 +997,42 @@ apply_vm_firewall_rules() {
         log_info "Firewall is already enabled on net0 for VM $VMID."
     fi
 
-    log_info "VM $VMID is now configured for host-level firewall management. All rules will be applied globally by the hypervisor."
+    log_info "VM $VMID is now configured for host-level firewall management. Applying specific rules..."
+
+    local firewall_rules_json
+    firewall_rules_json=$(jq_get_vm_value "$VMID" ".firewall.rules")
+    local vm_fw_file="/etc/pve/firewall/${VMID}.fw"
+
+    # Create the firewall config file with default options
+    echo "[OPTIONS]" > "$vm_fw_file"
+    echo "enable: 1" >> "$vm_fw_file"
+    echo "" >> "$vm_fw_file"
+    echo "[RULES]" >> "$vm_fw_file"
+
+    # Append rules from JSON config
+    echo "$firewall_rules_json" | jq -c '.[]' | while read -r rule; do
+        local type=$(echo "$rule" | jq -r '.type')
+        local action=$(echo "$rule" | jq -r '.action')
+        local proto=$(echo "$rule" | jq -r '.proto // ""')
+        local port=$(echo "$rule" | jq -r '.port // ""')
+        local source=$(echo "$rule" | jq -r '.source // ""')
+        local dest=$(echo "$rule" | jq -r '.dest // ""')
+        local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+        local rule_line="${type^^} ${action^^}"
+        [ -n "$proto" ] && rule_line+=" -p $proto"
+        [ -n "$port" ] && rule_line+=" -dport $port"
+        [ -n "$source" ] && rule_line+=" -source $source"
+        [ -n "$dest" ] && rule_line+=" -dest $dest"
+        [ -n "$comment" ] && rule_line+=" # $comment"
+        
+        echo "$rule_line" >> "$vm_fw_file"
+        log_info "  - Added rule: $rule_line"
+    done
+
+    log_info "Firewall rules for VM $VMID have been written to $vm_fw_file."
+    log_info "Reloading Proxmox firewall to apply changes..."
+    pve-firewall restart
 }
 
 # =====================================================================================
