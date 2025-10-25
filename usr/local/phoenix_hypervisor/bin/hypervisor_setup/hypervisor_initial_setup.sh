@@ -159,7 +159,16 @@ update_and_upgrade_system() {
 #              and are dependencies for other features.
 # =====================================================================================
 install_core_utilities() {
-    log_info "Installing core utilities (s-tui, samba, yq)..."
+    log_info "Installing core utilities (s-tui, samba, yq, step-cli)..."
+    if ! command -v step &> /dev/null; then
+        log_info "step-cli not found. Installing..."
+        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || log_fatal "Failed to download Smallstep GPG key."
+        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || log_fatal "Failed to add Smallstep APT repository."
+        retry_command "apt-get update" || log_fatal "Failed to update package lists for step-cli installation."
+        retry_command "apt-get install -y step-cli" || log_fatal "Failed to install step-cli."
+    else
+        log_info "step-cli is already installed."
+    fi
     retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools yq" || log_fatal "Failed to install core utilities"
     log_info "Installed core utilities."
 }

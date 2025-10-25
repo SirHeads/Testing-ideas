@@ -25,18 +25,17 @@ install_host_trusted_ca() {
     log_info "--- Installing internal Root CA certificate on the Proxmox host ---"
 
     local step_ca_ctid="103"
-    local source_ca_path_in_container="/root/.step/certs/root_ca.crt"
+    local source_ca_path_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
     local host_ca_destination_path="/usr/local/share/ca-certificates/phoenix_internal_root_ca.crt"
 
-    # Check if the Step-CA container is running
-    if ! pct status "$step_ca_ctid" > /dev/null 2>&1; then
-        log_warn "Step-CA container (${step_ca_ctid}) is not running. Cannot install host trusted CA."
-        return 1
+    # Check if the source CA certificate exists on the host
+    if [ ! -f "$source_ca_path_on_host" ]; then
+        log_fatal "Source Root CA certificate not found at ${source_ca_path_on_host}. Cannot install host trusted CA."
     fi
 
-    log_info "Pulling Root CA from LXC ${step_ca_ctid} to ${host_ca_destination_path}..."
-    if ! pct pull "$step_ca_ctid" "$source_ca_path_in_container" "$host_ca_destination_path"; then
-        log_fatal "Failed to pull Root CA certificate from Step-CA container."
+    log_info "Copying Root CA from ${source_ca_path_on_host} to ${host_ca_destination_path}..."
+    if ! cp "$source_ca_path_on_host" "$host_ca_destination_path"; then
+        log_fatal "Failed to copy Root CA certificate to host's trust store."
     fi
 
     log_info "Forcing reconfiguration of ca-certificates to ensure new CA is recognized..."

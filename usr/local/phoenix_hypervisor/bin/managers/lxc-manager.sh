@@ -65,8 +65,8 @@ manage_ca_password_on_hypervisor() {
         log_debug "Generated and wrote new password to $final_ca_password_file."
 
         # Set permissions for the final file
-        chmod 644 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
-        log_debug "Set permissions of $final_ca_password_file to 644."
+        chmod 600 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
+        log_debug "Set permissions of $final_ca_password_file to 600."
         log_success "New CA password generated and stored at $final_ca_password_file."
     fi
     echo "$final_ca_password_file" # Return the path to the final file
@@ -95,7 +95,7 @@ manage_provisioner_password_on_hypervisor() {
     else
         log_info "Provisioner password file not found or is empty. Generating a new password..."
         echo "NewProvisioner@$$2025" > "$provisioner_password_file" || log_fatal "Failed to write new provisioner password to $provisioner_password_file."
-        chmod 644 "$provisioner_password_file" || log_fatal "Failed to set permissions for provisioner password file on hypervisor."
+        chmod 600 "$provisioner_password_file" || log_fatal "Failed to set permissions for provisioner password file on hypervisor."
         log_success "New provisioner password generated and stored at $provisioner_password_file."
     fi
     echo "$provisioner_password_file"
@@ -353,9 +353,11 @@ apply_lxc_configurations() {
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
-    # Force nameserver to be the host, ensuring all guests use the centralized DNS
-    local nameservers="10.0.0.13"
-    run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    # Read nameserver from the config file
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+    if [ -n "$nameservers" ]; then
+        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    fi
  
     # --- Apply AppArmor Profile ---
     # This function handles the application of the AppArmor profile, which is a critical security feature.
@@ -709,7 +711,12 @@ apply_mount_points() {
         log_info "No host path mount points to apply for CTID $CTID."
     fi
 
-
+    # General permission fix for shared SSL directories
+    if [ -d "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" ]; then
+        log_info "Setting ownership for shared SSL directory for CTID ${CTID}..."
+        chown -R nobody:nogroup "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" || log_warn "Failed to set ownership on shared SSL directory for CTID ${CTID}."
+        chmod -R a+r "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" || log_warn "Failed to set read permissions on shared SSL directory for CTID ${CTID}."
+    fi
 }
 
 # =====================================================================================
@@ -1435,43 +1442,15 @@ main_lxc_orchestrator() {
 
                 # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
                 if [ "$ctid" -eq 103 ]; then
-                    log_info "Handling CA password file for Step CA container (CTID 103)..."
-                    log_info "Handling CA password file for Step CA container (CTID 103)..."
-                    local final_ca_password_file
-                    final_ca_password_file=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the final file
-
-                    local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
-
-                    # Read the password from the host file and write it directly into the container
-                    local ca_password_content
-                    ca_password_content=$(cat "$final_ca_password_file")
-                    log_info "Writing CA password directly to container '$ctid:$container_ca_password_path'..."
-                    if ! pct exec "$ctid" -- bash -c "echo '$ca_password_content' > $container_ca_password_path"; then
-                        log_fatal "Failed to write CA password to container $ctid."
+                    log_info "Managing CA and provisioner passwords on the host for Step CA container (CTID 103)..."
+                    manage_ca_password_on_hypervisor "$ctid"
+                    manage_provisioner_password_on_hypervisor "$ctid"
+                    log_info "Setting final permissions for shared SSL directory on host..."
+                    local shared_ssl_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
+                    if ! chmod -R 777 "$shared_ssl_dir"; then
+                        log_fatal "Failed to set permissions on shared SSL directory on host."
                     fi
-                    log_success "CA password written to container successfully."
-
-                    # Set appropriate permissions inside the container
-                    log_info "Setting permissions for CA password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
-                        log_fatal "Failed to set permissions for CA password file inside container $ctid."
-                    fi
-                    log_success "Permissions set for CA password file inside container."
-
-                    # Also push the provisioner password file
-                    local provisioner_password_file_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
-                    local container_provisioner_password_path="/etc/step-ca/ssl/provisioner_password.txt"
-                    local provisioner_password_content
-                    provisioner_password_content=$(cat "$provisioner_password_file_on_host")
-                    log_info "Writing provisioner password directly to Step CA container..."
-                    if ! pct exec "$ctid" -- bash -c "echo '$provisioner_password_content' > $container_provisioner_password_path"; then
-                        log_fatal "Failed to write provisioner password to container $ctid."
-                    fi
-                    log_info "Setting permissions for provisioner password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 600 "$container_provisioner_password_path"; then
-                        log_fatal "Failed to set permissions for provisioner password file inside container $ctid."
-                    fi
-                    log_success "Provisioner password file pushed and configured in Step CA container."
+                    log_success "Host-side password management and permissions set for CTID 103."
                 fi
                 # --- END NEW HANDLING ---
 
@@ -1485,6 +1464,16 @@ main_lxc_orchestrator() {
                 apply_features "$ctid"
                 
                 run_application_script "$ctid"
+
+                # Restart dependent containers to pick up changes from this container's application script
+                local dependents
+                dependents=$(jq -r --arg ctid "$ctid" '.lxc_configs | to_entries[] | select(.value.dependencies[]? == ($ctid | tonumber)) | .key' "$LXC_CONFIG_FILE")
+                if [ -n "$dependents" ]; then
+                    for dependent_ctid in $dependents; do
+                        log_info "Restarting dependent container $dependent_ctid to apply changes from $ctid..."
+                        run_pct_command restart "$dependent_ctid" || log_warn "Failed to restart dependent container $dependent_ctid."
+                    done
+                fi
                 
                 run_health_check "$ctid"
                 create_template_snapshot "$ctid"
@@ -1501,7 +1490,6 @@ main_lxc_orchestrator() {
                     
                     # Ensure the destination directory exists on the hypervisor
                     mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
-
                     local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
                     local ca_root_cert_dest_path="${ca_output_dir}/phoenix_ca.crt"
                     if ! pct pull "$ctid" "$ca_root_cert_source_path" "$ca_root_cert_dest_path"; then

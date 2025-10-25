@@ -52,7 +52,7 @@ log_debug() {
     # Check if debug mode is enabled
     if [ "$PHOENIX_DEBUG" == "true" ]; then
         # Log the debug message with timestamp and script name
-        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
     fi
 }
 
@@ -69,7 +69,7 @@ log_debug() {
 # =====================================================================================
 log_info() {
     # Log the informational message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -85,7 +85,7 @@ log_info() {
 # =====================================================================================
 log_success() {
     # Log the success message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -101,7 +101,7 @@ log_success() {
 # =====================================================================================
 log_warn() {
 	# Log the warning message with timestamp and script name to stderr
-	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -117,7 +117,7 @@ log_warn() {
 # =====================================================================================
 log_error() {
     # Log the error message with timestamp and script name to stderr
-    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -133,7 +133,7 @@ log_error() {
 # =====================================================================================
 log_fatal() {
     # Log the fatal message with timestamp and script name to stderr
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "${BASH_SOURCE[-1]}"): $*" | tee -a "$MAIN_LOG_FILE" >&2
     # Exit the script due to a fatal error
     exit 1
 }

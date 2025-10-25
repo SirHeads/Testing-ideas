@@ -87,16 +87,22 @@ bootstrap_step_ca() {
 
 
     # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
-    log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
+    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_root_ca.crt" # Use the root CA cert, not the bundle
+    local CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
+    log_info "Waiting for Step CA to be ready by checking for $CA_READY_FILE..."
     local cert_attempt=1
-    while [ ! -f "$ROOT_CA_CERT_PATH" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Attempt $cert_attempt/$MAX_RETRIES: Root CA certificate not found at $ROOT_CA_CERT_PATH. Retrying in $RETRY_DELAY seconds..."
+    while [ ! -f "$CA_READY_FILE" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
+        log_info "Attempt $cert_attempt/$MAX_RETRIES: CA is not ready yet. Retrying in $RETRY_DELAY seconds..."
         sleep "$RETRY_DELAY"
         cert_attempt=$((cert_attempt + 1))
     done
+
+    if [ ! -f "$CA_READY_FILE" ]; then
+        log_fatal "Step CA did not become ready after $MAX_RETRIES attempts. Cannot proceed."
+    fi
+
     if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
-        log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH after $MAX_RETRIES attempts. Cannot retrieve fingerprint."
+        log_fatal "CA is ready, but the root certificate is still not found at $ROOT_CA_CERT_PATH."
     fi
     log_info "Root CA certificate found. Retrieving fingerprint..."
     CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)

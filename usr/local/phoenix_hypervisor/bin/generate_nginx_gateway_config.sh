@@ -70,9 +70,9 @@ server {
     listen 443 ssl http2;
     server_name *.${DOMAIN_NAME};
 
-    ssl_certificate /ssl/${DOMAIN_NAME}.crt;
-    ssl_certificate_key /ssl/${DOMAIN_NAME}.key;
-    proxy_ssl_trusted_certificate /ssl/phoenix_ca.crt;
+    ssl_certificate /etc/step-ca/ssl/${DOMAIN_NAME}.crt;
+    ssl_certificate_key /etc/step-ca/ssl/${DOMAIN_NAME}.key;
+    proxy_ssl_trusted_certificate /etc/step-ca/ssl/phoenix_ca.crt;
 
     location / {
         # Proxy to the central Traefik mesh

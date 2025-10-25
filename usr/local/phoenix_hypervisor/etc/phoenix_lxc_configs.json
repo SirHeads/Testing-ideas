@@ -444,7 +444,8 @@
             "clone_from_ctid": "900",
             "features": [
                 "base_setup",
-                "trusted_ca"
+                "trusted_ca",
+                "step_ca"
             ],
             "pct_options": [
                 "nesting=1"
@@ -493,6 +494,14 @@
                         "proto": "tcp",
                         "port": "80",
                         "comment": "Allow Nginx to proxy ACME challenges to Traefik"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Nginx to communicate with Step-CA for certificates"
                     }
                 ]
             },
@@ -507,7 +516,7 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/ssl"
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ]
         },
@@ -682,12 +691,10 @@
                     }
                 ]
             },
-            "zfs_volumes": [
+            "mount_points": [
                 {
-                    "name": "step_ca_ssl",
-                    "pool": "quickOS-lxc-persistent-data",
-                    "size_gb": 1,
-                    "mount_point": "/etc/step-ca/ssl"
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ]
         },
@@ -745,6 +752,14 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.10",
                         "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME HTTP-01 challenges"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
                         "port": "443",
                         "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges"
                     },
@@ -755,14 +770,6 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow Traefik to connect to Step-CA for ACME"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.10",
-                        "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow Step-CA to respond to ACME challenges from Traefik"
                     },
                     {
                         "type": "out",
@@ -839,7 +846,7 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/ssl"
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ]
         }

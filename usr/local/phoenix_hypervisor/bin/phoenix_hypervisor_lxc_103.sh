@@ -15,6 +15,7 @@
 # Author: Phoenix Hypervisor Team
 
 # --- SCRIPT INITIALIZATION ---
+exec &> /etc/step-ca/ssl/phoenix_hypervisor_lxc_103.log
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
@@ -60,15 +61,7 @@ initialize_step_ca() {
     fi
     log_debug "CA password file found at $CA_PASSWORD_FILE inside container."
 
-    log_debug "Checking permissions of CA password file inside container: $CA_PASSWORD_FILE"
-    local file_permissions
-    file_permissions=$(stat -c "%a" "$CA_PASSWORD_FILE")
-    log_debug "Permissions of $CA_PASSWORD_FILE: $file_permissions"
-    if [ "$file_permissions" != "600" ]; then
-        log_warn "Permissions for CA password file are not 600. Attempting to set permissions."
-        chmod 600 "$CA_PASSWORD_FILE" || log_fatal "Failed to set permissions for CA password file inside container."
-        log_debug "Set permissions of $CA_PASSWORD_FILE to 600."
-    fi
+    log_debug "Permissions for password files are now managed on the host. Skipping in-container check."
 
     # Add a check for the provisioner password file
     log_debug "Checking for existence of provisioner password file inside container: $CA_PROVISIONER_PASSWORD_FILE"
@@ -212,8 +205,15 @@ export_root_ca_certificate() {
         log_fatal "Root CA certificate not found at $root_ca_cert_path. Cannot export."
     fi
 
-    cp "$root_ca_cert_path" "${shared_ssl_dir}/phoenix_ca.crt" || log_fatal "Failed to export root CA certificate."
-    log_success "Root CA certificate exported to ${shared_ssl_dir}/phoenix_ca.crt."
+    # Create the full-chain bundle for clients like curl
+    cat "/root/.step/certs/intermediate_ca.crt" > "${shared_ssl_dir}/phoenix_ca.crt"
+    echo "" >> "${shared_ssl_dir}/phoenix_ca.crt"
+    cat "$root_ca_cert_path" >> "${shared_ssl_dir}/phoenix_ca.crt"
+    log_success "Full-chain CA bundle exported to ${shared_ssl_dir}/phoenix_ca.crt."
+
+    # Also export the root certificate by itself for trust store installation
+    cat "$root_ca_cert_path" > "${shared_ssl_dir}/phoenix_root_ca.crt" || log_fatal "Failed to export root CA certificate."
+    log_success "Root CA certificate exported to ${shared_ssl_dir}/phoenix_root_ca.crt."
 }
 
 # =====================================================================================
@@ -345,9 +345,12 @@ main() {
     setup_ca_service
     add_acme_provisioner
     verify_ca_status
+
+    # Create a ready file to signal completion
+    touch "/etc/step-ca/ssl/ca.ready" || log_warn "Failed to create CA ready file."
  
-    # Pull diagnostic logs to the host before the temporary directory is cleaned up
-    log_info "Pulling diagnostic logs from container to host..."
+     # Pull diagnostic logs to the host before the temporary directory is cleaned up
+     log_info "Pulling diagnostic logs from container to host..."
     local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
     local ca_output_dir="${lxc_persistent_data_base_path}/${CTID}/ssl" # Using the existing SSL directory for logs
 

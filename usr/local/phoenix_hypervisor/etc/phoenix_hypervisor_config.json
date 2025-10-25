@@ -542,6 +542,10 @@
                     {
                         "hostname": "portainer.phoenix",
                         "ip_internal": "10.0.0.12"
+                    },
+                    {
+                        "hostname": "portainer-agent",
+                        "ip_internal": "10.0.0.102"
                     }
                 ]
             }

@@ -21,7 +21,7 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 # --- Function to ensure Nginx certificates are trusted ---
 ensure_ca_trust() {
     echo "Ensuring the system trusts the Phoenix CA..."
-    local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt"
+    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_ca.crt"
     local TRUST_STORE_PATH="/usr/local/share/ca-certificates/phoenix_ca.crt"
 
     # Wait for the root CA to become available via the mount point
@@ -41,6 +41,67 @@ ensure_ca_trust() {
     cp "$ROOT_CA_CERT_PATH" "$TRUST_STORE_PATH" || { echo "FATAL: Failed to copy root CA to trust store." >&2; exit 1; }
     update-ca-certificates || { echo "FATAL: Failed to update CA certificates." >&2; exit 1; }
     echo "Phoenix CA is now trusted by the system."
+}
+
+# --- Function to generate Nginx certificate if missing ---
+generate_nginx_cert() {
+    echo "Checking for Nginx SSL certificate..."
+    local CERT_PATH="/etc/step-ca/ssl/phoenix.thinkheads.ai.crt"
+    local KEY_PATH="/etc/step-ca/ssl/phoenix.thinkheads.ai.key"
+    local PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+
+    if [ -f "$CERT_PATH" ] && [ -f "$KEY_PATH" ]; then
+        echo "Nginx SSL certificate already exists. Skipping generation."
+        return 0
+    fi
+
+    echo "Nginx SSL certificate not found. Generating a new one from Step CA..."
+
+    # 1. Bootstrap Step CLI
+    local CA_URL="https://ca.internal.thinkheads.ai:9000"
+    local CA_IP="10.0.0.10"
+    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_ca.crt"
+    
+    # Add CA hostname to /etc/hosts for internal resolution
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || { echo "FATAL: Failed to add CA entry to /etc/hosts." >&2; exit 1; }
+    fi
+
+    # Wait for Step CA to become healthy
+    local attempt=1
+    local max_attempts=12
+    while ! step ca health --ca-url "$CA_URL" --root "$ROOT_CA_CERT_PATH"; do
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            echo "FATAL: Step CA did not become healthy after waiting." >&2
+            exit 1
+        fi
+        echo "Waiting for Step CA... (Attempt $attempt/$max_attempts)"
+        sleep 10
+        attempt=$((attempt + 1))
+    done
+
+    local CA_FINGERPRINT
+    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
+    if [ -z "$CA_FINGERPRINT" ]; then
+        echo "FATAL: Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH." >&2
+        exit 1
+    fi
+    echo "Retrieved CA Fingerprint: $CA_FINGERPRINT"
+
+    if ! step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
+        echo "FATAL: Failed to bootstrap step CLI with CA information." >&2
+        exit 1
+    fi
+    echo "step CLI bootstrapped successfully."
+
+    # 2. Generate Certificate
+    local DOMAIN_NAME="*.phoenix.thinkheads.ai"
+    if ! step ca certificate "$DOMAIN_NAME" "$CERT_PATH" "$KEY_PATH" --provisioner "admin@thinkheads.ai" --password-file "$PROVISIONER_PASSWORD_FILE" --force; then
+        echo "FATAL: Failed to generate certificate for Nginx." >&2
+        exit 1
+    fi
+
+    echo "Successfully generated Nginx SSL certificate."
 }
 
 # --- Package Installation ---
@@ -117,6 +178,7 @@ ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
 
 # --- Certificate Trust ---
 ensure_ca_trust
+generate_nginx_cert
 
 
 # Overwrite vllm_gateway to ensure JS module usage. This is now handled by copying the file directly.

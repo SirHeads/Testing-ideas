@@ -59,6 +59,16 @@ main() {
                     "rule": "Host(`\($service_def.name).\($internal_domain)`)",
                     "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
                 }
+            ),
+            # Add Portainer Agent Service
+            ($vms[0].vms[]? | select(.portainer_role == "agent") |
+                {
+                    "name": "portainer-agent",
+                    "rule": "Host(`portainer-agent.\($internal_domain)`)",
+                    "url": "https://\(.network_config.ip | split("/")[0]):9001",
+                    "transport": "portainer-agent-transport",
+                    "serverName": "portainer-agent.\($internal_domain)"
+                }
             )
         ]
         '
@@ -98,10 +108,9 @@ main() {
         echo "$traefik_services_json" | jq -r '
             .[] | select(.transport) |
             "    \(.transport):\n" +
-            "      insecureSkipVerify: true\n" +
             "      serverName: \"\(.serverName)\"\n" +
             "      rootCAs:\n" +
-            "        - \"/ssl/phoenix_ca.crt\""
+            "        - \"/etc/step-ca/ssl/phoenix_ca.crt\""
         '
     } > "$OUTPUT_FILE"
 
