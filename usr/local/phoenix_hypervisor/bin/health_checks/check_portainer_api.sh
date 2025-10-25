@@ -28,7 +28,7 @@ main() {
 
     # 2. Use curl to check the endpoint
     log_info "Checking Portainer API endpoint at $PORTAINER_URL..."
-    if ! curl -s --fail --cacert "$CA_CERT_PATH" "$PORTAINER_URL" > /dev/null; then
+    if ! curl -v --fail --cacert "$CA_CERT_PATH" "$PORTAINER_URL"; then
         log_error "Health check failed: Unable to connect to Portainer API at $PORTAINER_URL."
         log_error "This could be due to a firewall issue, a problem with Nginx or Traefik, or the Portainer service not being ready."
         return 1

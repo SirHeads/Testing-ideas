@@ -750,6 +750,14 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "8443",
+                        "comment": "Allow Nginx to proxy to Traefik's websecure entrypoint"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
                         "source": "10.0.0.10",
                         "proto": "tcp",
                         "port": "80",

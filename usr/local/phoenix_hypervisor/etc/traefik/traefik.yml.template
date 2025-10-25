@@ -15,7 +15,7 @@ entryPoints:
   web:
     address: ":80"
   websecure:
-    address: ":443"
+    address: ":8443"
   traefik:
     address: ":8080"
 
