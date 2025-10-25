@@ -172,12 +172,17 @@ fi
 
 log_info "Bootstrapping step-cli with Step-CA..."
 CA_URL="https://ca.internal.thinkheads.ai:9000"
-CA_FINGERPRINT=$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_ca.crt)
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        log_info "Adding Step CA to /etc/hosts..."
-        echo "10.0.0.10 ca.internal.thinkheads.ai" >> /etc/hosts
-    fi
-step ca bootstrap --ca-url "${CA_URL}" --fingerprint "${CA_FINGERPRINT}"
+# The fingerprint is now passed as an environment variable by the vm-manager
+if [ -z "$STEP_CA_FINGERPRINT" ]; then
+    log_fatal "STEP_CA_FINGERPRINT environment variable is not set. Cannot bootstrap the CA."
+fi
+log_info "Using CA fingerprint from environment variable: $STEP_CA_FINGERPRINT"
+
+if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+    log_info "Adding Step CA to /etc/hosts..."
+    echo "10.0.0.10 ca.internal.thinkheads.ai" >> /etc/hosts
+fi
+step ca bootstrap --ca-url "${CA_URL}" --fingerprint "${STEP_CA_FINGERPRINT}"
 
 log_info "Generating certificate for portainer.phoenix.thinkheads.ai..."
 CERT_DIR="/etc/docker/certs.d/portainer"

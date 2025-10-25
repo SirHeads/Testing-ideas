@@ -214,6 +214,16 @@ export_root_ca_certificate() {
     # Also export the root certificate by itself for trust store installation
     cat "$root_ca_cert_path" > "${shared_ssl_dir}/phoenix_root_ca.crt" || log_fatal "Failed to export root CA certificate."
     log_success "Root CA certificate exported to ${shared_ssl_dir}/phoenix_root_ca.crt."
+
+    # Generate and export the root CA fingerprint
+    log_info "Generating and exporting root CA fingerprint..."
+    local fingerprint
+    fingerprint=$(/usr/bin/step certificate fingerprint "$root_ca_cert_path")
+    if [ -z "$fingerprint" ]; then
+        log_fatal "Failed to generate root CA fingerprint."
+    fi
+    echo "$fingerprint" > "${shared_ssl_dir}/root_ca.fingerprint" || log_fatal "Failed to export root CA fingerprint."
+    log_success "Root CA fingerprint exported to ${shared_ssl_dir}/root_ca.fingerprint."
 }
 
 # =====================================================================================

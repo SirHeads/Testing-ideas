@@ -50,53 +50,15 @@ generate_nginx_cert() {
     local KEY_PATH="/etc/step-ca/ssl/phoenix.thinkheads.ai.key"
     local PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
 
-    if [ -f "$CERT_PATH" ] && [ -f "$KEY_PATH" ]; then
-        echo "Nginx SSL certificate already exists. Skipping generation."
-        return 0
-    fi
+    echo "Forcing regeneration of Nginx SSL certificate to ensure validity."
+    rm -f "$CERT_PATH" "$KEY_PATH"
 
-    echo "Nginx SSL certificate not found. Generating a new one from Step CA..."
-
-    # 1. Bootstrap Step CLI
-    local CA_URL="https://ca.internal.thinkheads.ai:9000"
-    local CA_IP="10.0.0.10"
-    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_ca.crt"
-    
-    # Add CA hostname to /etc/hosts for internal resolution
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || { echo "FATAL: Failed to add CA entry to /etc/hosts." >&2; exit 1; }
-    fi
-
-    # Wait for Step CA to become healthy
-    local attempt=1
-    local max_attempts=12
-    while ! step ca health --ca-url "$CA_URL" --root "$ROOT_CA_CERT_PATH"; do
-        if [ "$attempt" -ge "$max_attempts" ]; then
-            echo "FATAL: Step CA did not become healthy after waiting." >&2
-            exit 1
-        fi
-        echo "Waiting for Step CA... (Attempt $attempt/$max_attempts)"
-        sleep 10
-        attempt=$((attempt + 1))
-    done
-
-    local CA_FINGERPRINT
-    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
-    if [ -z "$CA_FINGERPRINT" ]; then
-        echo "FATAL: Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH." >&2
-        exit 1
-    fi
-    echo "Retrieved CA Fingerprint: $CA_FINGERPRINT"
-
-    if ! step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
-        echo "FATAL: Failed to bootstrap step CLI with CA information." >&2
-        exit 1
-    fi
-    echo "step CLI bootstrapped successfully."
-
-    # 2. Generate Certificate
+    # 1. Generate Certificate
+    # We must provide the CA URL and the root cert path for this online request.
     local DOMAIN_NAME="*.phoenix.thinkheads.ai"
-    if ! step ca certificate "$DOMAIN_NAME" "$CERT_PATH" "$KEY_PATH" --provisioner "admin@thinkheads.ai" --password-file "$PROVISIONER_PASSWORD_FILE" --force; then
+    local CA_URL="https://ca.internal.thinkheads.ai:9000"
+    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_root_ca.crt"
+    if ! step ca certificate "$DOMAIN_NAME" "$CERT_PATH" "$KEY_PATH" --provisioner "admin@thinkheads.ai" --password-file "$PROVISIONER_PASSWORD_FILE" --force --ca-url "$CA_URL" --root "$ROOT_CA_CERT_PATH"; then
         echo "FATAL: Failed to generate certificate for Nginx." >&2
         exit 1
     fi

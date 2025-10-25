@@ -849,6 +849,15 @@ apply_vm_features() {
             log_warn "Step-CA provisioner password file not found at $provisioner_password_source_path. Certificate generation for Portainer will fail."
         fi
 
+        # --- Final Fix: Copy the root CA fingerprint ---
+        log_info "Copying Step-CA root fingerprint to VM's persistent storage..."
+        local fingerprint_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint"
+        if [ -f "$fingerprint_source_path" ]; then
+            cp "$fingerprint_source_path" "${hypervisor_scripts_dir}/root_ca.fingerprint"
+        else
+            log_warn "Step-CA root fingerprint not found at $fingerprint_source_path. VM bootstrap will fail."
+        fi
+
         local persistent_mount_point
         persistent_mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" | head -n 1)
         local vm_script_dir="${persistent_mount_point}/.phoenix_scripts"
@@ -867,11 +876,20 @@ apply_vm_features() {
         # Ensure previous exit code file is removed
         run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f $exit_code_file_in_vm"
 
-        # Execute the script in the background, redirecting output to log file and capturing exit code
-        local exec_command="nohup /bin/bash -c '$vm_script_path $VMID > $log_file_in_vm 2>&1; echo \$? > $exit_code_file_in_vm' &"
+        # Read the fingerprint from the shared location
+        local fingerprint_file="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint"
+        local ca_fingerprint=""
+        if [ -f "$fingerprint_file" ]; then
+            ca_fingerprint=$(cat "$fingerprint_file")
+        else
+            log_warn "CA fingerprint file not found at $fingerprint_file. Bootstrap may fail."
+        fi
+
+        # Execute the script in the background, passing the fingerprint as an environment variable
+        local exec_command="nohup /bin/bash -c 'export STEP_CA_FINGERPRINT=\"${ca_fingerprint}\"; $vm_script_path $VMID > $log_file_in_vm 2>&1; echo \$? > $exit_code_file_in_vm' &"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "$exec_command"
 
-        log_info "Feature script '$feature' started. Streaming logs from $log_file_in_vm..."
+        log_info "Feature script '$feature' started with dynamic fingerprint. Streaming logs from $log_file_in_vm..."
 
         local timeout=1800 # 30 minutes timeout
         local start_time=$SECONDS
