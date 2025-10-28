@@ -524,11 +524,21 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/101/logs",
-                    "container_path": "/var/log/nginx"
+                    "container_path": "/var/log/nginx",
+                    "owner_uid": 33,
+                    "owner_gid": 33
                 },
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl",
-                    "container_path": "/etc/nginx/ssl"
+                    "container_path": "/etc/nginx/ssl",
+                    "owner_uid": 0,
+                    "owner_gid": 0
+                },
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl",
+                    "owner_uid": 0,
+                    "owner_gid": 0
                 }
             ]
         },
@@ -667,6 +677,7 @@
                 "base_setup",
                 "step_ca"
             ],
+            "application_script": "phoenix_hypervisor_lxc_103.sh",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,
@@ -717,8 +728,8 @@
                 }
             ],
             "health_check": {
-                "command": "nc -z localhost 9000",
-                "retries": 30,
+                "command": "/usr/local/phoenix_hypervisor/bin/health_checks/check_step_ca.sh",
+                "retries": 5,
                 "interval": 10
             }
         },

@@ -1,33 +1,20 @@
-# Step CA Initialization Fix Plan v3
+# Step-CA Final Fix Plan v3
 
-## 1. Summary of the Problem
+## 1. Diagnosis
 
-After fixing the mount point and permissions issues, the `step-ca` service is still failing to start reliably. The logs show that the `step ca init` command is failing because a partial configuration already exists from previous failed attempts. The initialization script is not truly idempotent, causing it to fail if it's run more than once.
+The Step-CA service is now running correctly, but the application-level health check is failing with a TLS validation error: `x509: cannot validate certificate for 127.0.0.1 because it doesn't contain any IP SANs`.
 
-## 2. Proposed Solution
+This is because the health check connects to `127.0.0.1`, but the CA's certificate is not valid for this IP address.
 
-To resolve this, I will add the `--force` flag to the `step ca init` command in the `run-step-ca.sh` script. This will ensure that any existing partial configuration is overwritten, allowing the CA to initialize cleanly every time the script is run.
+## 2. The Fix
 
-### 2.1. Update `run-step-ca.sh`
+The solution is to add `127.0.0.1` to the list of names for which the CA's certificate is valid. This is done by adding it to the `--dns` flag in the `step ca init` command.
 
-**File:** `usr/local/phoenix_hypervisor/bin/run-step-ca.sh`
+**File to Modify:** `usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_lxc_103.sh`
 
 **Change:**
+Modify the `step ca init` command to include `127.0.0.1` in the list of DNS names.
 
-```diff
---- a/usr/local/phoenix_hypervisor/bin/run-step-ca.sh
-+++ b/usr/local/phoenix_hypervisor/bin/run-step-ca.sh
-@@ -49,7 +49,7 @@
-      step ca init --name "$root_ca_name" --provisioner "$provisioner_name" \
-          --dns "$dns_name" --dns "phoenix.thinkheads.ai" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" \
-          --address "$address" --password-file "${SSL_DIR}/ca_password.txt" --provisioner-password-file "${SSL_DIR}/provisioner_password.txt" \
--         --with-ca-url "https://${dns_name}:9000"
-+         --with-ca-url "https://${dns_name}:9000" --force
-  
-      # Add ACME provisioner
-      step ca provisioner add acme --type ACME
-```
+## 3. Validation
 
-## 3. Next Steps
-
-Please review this plan. If you approve, I will switch to `code` mode to apply the change.
+After applying this change, the `phoenix create 103` command should be re-run. The `step ca init` command will now generate a certificate that is valid for `127.0.0.1`, and the final `step ca health` check will succeed.

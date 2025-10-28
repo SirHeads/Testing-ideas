@@ -15,6 +15,8 @@
 # Author: Phoenix Hypervisor Team
 
 # --- SCRIPT INITIALIZATION ---
+# Ensure the logging directory exists before redirecting output.
+mkdir -p /etc/step-ca/ssl || { echo "FATAL: Could not create /etc/step-ca/ssl" >&2; exit 1; }
 exec &> /etc/step-ca/ssl/phoenix_hypervisor_lxc_103.log
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE}")" &> /dev/null && pwd)
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
@@ -27,12 +29,13 @@ CA_NAME="ThinkHeads Internal CA"
 CA_DNS="ca.internal.thinkheads.ai" # Reverted to intended external DNS name
 CA_ADDRESS=":9000" # Changed to a non-privileged port to avoid conflict with Nginx
 CA_PROVISIONER_EMAIL="admin@thinkheads.ai"
-CA_CONFIG_DIR="/root/.step/config"
-CA_CONFIG_FILE="${CA_CONFIG_DIR}/ca.json"
+# --- REFACTORED: Centralize all state into the shared SSL directory ---
+export STEPPATH="/etc/step-ca/ssl"
+CA_CONFIG_FILE="${STEPPATH}/config/ca.json"
 CA_SERVICE_FILE="/etc/systemd/system/step-ca.service"
-CA_PASSWORD_FILE="/etc/step-ca/ssl/ca_password.txt" # Path to the mounted password file
-# CA_INIT_PASSWORD=$(openssl rand -base64 32) # Removed: Password is now managed on the host
-CA_PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+CA_PASSWORD_FILE="${STEPPATH}/ca_password.txt"
+CA_PROVISIONER_PASSWORD_FILE="${STEPPATH}/provisioner_password.txt"
+# --- END REFACTOR ---
 
 # =====================================================================================
 # Function: initialize_step_ca
@@ -45,34 +48,48 @@ CA_PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
 initialize_step_ca() {
     log_info "Initializing Smallstep CA..."
 
-    # Check if CA is already initialized
+    # Check if CA is already initialized by looking for the config file in our centralized state directory
     if test -f "$CA_CONFIG_FILE"; then
         log_info "Smallstep CA already initialized. Skipping."
         return 0
     fi
  
+    # --- REORDERED LOGIC: Generate passwords before any other action ---
+    log_info "Managing CA password file..."
+    if [ -s "$CA_PASSWORD_FILE" ]; then
+        log_info "CA password file already exists and is not empty. No action needed."
+    else
+        log_info "CA password file not found or is empty. Generating a new password..."
+        if ! openssl rand -base64 32 > "$CA_PASSWORD_FILE"; then
+            log_fatal "Failed to generate and write new CA password to $CA_PASSWORD_FILE."
+        fi
+        if ! chmod 600 "$CA_PASSWORD_FILE"; then
+            log_fatal "Failed to set permissions for CA password file."
+        fi
+        log_success "New CA password generated and stored at $CA_PASSWORD_FILE."
+    fi
+
+    log_info "Managing provisioner password file..."
+    if [ -s "$CA_PROVISIONER_PASSWORD_FILE" ]; then
+        log_info "Provisioner password file already exists and is not empty. No action needed."
+    else
+        log_info "Provisioner password file not found or is empty. Generating a new password..."
+        if ! openssl rand -base64 32 > "$CA_PROVISIONER_PASSWORD_FILE"; then
+            log_fatal "Failed to generate and write new provisioner password to $CA_PROVISIONER_PASSWORD_FILE."
+        fi
+        if ! chmod 600 "$CA_PROVISIONER_PASSWORD_FILE"; then
+            log_fatal "Failed to set permissions for provisioner password file."
+        fi
+        log_success "New provisioner password generated and stored at $CA_PROVISIONER_PASSWORD_FILE."
+    fi
+    # --- END REORDERED LOGIC ---
+
     # Initialize the CA with a password from the mounted file
-    log_info "Initializing Smallstep CA using the mounted password file: $CA_PASSWORD_FILE..."
-    
-    # Verify the password file exists and its permissions
-    log_debug "Checking for existence of CA password file inside container: $CA_PASSWORD_FILE"
-    if [ ! -f "$CA_PASSWORD_FILE" ]; then
-        log_fatal "CA password file not found at $CA_PASSWORD_FILE inside container. Cannot initialize CA."
-    fi
-    log_debug "CA password file found at $CA_PASSWORD_FILE inside container."
-
-    log_debug "Permissions for password files are now managed on the host. Skipping in-container check."
-
-    # Add a check for the provisioner password file
-    log_debug "Checking for existence of provisioner password file inside container: $CA_PROVISIONER_PASSWORD_FILE"
-    if [ ! -f "$CA_PROVISIONER_PASSWORD_FILE" ]; then
-        log_fatal "Provisioner password file not found at $CA_PROVISIONER_PASSWORD_FILE inside container. Cannot initialize CA."
-    fi
-    log_debug "Provisioner password file found at $CA_PROVISIONER_PASSWORD_FILE inside container."
-
-    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "phoenix.thinkheads.ai" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
-        log_fatal "Failed to initialize Smallstep CA in container $CTID."
-    fi
+    log_info "Initializing Smallstep CA using the generated password files..."
+ 
+     if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "phoenix.thinkheads.ai" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --dns "127.0.0.1" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
+         log_fatal "Failed to initialize Smallstep CA in container $CTID."
+     fi
     log_success "Smallstep CA initialized successfully."
  
     # Add ca.internal.thinkheads.ai to /etc/hosts for internal resolution
@@ -101,7 +118,7 @@ add_acme_provisioner() {
 
     # Check if ACME provisioner already exists
     local provisioner_list_output
-    provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt 2>&1)
+    provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" 2>&1)
     if [ $? -ne 0 ]; then
         log_warn "step ca provisioner list failed or returned empty output. Assuming no ACME provisioner exists. Output: $provisioner_list_output"
         provisioner_list_output="[]" # Ensure the variable is a valid empty JSON array
@@ -115,7 +132,7 @@ add_acme_provisioner() {
     log_info "Attempting to add ACME provisioner with http-01 challenge enabled..."
     local add_provisioner_output
     log_info "Attempting to add ACME provisioner with http-01 and tls-alpn-01 challenges enabled..."
-    if ! add_provisioner_output=$(/bin/bash -c "STEPDEBUG=1 /usr/bin/step ca provisioner add acme --type ACME --challenge http-01 --challenge tls-alpn-01 --ca-url https://$CA_DNS$CA_ADDRESS --root /root/.step/certs/root_ca.crt" 2>&1); then
+    if ! add_provisioner_output=$(/bin/bash -c "STEPDEBUG=1 /usr/bin/step ca provisioner add acme --type ACME --challenge http-01 --challenge tls-alpn-01 --ca-url https://$CA_DNS$CA_ADDRESS --root \"${STEPPATH}/certs/root_ca.crt\"" 2>&1); then
         log_fatal "Failed to add ACME provisioner to Smallstep CA in container $CTID. Output: $add_provisioner_output"
     fi
     log_success "ACME provisioner added successfully. Output: $add_provisioner_output"
@@ -207,7 +224,7 @@ verify_ca_status() {
     local acme_attempt=1
     while [ "$acme_attempt" -le "$acme_retries" ]; do
         local provisioner_list_output
-        provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt 2>&1)
+        provisioner_list_output=$(/usr/bin/step ca provisioner list --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" 2>&1)
         if echo "$provisioner_list_output" | jq -e '.[] | select(.type == "ACME")' > /dev/null; then
             log_info "ACME provisioner is active."
             return 0
@@ -234,14 +251,14 @@ verify_ca_status() {
 export_root_ca_certificate() {
     log_info "Exporting root CA certificate to shared SSL directory..."
     local shared_ssl_dir="/etc/step-ca/ssl"
-    local root_ca_cert_path="/root/.step/certs/root_ca.crt"
-
+    local root_ca_cert_path="${STEPPATH}/certs/root_ca.crt"
+ 
     if [ ! -f "$root_ca_cert_path" ]; then
         log_fatal "Root CA certificate not found at $root_ca_cert_path. Cannot export."
     fi
 
     # Create the full-chain bundle for clients like curl
-    cat "/root/.step/certs/intermediate_ca.crt" > "${shared_ssl_dir}/phoenix_ca.crt"
+    cat "${STEPPATH}/certs/intermediate_ca.crt" > "${shared_ssl_dir}/phoenix_ca.crt"
     echo "" >> "${shared_ssl_dir}/phoenix_ca.crt"
     cat "$root_ca_cert_path" >> "${shared_ssl_dir}/phoenix_ca.crt"
     log_success "Full-chain CA bundle exported to ${shared_ssl_dir}/phoenix_ca.crt."
@@ -317,7 +334,7 @@ WantedBy=multi-user.target"
     local retries=10
     local delay=3
     for ((i=0; i<retries; i++)); do
-        if /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt &> /dev/null; then
+        if /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" &> /dev/null; then
             log_info "Step CA service is healthy."
             break
         fi
@@ -325,7 +342,7 @@ WantedBy=multi-user.target"
         sleep $delay
     done
 
-    if ! /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root /root/.step/certs/root_ca.crt &> /dev/null; then
+    if ! /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" &> /dev/null; then
         log_error "Step CA service failed to become healthy after $((retries * delay)) seconds."
         log_info "Displaying /var/log/step-ca-startup.log for more details:"
         cat /var/log/step-ca-startup.log || log_warn "Could not read /var/log/step-ca-startup.log"
@@ -385,6 +402,21 @@ main() {
 
     log_info "Starting Step CA application script for CTID $CTID."
  
+    # --- NEW: Enforce idempotency by ensuring a clean slate ---
+    log_info "Wiping shared SSL directory to ensure a clean initialization..."
+    local shared_ssl_dir="/etc/step-ca/ssl"
+    local log_file_name="phoenix_hypervisor_lxc_103.log"
+    # Use find to delete everything *except* our log file. This is safer than rm -rf /*
+    find "$shared_ssl_dir" -mindepth 1 -not -name "$log_file_name" -exec rm -rf {} + || log_fatal "Failed to wipe contents of $shared_ssl_dir."
+    log_info "Contents of $shared_ssl_dir (excluding log file) have been wiped."
+    # --- END NEW ---
+    
+    # --- NEW: Also remove the default step configuration directory to prevent interactive prompts ---
+    log_info "Removing default step configuration directory at /root/.step..."
+    rm -rf /root/.step
+    log_info "Default step configuration directory removed."
+    # --- END NEW ---
+
     initialize_step_ca
     export_root_ca_certificate
     setup_ca_service

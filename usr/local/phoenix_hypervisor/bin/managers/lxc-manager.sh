@@ -33,75 +33,6 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 ca_password_file_on_host=""
 
 # =====================================================================================
-# Function: manage_ca_password_on_hypervisor
-# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
-#              If the file does not exist, a new strong password is generated and stored
-#              in a temporary location.
-# Arguments:
-#   $1 - The CTID of the container (expected to be 103).
-# Returns:
-#   The path to the temporary password file on the hypervisor. Exits with a fatal error
-#   if file operations fail.
-# =====================================================================================
-manage_ca_password_on_hypervisor() {
-    local CTID="$1"
-    log_info "Managing CA password for CTID $CTID on hypervisor..."
-
-    local final_ca_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
-    local final_ca_password_file="${final_ca_password_dir}/ca_password.txt"
-    ca_password_file_on_host="$final_ca_password_file" # Set global variable to the final path
-
-    log_debug "Final CA password file path: $final_ca_password_file"
-
-    # Ensure the destination directory exists on the hypervisor
-    mkdir -p "$final_ca_password_dir" || log_fatal "Failed to create destination directory for CA password: $final_ca_password_dir."
-
-    if [ -s "$final_ca_password_file" ]; then
-        log_info "CA password file already exists and is not empty at $final_ca_password_file. No action needed."
-    else
-        log_info "CA password file not found or is empty. Generating a new password..."
-        log_info "CA password file not found. Creating it with the specified password..."
-        echo "NewKick@$$2025" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
-        log_debug "Generated and wrote new password to $final_ca_password_file."
-
-        # Set permissions for the final file
-        chmod 600 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
-        log_debug "Set permissions of $final_ca_password_file to 600."
-        log_success "New CA password generated and stored at $final_ca_password_file."
-    fi
-    echo "$final_ca_password_file" # Return the path to the final file
-}
-
-# =====================================================================================
-# Function: manage_provisioner_password_on_hypervisor
-# Description: Ensures a persistent provisioner password file exists on the hypervisor for CTID 103.
-#              If the file does not exist, a new strong password is generated and stored.
-# Arguments:
-#   $1 - The CTID of the container (expected to be 103).
-# Returns:
-#   The path to the provisioner password file on the hypervisor.
-# =====================================================================================
-manage_provisioner_password_on_hypervisor() {
-    local CTID="$1"
-    log_info "Managing provisioner password for CTID $CTID on hypervisor..."
-
-    local provisioner_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
-    local provisioner_password_file="${provisioner_password_dir}/provisioner_password.txt"
-
-    mkdir -p "$provisioner_password_dir" || log_fatal "Failed to create destination directory for provisioner password: $provisioner_password_dir."
-
-    if [ -s "$provisioner_password_file" ]; then
-        log_info "Provisioner password file already exists and is not empty at $provisioner_password_file. No action needed."
-    else
-        log_info "Provisioner password file not found or is empty. Generating a new password..."
-        echo "NewProvisioner@$$2025" > "$provisioner_password_file" || log_fatal "Failed to write new provisioner password to $provisioner_password_file."
-        chmod 600 "$provisioner_password_file" || log_fatal "Failed to set permissions for provisioner password file on hypervisor."
-        log_success "New provisioner password generated and stored at $provisioner_password_file."
-    fi
-    echo "$provisioner_password_file"
-}
-
-# =====================================================================================
 # Function: validate_inputs
 # Description: Validates the essential inputs required for the script to operate, such as the
 #              presence of the LXC configuration file and the validity of the provided CTID.
@@ -718,13 +649,38 @@ apply_mount_points() {
                 # --- BEGIN DIAGNOSTIC LOGGING ---
                 log_debug "Checking if host path '$host_path' exists."
                 if [ ! -e "$host_path" ]; then
-                    log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
-                    # Optionally, you could make this a fatal error to stop the process immediately
-                    # log_fatal "Host path '$host_path' does not exist."
+                    # Check if the path looks like a file
+                    if [[ "$host_path" == *.* ]]; then
+                        # It's a file, so ensure the parent directory exists
+                        local parent_dir=$(dirname "$host_path")
+                        if [ ! -d "$parent_dir" ]; then
+                            log_warn "Parent directory '$parent_dir' for file mount does not exist. Creating it now."
+                            if ! mkdir -p "$parent_dir"; then
+                                log_fatal "Failed to create parent directory '$parent_dir'."
+                            fi
+                            log_success "Parent directory '$parent_dir' created successfully."
+                        fi
+                    else
+                        # It's a directory, create it
+                        log_warn "Host path '$host_path' does not exist. Creating it now."
+                        if ! mkdir -p "$host_path"; then
+                            log_fatal "Failed to create host path directory '$host_path'."
+                        fi
+                        log_success "Host path '$host_path' created successfully."
+                    fi
                 else
                     log_debug "Host path '$host_path' found."
                 fi
                 # --- END DIAGNOSTIC LOGGING ---
+
+                # NEW: Special handling for Nginx log directory permissions
+                if [[ "$host_path" == *"/101/logs" ]]; then
+                    log_info "Setting ownership of Nginx log directory on host..."
+                    if ! chown -R 33:33 "$host_path"; then
+                        log_fatal "Failed to set ownership of Nginx log directory '$host_path'."
+                    fi
+                    log_success "Ownership of Nginx log directory set to 33:33."
+                fi
 
                 log_info "Applying mount: ${host_path} -> ${container_path}"
                 run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
@@ -739,6 +695,38 @@ apply_mount_points() {
         log_info "No host path mount points to apply for CTID $CTID."
     fi
 
+}
+
+# =====================================================================================
+# Function: apply_host_path_permissions
+# Description: Sets the correct ownership on host-side directories for bind mounts.
+# =====================================================================================
+apply_host_path_permissions() {
+    local CTID="$1"
+    log_info "Applying host path permissions for CTID: $CTID..."
+
+    local mounts
+    mounts=$(jq_get_array "$CTID" "(.mount_points // [])[]" || echo "")
+    if [ -z "$mounts" ]; then
+        log_info "No host path mount points to set permissions for CTID $CTID."
+        return 0
+    fi
+
+    for mount_config in $(echo "$mounts" | jq -c '.'); do
+        local host_path=$(echo "$mount_config" | jq -r '.host_path')
+        local owner_uid=$(echo "$mount_config" | jq -r '.owner_uid // ""')
+        local owner_gid=$(echo "$mount_config" | jq -r '.owner_gid // ""')
+
+        if [ -n "$owner_uid" ] && [ -n "$owner_gid" ]; then
+            local host_uid=$((100000 + owner_uid))
+            local host_gid=$((100000 + owner_gid))
+            log_info "Setting ownership of '$host_path' to $host_uid:$host_gid..."
+            if ! chown -R "$host_uid:$host_gid" "$host_path"; then
+                log_fatal "Failed to set ownership of '$host_path'."
+            fi
+            log_success "Ownership of '$host_path' set successfully."
+        fi
+    done
 }
 
 # =====================================================================================
@@ -1135,8 +1123,27 @@ run_health_check() {
         fi
     fi
 
+    # --- Special Health Checks ---
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Running specialized health checks for Nginx Gateway (LXC 101)..."
+        local dns_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_dns_resolution.sh"
+        local nginx_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_nginx_gateway.sh"
+
+        # DNS Check
+        if ! "$dns_check_script" --context guest --guest-id 101 --domain "ca.internal.thinkheads.ai" --expected-ip "10.0.0.10"; then
+            log_fatal "DNS health check failed for CTID 101."
+        fi
+
+        # Nginx Check
+        if ! "$nginx_check_script"; then
+            log_fatal "Nginx gateway health check failed for CTID 101."
+        fi
+        return 0
+    fi
+
     # --- Generic Health Check ---
-    local health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
+    local health_check_command
+    health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
 
     if [ -z "$health_check_command" ]; then
         log_info "No generic health check to run for CTID $CTID."
@@ -1145,12 +1152,38 @@ run_health_check() {
 
     log_info "Executing generic health check command inside container: $health_check_command"
     local attempts=0
-    local max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
-    local interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
+    local max_attempts
+    max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
+    local interval
+    interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
+
+    # Check if the health check command is a script that exists on the host
+    if [[ "$health_check_command" == *.sh ]] && [ -f "$health_check_command" ]; then
+        local script_name
+        script_name=$(basename "$health_check_command")
+        local dest_path_in_container="/tmp/$script_name"
+        
+        log_info "Health check is a script. Pushing '$health_check_command' to '$CTID:$dest_path_in_container'..."
+        if ! pct push "$CTID" "$health_check_command" "$dest_path_in_container"; then
+            log_fatal "Failed to push health check script to container $CTID."
+        fi
+        
+        log_info "Making health check script executable in container..."
+        if ! pct exec "$CTID" -- chmod +x "$dest_path_in_container"; then
+            log_fatal "Failed to make health check script executable in container $CTID."
+        fi
+        
+        # Update the command to be executed inside the container
+        health_check_command="$dest_path_in_container"
+    fi
 
     while [ "$attempts" -lt "$max_attempts" ]; do
         if pct exec "$CTID" -- $health_check_command; then
             log_info "Health check passed successfully for CTID $CTID."
+            # Clean up the script after a successful run
+            if [[ "$health_check_command" == /tmp/*.sh ]]; then
+                pct exec "$CTID" -- rm -f "$health_check_command"
+            fi
             return 0
         else
             attempts=$((attempts + 1))
@@ -1415,10 +1448,6 @@ main_lxc_orchestrator() {
             log_info "Starting 'create' workflow for CTID $ctid..."
 
 
-            if [ "$ctid" -eq 103 ]; then
-                manage_ca_password_on_hypervisor "103"
-                manage_provisioner_password_on_hypervisor "103"
-            fi
 
             if ensure_container_defined "$ctid"; then
                 # Ensure the container is stopped before applying configurations that require a restart
@@ -1432,14 +1461,12 @@ main_lxc_orchestrator() {
                 ensure_container_disk_size "$ctid"
                 
                 apply_mount_points "$ctid"
+                apply_host_path_permissions "$ctid"
                 # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
 
                 # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
                 if [ "$ctid" -eq 103 ]; then
-                    log_info "Managing CA and provisioner passwords on the host for Step CA container (CTID 103)..."
-                    manage_ca_password_on_hypervisor "$ctid"
-                    manage_provisioner_password_on_hypervisor "$ctid"
                     log_info "Setting final permissions for shared SSL directory on host..."
                     local shared_ssl_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
                     if ! chmod -R 777 "$shared_ssl_dir"; then
@@ -1455,10 +1482,6 @@ main_lxc_orchestrator() {
                 if [ "$enable_lifecycle_snapshots" == "true" ]; then
                     create_pre_configured_snapshot "$ctid"
                 fi
-
-                # Precautionary cleanup of apt lock files
-                log_info "Running precautionary cleanup of apt lock files for CTID $ctid..."
-                pct_exec "$ctid" -- bash -c "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*"
 
                 apply_features "$ctid"
                 

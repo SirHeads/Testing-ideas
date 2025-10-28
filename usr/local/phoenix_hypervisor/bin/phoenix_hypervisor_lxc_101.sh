@@ -73,10 +73,16 @@ ensure_ca_trust
 # --- Certificate Generation ---
 echo "Bootstrapping Step CLI and generating Nginx certificate..."
 # Bootstrap the step CLI with the CA URL and fingerprint from the trusted CA feature
-step ca bootstrap --ca-url "https://ca.internal.thinkheads.ai:9000" --fingerprint "$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_root_ca.crt)"
-
-# Generate the certificate
-step ca certificate phoenix.thinkheads.ai /etc/nginx/ssl/phoenix.thinkheads.ai.crt /etc/nginx/ssl/phoenix.thinkheads.ai.key --provisioner "admin@thinkheads.ai" --provisioner-password-file "/etc/step-ca/ssl/provisioner_password.txt" --force
+step ca bootstrap --ca-url "https://ca.internal.thinkheads.ai:9000" --fingerprint "$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_root_ca.crt)" --force
+ 
+# Generate the certificate, explicitly requesting an RSA key
+step ca certificate phoenix.thinkheads.ai /etc/nginx/ssl/phoenix.thinkheads.ai.crt /etc/nginx/ssl/phoenix.thinkheads.ai.key --provisioner "admin@thinkheads.ai" --provisioner-password-file "/etc/step-ca/ssl/provisioner_password.txt" --force --kty RSA
+ 
+# --- NEW: Diagnostic Logging ---
+echo "--- BEGIN PRIVATE KEY DIAGNOSTIC ---"
+cat /etc/nginx/ssl/phoenix.thinkheads.ai.key
+echo "--- END PRIVATE KEY DIAGNOSTIC ---"
+# --- END NEW ---
 
 # --- Service Management and Validation ---
 echo "Testing Nginx configuration..."
