@@ -1,14 +1,14 @@
 services:
   portainer:
     image: portainer/portainer-ce:latest
-    command: -H unix:///var/run/docker.sock --tlsverify --tlscert /certs/cert.pem --tlskey /certs/key.pem --tlscacert /certs/ca.pem
+    command: -H unix:///var/run/docker.sock
     container_name: portainer_server
+    user: "65534:65534"
     dns:
       - 10.0.0.13
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data:/data
-      - ./certs:/certs
+      - ./data:/data
     ports:
       - "9000:9000"
       - "9443:9443"
@@ -16,8 +16,6 @@ services:
     networks:
       - portainer_network
 
-volumes:
-  portainer_data:
 
 networks:
   portainer_network:

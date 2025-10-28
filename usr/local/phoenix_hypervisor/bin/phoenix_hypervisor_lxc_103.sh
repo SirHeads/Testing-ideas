@@ -70,7 +70,7 @@ initialize_step_ca() {
     fi
     log_debug "Provisioner password file found at $CA_PROVISIONER_PASSWORD_FILE inside container."
 
-    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
+    if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "phoenix.thinkheads.ai" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
         log_fatal "Failed to initialize Smallstep CA in container $CTID."
     fi
     log_success "Smallstep CA initialized successfully."
@@ -128,7 +128,42 @@ add_acme_provisioner() {
 }
 
 # =====================================================================================
-# Function: verify_ca_status
+# Function: configure_acme_provisioner_claims
+# Description: Configures the ACME provisioner to allow specific domain wildcards.
+#              This is a critical security and functionality step to ensure that
+#              the ACME provisioner can issue certificates for the intended domains.
+# Arguments:
+#   None.
+# Returns:
+#   None. Exits with a fatal error if configuration fails.
+# =====================================================================================
+configure_acme_provisioner_claims() {
+    log_info "Configuring ACME provisioner claims in $CA_CONFIG_FILE..."
+
+    # Use jq to add the 'sans' claim to the ACME provisioner.
+    # This is idempotent; running it multiple times won't create duplicate entries.
+    local jq_filter='(.authority.provisioners[] | select(.name == "acme").claims.x509.sans) |= [
+        "*.phoenix.thinkheads.ai",
+        "*.internal.thinkheads.ai"
+    ]'
+
+    if ! jq "$jq_filter" "$CA_CONFIG_FILE" > "${CA_CONFIG_FILE}.tmp"; then
+        log_fatal "jq command failed to update ACME provisioner claims."
+    fi
+
+    # Replace the original file with the modified one
+    mv "${CA_CONFIG_FILE}.tmp" "$CA_CONFIG_FILE"
+    log_success "Successfully added 'sans' claim to ACME provisioner."
+
+    log_info "Restarting step-ca service to apply the new claims..."
+    if ! systemctl restart step-ca; then
+        log_fatal "Failed to restart step-ca service after updating claims."
+    fi
+    log_success "step-ca service restarted successfully."
+}
+ 
+ # =====================================================================================
+ # Function: verify_ca_status
 # Description: Verifies the status of the Step CA service and its ACME provisioner.
 # Arguments:
 #   None.
@@ -354,39 +389,12 @@ main() {
     export_root_ca_certificate
     setup_ca_service
     add_acme_provisioner
+    configure_acme_provisioner_claims
     verify_ca_status
 
     # Create a ready file to signal completion
     touch "/etc/step-ca/ssl/ca.ready" || log_warn "Failed to create CA ready file."
  
-     # Pull diagnostic logs to the host before the temporary directory is cleaned up
-     log_info "Pulling diagnostic logs from container to host..."
-    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
-    local ca_output_dir="${lxc_persistent_data_base_path}/${CTID}/ssl" # Using the existing SSL directory for logs
-
-    mkdir -p "$ca_output_dir/logs" || log_warn "Failed to create log directory on host: $ca_output_dir/logs"
-
-    if pct pull "$CTID" "/tmp/step-ca_systemctl_status.log" "${ca_output_dir}/logs/step-ca_systemctl_status.log"; then
-        log_success "Pulled systemctl status log."
-    else
-        log_warn "Failed to pull systemctl status log."
-    fi
-    if pct pull "$CTID" "/tmp/step-ca_journalctl.log" "${ca_output_dir}/logs/step-ca_journalctl.log"; then
-        log_success "Pulled journalctl log."
-    else
-        log_warn "Failed to pull journalctl log."
-    fi
-    if pct pull "$CTID" "/tmp/step-ca_lsof.log" "${ca_output_dir}/logs/step-ca_lsof.log"; then
-        log_success "Pulled lsof log."
-    else
-        log_warn "Failed to pull lsof log."
-    fi
-    if pct pull "$CTID" "/tmp/step-ca_netstat.log" "${ca_output_dir}/logs/step-ca_netstat.log"; then
-        log_success "Pulled netstat log."
-    else
-        log_warn "Failed to pull netstat log."
-    fi
-
     log_info "Step CA application script completed for CTID $CTID."
 }
 

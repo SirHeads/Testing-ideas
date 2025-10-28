@@ -697,60 +697,6 @@ stop_vm() {
 }
 
 # =====================================================================================
-# Function: handle_docker_proxy_feature
-# Description: A special handler for the 'docker_proxy' feature. This function runs on the
-#              Proxmox host and performs all the necessary orchestration for setting up the
-#              proxy's certificates before the actual feature script runs inside the VM.
-#
-# Arguments:
-#   $1 - The VMID of the target VM.
-#
-# Returns:
-#   None. Exits with a fatal error if any step fails.
-# =====================================================================================
-handle_docker_proxy_feature() {
-    local VMID="$1"
-    log_info "--- Pre-processing for 'docker_proxy' feature on host for VMID: ${VMID} ---"
-
-    local VM_HOSTNAME=$(jq_get_vm_value "$VMID" ".name")
-    local INTERNAL_DOMAIN="internal.thinkheads.ai"
-    local FQDN="${VM_HOSTNAME}.${INTERNAL_DOMAIN}"
-    
-    # Define the path on the shared NFS volume for this VM
-    local persistent_volume_path
-    persistent_volume_path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" | head -n 1)
-    if [ -z "$persistent_volume_path" ]; then
-        log_fatal "No NFS volume found for VM $VMID. Cannot stage certificates."
-    fi
-    local SHARED_CERT_DIR="${persistent_volume_path}/.phoenix_certs"
-
-    # --- 1. CERTIFICATE GENERATION (on Host) ---
-    log_info "Generating server certificate for the Docker socket proxy via LXC 103..."
-    local TEMP_CERT_PATH_IN_CA="/tmp/${FQDN}.crt"
-    local TEMP_KEY_PATH_IN_CA="/tmp/${FQDN}.key"
-
-    # Generate the certificate inside the Step-CA container
-    pct exec 103 -- step ca certificate "${FQDN}" "$TEMP_CERT_PATH_IN_CA" "$TEMP_KEY_PATH_IN_CA" --san "${FQDN}" \
-        --provisioner admin@thinkheads.ai \
-        --password-file /etc/step-ca/ssl/provisioner_password.txt --force
-
-    # --- 2. CERTIFICATE TRANSFER (CA -> Host -> Shared Storage) ---
-    log_info "Transferring certificates to shared storage for VM ${VMID}..."
-    mkdir -p "${SHARED_CERT_DIR}"
-    
-    # Pull certs from CA container to the shared directory
-    pct pull 103 "$TEMP_CERT_PATH_IN_CA" "${SHARED_CERT_DIR}/server.crt"
-    pct pull 103 "$TEMP_KEY_PATH_IN_CA" "${SHARED_CERT_DIR}/server.key"
-    pct pull 103 "/root/.step/certs/root_ca.crt" "${SHARED_CERT_DIR}/ca.pem"
-
-    # Clean up temp files in the CA container
-    pct exec 103 -- rm -f "$TEMP_CERT_PATH_IN_CA" "$TEMP_KEY_PATH_IN_CA"
-
-    log_success "Server and CA certificates successfully staged for VM ${VMID} at ${SHARED_CERT_DIR}."
-    log_info "--- Pre-processing for 'docker_proxy' feature complete ---"
-}
-
-# =====================================================================================
 # Function: apply_vm_features
 # Description: Asynchronously executes feature installation scripts inside the VM,
 #              providing real-time log streaming and robust completion detection.
@@ -790,12 +736,6 @@ apply_vm_features() {
     mkdir -p "$hypervisor_scripts_dir"
 
     for feature in $features; do
-        # --- SPECIAL HANDLING FOR DOCKER PROXY ---
-        if [ "$feature" == "docker_proxy" ]; then
-            handle_docker_proxy_feature "$VMID"
-        fi
-        # --- END SPECIAL HANDLING ---
-
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
         if [ ! -f "$feature_script_path" ]; then
             log_fatal "Feature script not found: $feature_script_path"

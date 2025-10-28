@@ -23,121 +23,6 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 # --- Script Variables ---
 CTID="$1"
 CA_URL="https://ca.internal.thinkheads.ai:9000"
-CA_IP="10.0.0.10" # IP of LXC 103 (Step CA)
-CA_FINGERPRINT=""
-MAX_RETRIES=10
-RETRY_DELAY=10
-
-# =====================================================================================
-# Function: install_step_cli
-# Description: Installs the Smallstep CLI tool if it's not already present.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if installation fails.
-# =====================================================================================
-install_step_cli() {
-    if ! command -v step &> /dev/null; then
-        log_info "step-cli not found in LXC $CTID. Installing..."
-        log_info "Installing step-cli via Smallstep APT repository..."
-        # Add Smallstep GPG key
-        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || log_fatal "Failed to download Smallstep GPG key."
-        # Add Smallstep APT repository
-        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || log_fatal "Failed to add Smallstep APT repository."
-        # Update package lists and install step-cli
-        apt-get update && apt-get install -y step-cli || log_fatal "Failed to install step-cli from APT repository."
-        hash -r # Clear the command hash table
-        # Re-check if step-cli is now available after installation
-        if ! command -v step &> /dev/null; then
-            log_fatal "Failed to install step-cli in LXC $CTID, or it's not in PATH after installation."
-        fi
-        log_info "step-cli installed successfully in LXC $CTID."
-    else
-        log_info "step-cli is already installed in LXC $CTID."
-    fi
-}
-
-# =====================================================================================
-# Function: bootstrap_step_ca
-# Description: Bootstraps the step-cli with the Step CA's root certificate and fingerprint.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if bootstrapping fails.
-# =====================================================================================
-bootstrap_step_ca() {
-    log_info "Waiting for Step CA (LXC 103 at $CA_IP) to be reachable..."
-    local attempt=1
-    while ! ping -c 1 "$CA_IP" > /dev/null 2>&1 && [ "$attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Attempt $attempt/$MAX_RETRIES: Ping to Step CA ($CA_IP) failed. Retrying in $RETRY_DELAY seconds..."
-        sleep "$RETRY_DELAY"
-        attempt=$((attempt + 1))
-    done
-    if [ "$attempt" -gt "$MAX_RETRIES" ]; then
-        log_fatal "Step CA ($CA_IP) is not reachable after $MAX_RETRIES attempts. Cannot bootstrap step-cli."
-    fi
-    log_info "Step CA ($CA_IP) is reachable."
-
-    # Add CA hostname to /etc/hosts for internal resolution
-    log_info "Adding 'ca.internal.thinkheads.ai' to /etc/hosts..."
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add CA entry to /etc/hosts."
-    fi
-    log_info "CA entry added to /etc/hosts."
-
-
-    # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="/etc/step-ca/ssl/phoenix_root_ca.crt" # Use the root CA cert, not the bundle
-    local CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
-    log_info "Waiting for Step CA to be ready by checking for $CA_READY_FILE..."
-    local cert_attempt=1
-    while [ ! -f "$CA_READY_FILE" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Attempt $cert_attempt/$MAX_RETRIES: CA is not ready yet. Retrying in $RETRY_DELAY seconds..."
-        sleep "$RETRY_DELAY"
-        cert_attempt=$((cert_attempt + 1))
-    done
-
-    if [ ! -f "$CA_READY_FILE" ]; then
-        log_fatal "Step CA did not become ready after $MAX_RETRIES attempts. Cannot proceed."
-    fi
-
-    if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
-        log_fatal "CA is ready, but the root certificate is still not found at $ROOT_CA_CERT_PATH."
-    fi
-    log_info "Root CA certificate found. Retrieving fingerprint..."
-    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
-    if [ -z "$CA_FINGERPRINT" ]; then
-        log_fatal "Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH."
-    fi
-    log_info "Retrieved CA Fingerprint: $CA_FINGERPRINT"
-
-    # Add the locally mounted root CA certificate to the trust store
-    log_info "Adding locally mounted root CA certificate to trust store..."
-    cp "${ROOT_CA_CERT_PATH}" /usr/local/share/ca-certificates/phoenix_ca.crt
-    update-ca-certificates
-    if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
-        log_fatal "Failed to install locally mounted root CA certificate into trust store."
-    fi
-    log_info "Locally mounted root CA certificate added to trust store successfully."
-
-    # Update the system's CA trust store
-    log_info "Updating system CA trust store..."
-    update-ca-certificates || log_fatal "Failed to update system CA trust store."
-    log_info "System CA trust store updated successfully."
-
-    # Bootstrap the step CLI with the CA's URL and fingerprint
-    log_info "Bootstrapping step CLI with CA information..."
-    log_info "Testing connectivity to Step CA at $CA_URL..."
-    if ! curl -vk --cacert "$ROOT_CA_CERT_PATH" "$CA_URL/health" > /dev/null 2>&1; then
-        log_fatal "Failed to connect to Step CA at $CA_URL. Please check network connectivity and CA service status."
-    fi
-    log_info "Successfully connected to Step CA."
-
-    if ! STEPDEBUG=1 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
-        log_fatal "Failed to bootstrap step CLI with CA information."
-    fi
-    log_info "step CLI bootstrapped successfully."
-}
 
 # =====================================================================================
 # Function: configure_traefik
@@ -194,7 +79,7 @@ http:
       entryPoints:
         - websecure
       tls:
-        certResolver: myresolver
+        certResolver: internal-resolver
 
     dashboard-insecure:
       rule: "Host(`localhost`) && PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
@@ -249,8 +134,6 @@ main() {
 
     log_info "Starting Traefik application script for CTID $CTID."
 
-    install_step_cli
-    bootstrap_step_ca
     configure_traefik
     setup_traefik_service
 

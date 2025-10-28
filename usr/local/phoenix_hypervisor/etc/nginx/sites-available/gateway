@@ -3,7 +3,7 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
 
-    server_name *.phoenix.thinkheads.ai;
+    server_name *.phoenix.thinkheads.ai *.internal.thinkheads.ai;
 
     # Location block for ACME challenges
     location /.well-known/acme-challenge/ {
@@ -67,6 +67,7 @@ server {
         # Define HTTP version for proxying
         proxy_http_version 1.1;
         proxy_set_header Connection "";
+        proxy_set_body   $request_body;
         
         proxy_pass $upstream_service;
 

@@ -485,7 +485,7 @@ run_pct_command() {
     log_info "Executing: pct ${pct_args[*]}"
 
     # If DRY_RUN mode is enabled, log the command without executing it
-    if [ "$DRY_RUN" = true ]; then
+    if [ "$PHOENIX_DRY_RUN" = "true" ]; then
         log_info "DRY-RUN: Would execute 'pct ${pct_args[*]}'"
         return 0
     fi
@@ -1559,4 +1559,160 @@ kill_apt_processes() {
     pkill -f "apt" || true
     pkill -f "dpkg" || true
     log_info "Forced termination of apt/dpkg processes complete."
+}
+# =====================================================================================
+# Function: validate_certificate_chain
+# Description: Validates the TLS certificate chain for a given host and port.
+#              It checks if the certificate is valid, not expired, and matches the
+#              hostname.
+#
+# Arguments:
+#   $1 - The hostname to check.
+#   $2 - The port to connect to.
+#   $3 - The path to the CA certificate file for verification.
+#
+# Returns:
+#   0 on success, 1 on failure.
+# =====================================================================================
+validate_certificate_chain() {
+    local HOSTNAME="$1"
+    local PORT="$2"
+    local CA_CERT_PATH="$3"
+
+    log_info "--- Starting Certificate Validation for ${HOSTNAME}:${PORT} ---"
+
+    if ! command -v openssl &> /dev/null; then
+        log_error "openssl command not found. Please install openssl."
+        return 1
+    fi
+
+    if [ ! -f "$CA_CERT_PATH" ]; then
+        log_error "CA certificate file not found at: ${CA_CERT_PATH}."
+        return 1
+    fi
+
+    # Use openssl to connect and get the certificate details
+    local OPENSSL_OUTPUT
+    OPENSSL_OUTPUT=$(echo | openssl s_client -connect "${HOSTNAME}:${PORT}" -servername "${HOSTNAME}" -CAfile "${CA_CERT_PATH}" 2>&1)
+    local OPENSSL_EXIT_CODE=$?
+
+    # Check 1: OpenSSL connection and verification
+    if [ $OPENSSL_EXIT_CODE -ne 0 ]; then
+        log_error "Certificate validation failed. OpenSSL connection error (Code: ${OPENSSL_EXIT_CODE})."
+        log_error "Output:\n${OPENSSL_OUTPUT}"
+        return 1
+    fi
+
+    if ! echo "${OPENSSL_OUTPUT}" | grep -q "Verify return code: 0 (ok)"; then
+        log_error "Certificate chain verification failed for ${HOSTNAME}."
+        log_error "Output:\n${OPENSSL_OUTPUT}"
+        return 1
+    fi
+    log_success "Certificate chain is valid and trusted."
+
+    # Check 2: Certificate Expiry
+    if ! echo "${OPENSSL_OUTPUT}" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+        log_error "Certificate for ${HOSTNAME} has expired or is not yet valid."
+        return 1
+    fi
+    log_success "Certificate is not expired."
+
+    # Check 3: Subject Alternative Name (SAN)
+    local sans
+    sans=$(echo "${OPENSSL_OUTPUT}" | openssl x509 -noout -text | grep "DNS:" | sed 's/DNS://g' | tr -d ' ')
+    log_info "Certificate SANs found: ${sans}"
+    log_info "Verifying hostname against SANs: ${HOSTNAME}"
+
+    local san_match=false
+    for san in $(echo "$sans" | tr ',' '\n'); do
+        # Handle wildcard matching
+        if [[ "$san" == "*."* ]]; then
+            local wildcard_domain="${san#*.}"
+            if [[ "$HOSTNAME" == *"$wildcard_domain" ]]; then
+                san_match=true
+                break
+            fi
+        # Handle exact matching
+        elif [ "$san" == "$HOSTNAME" ]; then
+            san_match=true
+            break
+        fi
+    done
+
+    if [ "$san_match" = false ]; then
+        log_error "Hostname '${HOSTNAME}' not found in certificate's Subject Alternative Name (SAN)."
+        return 1
+    fi
+    log_success "Hostname '${HOSTNAME}' is present in the certificate SAN."
+
+    log_info "--- Certificate Validation Passed for ${HOSTNAME}:${PORT} ---"
+    return 0
+}
+# =====================================================================================
+# Function: retry_api_call
+# Description: A robust wrapper for curl that retries API calls on failure and
+#              provides detailed logging for debugging.
+#
+# Arguments:
+#   $@ - The full curl command to execute.
+#
+# Returns:
+#   Outputs the body of the successful API response.
+#   Returns 1 if the command fails after all retries.
+# =====================================================================================
+retry_api_call() {
+    local MAX_RETRIES=3
+    local RETRY_DELAY=5
+    local attempt=1
+    local curl_cmd=("$@")
+
+    # Mask sensitive data for logging
+    local logged_cmd
+    logged_cmd=$(echo "${curl_cmd[@]}" | sed -e 's/--password-file \S* /--password-file [REDACTED] /g' \
+                                             -e 's/"password": "[^"]*"/"password": "[REDACTED]"/g' \
+                                             -e 's/Authorization: Bearer \S*/Authorization: Bearer [REDACTED]/g')
+
+    while [ "$attempt" -le "$MAX_RETRIES" ]; do
+        log_info "Executing API call (attempt ${attempt}/${MAX_RETRIES}): ${logged_cmd}"
+        
+        local response
+        local http_status
+        local body
+        
+        # Use a unique delimiter that is unlikely to appear in the response body
+        local delimiter="::PHOENIX_API_DELIMITER::"
+        
+        # Execute curl and capture stdout, separating body and status code
+        response=$(curl -s -w "${delimiter}%{http_code}" "${curl_cmd[@]}")
+        
+        # Correctly separate the body and the status code
+        http_status="${response##*${delimiter}}"
+        body="${response%${delimiter}*}"
+
+        # Validate that http_status is a number
+        if ! [[ "$http_status" =~ ^[0-9]+$ ]]; then
+            log_warn "Failed to parse HTTP status code. Full response: ${response}"
+            http_status="0" # Set a default error code
+        fi
+
+        if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
+            log_success "API call successful (HTTP Status: ${http_status})."
+            echo "$body" # Only output the body on success
+            return 0
+        fi
+
+        log_warn "API call failed on attempt ${attempt} (HTTP Status: ${http_status})."
+        log_warn "Response Body:\n${body}"
+
+        if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+            log_info "Retrying in ${RETRY_DELAY} seconds..."
+            sleep "$RETRY_DELAY"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    log_error "API call failed after ${MAX_RETRIES} attempts."
+    # On final failure, echo the last response body to aid debugging
+    echo "$body"
+    return 1
 }

@@ -103,7 +103,7 @@ EOF
 
     # 2. Add rules from LXC configs
     log_info "Aggregating LXC firewall rules..."
-    jq -c '.lxc_configs[].firewall.rules[]?' "$LXC_CONFIG_FILE" | while read -r rule; do
+    jq -c '.lxc_configs[] | select(.firewall.rules?) | .firewall.rules[]' "$LXC_CONFIG_FILE" | while read -r rule; do
         generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
     done
 

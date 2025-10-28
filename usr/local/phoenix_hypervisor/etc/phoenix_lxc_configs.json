@@ -445,7 +445,7 @@
             "features": [
                 "base_setup",
                 "trusted_ca",
-                "step_ca"
+                "step_cli"
             ],
             "pct_options": [
                 "nesting=1"
@@ -475,6 +475,14 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Portainer VM to access the gateway"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
                         "proto": "tcp",
                         "port": "443",
                         "comment": "Allow HTTPS traffic"
@@ -496,6 +504,14 @@
                         "comment": "Allow Nginx to proxy ACME challenges to Traefik"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "80,443",
+                        "comment": "Allow Step CA (10.0.0.10) to connect for ACME validation"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.10",
@@ -505,18 +521,14 @@
                     }
                 ]
             },
-            "zfs_volumes": [
-                {
-                    "name": "nginx_logs",
-                    "pool": "quickOS-lxc-persistent-data",
-                    "size_gb": 1,
-                    "mount_point": "/logs/nginx"
-                }
-            ],
             "mount_points": [
                 {
-                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/etc/step-ca/ssl"
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/101/logs",
+                    "container_path": "/var/log/nginx"
+                },
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl",
+                    "container_path": "/etc/nginx/ssl"
                 }
             ]
         },
@@ -655,7 +667,6 @@
                 "base_setup",
                 "step_ca"
             ],
-            "application_script": "phoenix_hypervisor_lxc_103.sh",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,
@@ -668,10 +679,18 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.12",
+                        "dest": "10.0.0.153",
                         "proto": "tcp",
                         "port": "443",
-                        "comment": "Allow Step-CA to perform ACME challenges with Traefik"
+                        "comment": "Allow Step-CA to perform ACME challenges with Nginx Gateway"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
                     },
                     {
                         "type": "in",
@@ -682,12 +701,12 @@
                         "comment": "Allow Traefik to connect for ACME challenges"
                     },
                     {
-                        "type": "out",
+                        "type": "in",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.12",
+                        "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow Step-CA to respond to ACME challenges from Traefik"
+                        "port": "9000",
+                        "comment": "Allow Nginx to connect to Step CA for certificates"
                     }
                 ]
             },
@@ -696,7 +715,12 @@
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
                     "container_path": "/etc/step-ca/ssl"
                 }
-            ]
+            ],
+            "health_check": {
+                "command": "nc -z localhost 9000",
+                "retries": 30,
+                "interval": 10
+            }
         },
         "102": {
             "name": "Traefik-Internal",
@@ -722,7 +746,8 @@
             "features": [
                 "base_setup",
                 "traefik",
-                "trusted_ca"
+                "trusted_ca",
+                "step_cli"
             ],
             "application_script": "phoenix_hypervisor_lxc_102.sh",
             "dependencies": [
@@ -736,48 +761,16 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow Nginx to proxy to Traefik"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Nginx to proxy ACME challenges to Traefik"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "8443",
-                        "comment": "Allow Nginx to proxy to Traefik's websecure entrypoint"
+                        "port": "80,443,8443",
+                        "comment": "Allow Nginx (10.0.0.153) to proxy web and ACME traffic"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
                         "source": "10.0.0.10",
                         "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Step-CA to perform ACME HTTP-01 challenges"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.10",
-                        "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.10",
-                        "proto": "tcp",
-                        "port": "9000",
-                        "comment": "Allow Traefik to connect to Step-CA for ACME"
+                        "port": "80,443",
+                        "comment": "Allow Step CA (10.0.0.10) for ACME challenges"
                     },
                     {
                         "type": "out",
@@ -785,7 +778,7 @@
                         "dest": "10.0.0.13",
                         "proto": "udp",
                         "port": "53",
-                        "comment": "Allow outbound DNS queries"
+                        "comment": "Allow outbound DNS queries to CoreDNS (10.0.0.13)"
                     },
                     {
                         "type": "out",
@@ -793,39 +786,7 @@
                         "dest": "10.0.0.111",
                         "proto": "tcp",
                         "port": "9443",
-                        "comment": "Allow Traefik to connect to the Portainer API"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.141",
-                        "proto": "tcp",
-                        "port": "8000",
-                        "comment": "Allow Traefik to proxy to granite-embedding"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.142",
-                        "proto": "tcp",
-                        "port": "8000",
-                        "comment": "Allow Traefik to proxy to granite-3.3-8b-fp8"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.155",
-                        "proto": "tcp",
-                        "port": "11434",
-                        "comment": "Allow Traefik to proxy to ollama-gpu0"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.157",
-                        "proto": "tcp",
-                        "port": "8081",
-                        "comment": "Allow Traefik to proxy to llamacpp-gpu0"
+                        "comment": "Allow connection to Portainer API (10.0.0.111)"
                     },
                     {
                         "type": "out",
@@ -833,7 +794,39 @@
                         "dest": "10.0.0.10",
                         "proto": "tcp",
                         "port": "9000",
-                        "comment": "Allow Traefik to communicate with Step-CA for ACME"
+                        "comment": "Allow outbound communication to Step CA (10.0.0.10) for certificate requests"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.141",
+                        "proto": "tcp",
+                        "port": "8000",
+                        "comment": "Allow proxy to granite-embedding (10.0.0.141)"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.142",
+                        "proto": "tcp",
+                        "port": "8000",
+                        "comment": "Allow proxy to granite-3.3-8b-fp8 (10.0.0.142)"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.155",
+                        "proto": "tcp",
+                        "port": "11434",
+                        "comment": "Allow proxy to ollama-gpu0 (10.0.0.155)"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.157",
+                        "proto": "tcp",
+                        "port": "8081",
+                        "comment": "Allow proxy to llamacpp-gpu0 (10.0.0.157)"
                     }
                 ]
             },
@@ -843,18 +836,10 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
-            "zfs_volumes": [
-                {
-                    "name": "traefik_config",
-                    "pool": "quickOS-lxc-persistent-data",
-                    "size_gb": 1,
-                    "mount_point": "/etc/traefik"
-                }
-            ],
             "mount_points": [
                 {
-                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
-                    "container_path": "/etc/step-ca/ssl"
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs",
+                    "container_path": "/etc/traefik/certs"
                 }
             ]
         }

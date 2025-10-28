@@ -44,10 +44,11 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
                     "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)",
                     "transport": ($service_def.name + "-transport"),
-                    "serverName": "\($service_def.name).\($internal_domain)"
+                    "serverName": "\($service_def.name).\($external_domain)",
+                    "resolver": "external-resolver"
                 }
             ),
             # Process LXCs
@@ -56,20 +57,29 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
-                    "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
+                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)",
+                    "resolver": "external-resolver"
                 }
             ),
             # Add Portainer Agent Service
-            ($vms[0].vms[]? | select(.portainer_role == "agent") |
+            ($vms[0].vms[]? | select(.portainer_role == "agent" and .portainer_agent_hostname) |
                 {
-                    "name": "portainer-agent",
-                    "rule": "Host(`portainer-agent.\($internal_domain)`)",
+                    "name": "portainer-agent-internal",
+                    "rule": "Host(`\(.portainer_agent_hostname)`)",
                     "url": "https://\(.network_config.ip | split("/")[0]):9001",
                     "transport": "portainer-agent-transport",
-                    "serverName": "portainer-agent.\($internal_domain)"
+                    "serverName": "\(.portainer_agent_hostname)",
+                    "resolver": "internal-resolver"
                 }
-            )
+            ),
+            {
+                "name": "traefik-internal",
+                "rule": "Host(`traefik.\($internal_domain)`)",
+                "url": "http://127.0.0.1:8080",
+                "is_dummy": true,
+                "resolver": "internal-resolver"
+            }
         ]
         '
     )
@@ -84,17 +94,17 @@ main() {
             .[] |
             "    \(.name)-router:\n" +
             "      rule: \"\(.rule)\"\n" +
-            "      service: \"\(.name)-service\"\n" +
+            (if .is_dummy then "      service: \"noop@internal\"" else "      service: \"\(.name)-service\"" end) + "\n" +
             "      entryPoints:\n" +
             "        - websecure\n" +
             "      tls:\n" +
-            "        certResolver: myresolver"
+            "        certResolver: \(.resolver)"
         '
 
         echo ""
         echo "  services:"
         echo "$traefik_services_json" | jq -r '
-            .[] |
+            .[] | select(.is_dummy | not) |
             "    \(.name)-service:\n" +
             "      loadBalancer:\n" +
             "        servers:\n" +

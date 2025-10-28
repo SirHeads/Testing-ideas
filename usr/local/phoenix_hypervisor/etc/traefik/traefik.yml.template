@@ -10,6 +10,15 @@ ping:
 
 api:
   dashboard: true
+  insecure: true # Required for dashboard access via internal network
+
+http:
+  routers:
+    dashboard:
+      rule: "Host(`traefik.internal.thinkheads.ai`)"
+      service: "api@internal"
+      tls:
+        certResolver: internal-resolver
 
 entryPoints:
   web:
@@ -26,7 +35,7 @@ providers:
     watch: true
 
 certificatesResolvers:
-  myresolver:
+  external-resolver:
     acme:
       email: admin@thinkheads.ai
       storage: /etc/traefik/acme.json
@@ -34,3 +43,10 @@ certificatesResolvers:
       keyType: EC384
       httpChallenge:
         entryPoint: web
+  internal-resolver:
+    acme:
+      email: admin@thinkheads.ai
+      storage: /etc/traefik/internal-acme.json
+      caServer: __CA_URL__/acme/acme/directory
+      keyType: EC384
+      tlsChallenge: {}

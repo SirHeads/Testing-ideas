@@ -461,7 +461,7 @@
                     "source": "10.0.0.10",
                     "dest": "10.0.0.12",
                     "proto": "tcp",
-                    "port": "443",
+                    "port": "8443",
                     "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges with Traefik"
                 },
                 {
@@ -478,7 +478,7 @@
     },
     "portainer_api": {
         "admin_user": "admin",
-        "admin_password": "NewKick@$$2025",
+        "admin_password": "SecurePassword2025",
         "portainer_hostname": "portainer.phoenix.thinkheads.ai"
     },
     "vm_defaults": {
@@ -501,6 +501,26 @@
                     {
                         "hostname": "drphoenix",
                         "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "qdrant",
+                        "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "ollama",
+                        "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "granite-embedding",
+                        "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "llamacpp",
+                        "ip_external": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "granite-3b",
+                        "ip_external": "10.0.0.153"
                     }
                 ]
             },
@@ -509,7 +529,7 @@
                 "records": [
                     {
                         "hostname": "traefik",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "ca",
@@ -517,38 +537,48 @@
                     },
                     {
                         "hostname": "portainer",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "drphoenix",
-                        "ip_internal": "10.0.0.102"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "granite-embedding",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "granite-3b",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "ollama",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "llamacpp",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "portainer.phoenix",
-                        "ip_internal": "10.0.0.12"
+                        "ip_internal": "10.0.0.153"
                     },
                     {
                         "hostname": "portainer-agent",
-                        "ip_internal": "10.0.0.102"
+                        "ip_internal": "10.0.0.153"
+                    },
+                    {
+                        "hostname": "qdrant",
+                        "ip_internal": "10.0.0.153"
                     }
                 ]
             }
         ]
+    },
+    "step_ca": {
+        "root_ca_name": "ThinkHeads Internal CA",
+        "intermediate_ca_name": "ThinkHeads Internal CA Intermediate CA",
+        "dns_name": "ca.internal.thinkheads.ai",
+        "provisioner_name": "admin@thinkheads.ai"
     }
 }

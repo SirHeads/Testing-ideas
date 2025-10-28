@@ -620,6 +620,34 @@ apply_zfs_volumes() {
 }
 
 # =====================================================================================
+# Function: apply_secure_permissions
+# Description: Applies secure permissions to the dedicated SSL volumes for containers
+#              that require them.
+# Arguments:
+#   $1 - The CTID of the container.
+# Returns:
+#   None.
+# =====================================================================================
+apply_secure_permissions() {
+    local CTID="$1"
+    log_info "Applying secure permissions for CTID: $CTID..."
+
+    case "$CTID" in
+        101|102|103)
+            local ssl_volume_path="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
+            if [ -d "$ssl_volume_path" ]; then
+                log_info "Setting secure permissions for SSL volume at $ssl_volume_path..."
+                chown -R root:root "$ssl_volume_path" || log_warn "Failed to set ownership on SSL volume for CTID ${CTID}."
+                chmod -R 700 "$ssl_volume_path" || log_warn "Failed to set permissions on SSL volume for CTID ${CTID}."
+            fi
+            ;;
+        *)
+            log_info "No secure permissions to apply for CTID $CTID."
+            ;;
+    esac
+}
+
+# =====================================================================================
 # Function: apply_dedicated_volumes
 # Description: Creates and attaches dedicated storage volumes to a container. This is similar
 #              to `apply_zfs_volumes` but is intended for more general-purpose storage.
@@ -711,12 +739,6 @@ apply_mount_points() {
         log_info "No host path mount points to apply for CTID $CTID."
     fi
 
-    # General permission fix for shared SSL directories
-    if [ -d "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" ]; then
-        log_info "Setting ownership for shared SSL directory for CTID ${CTID}..."
-        chown -R nobody:nogroup "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" || log_warn "Failed to set ownership on shared SSL directory for CTID ${CTID}."
-        chmod -R a+r "/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl" || log_warn "Failed to set read permissions on shared SSL directory for CTID ${CTID}."
-    fi
 }
 
 # =====================================================================================
@@ -996,23 +1018,30 @@ run_application_script() {
             log_info "Dynamic Nginx configuration generated successfully."
             # --- END REMEDIATION ---
 
-            # Create a tarball of the nginx configs on the host
-            log_info "Creating tarball of Nginx configs at ${temp_tarball}"
-            if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
-                sites-available/gateway \
-                scripts \
-                snippets \
-                nginx.conf; then
-                log_fatal "Failed to create Nginx config tarball."
-            fi
-
-            # Push the single tarball to the container
-            if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
-                log_fatal "Failed to push Nginx config tarball to container $CTID."
-            fi
+            # --- NEW LOGIC: Push individual Nginx config files ---
+            log_info "Pushing individual Nginx configuration files to container..."
             
-            # Clean up the temporary tarball on the host
-            rm -f "$temp_tarball"
+            # Define source paths on the host
+            local nginx_conf_src="${nginx_config_path}/nginx.conf"
+            local gateway_conf_src="${nginx_config_path}/sites-available/gateway"
+            local stream_conf_src="${nginx_config_path}/stream.d/stream-gateway.conf"
+
+            # Define destination paths in the container
+            local nginx_conf_dest="${temp_dir_in_container}/nginx.conf"
+            local gateway_conf_dest="${temp_dir_in_container}/sites-available/gateway"
+            local stream_conf_dest="${temp_dir_in_container}/stream.d/stream-gateway.conf"
+
+            # Create necessary subdirectories in the container's temp directory
+            pct exec "$CTID" -- mkdir -p "${temp_dir_in_container}/sites-available"
+            pct exec "$CTID" -- mkdir -p "${temp_dir_in_container}/stream.d"
+
+            # Push the files
+            pct push "$CTID" "$nginx_conf_src" "$nginx_conf_dest" || log_fatal "Failed to push nginx.conf"
+            pct push "$CTID" "$gateway_conf_src" "$gateway_conf_dest" || log_fatal "Failed to push gateway config"
+            pct push "$CTID" "$stream_conf_src" "$stream_conf_dest" || log_fatal "Failed to push stream gateway config"
+            
+            log_info "All Nginx configuration files pushed successfully."
+            # --- END NEW LOGIC ---
         fi
 
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
@@ -1366,35 +1395,6 @@ apply_apparmor_profile() {
     systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
 # =====================================================================================
-# Function: wait_for_ca_certificate
-# Description: Waits for the Step CA (CTID 103) to generate and export its root certificate.
-#              This is a critical synchronization point for containers that depend on the CA.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if the certificate is not found after a timeout.
-# =====================================================================================
-wait_for_ca_certificate() {
-    log_info "Waiting for Step CA (CTID 103) root certificate..."
-    local ca_root_cert_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
-    local max_retries=30 # 30 retries * 10 seconds = 5 minutes timeout
-    local retry_delay=10
-    local attempt=1
-
-    while [ "$attempt" -le "$max_retries" ]; do
-        if [ -f "$ca_root_cert_path" ]; then
-            log_success "Root CA certificate found at $ca_root_cert_path."
-            return 0
-        fi
-        log_info "Attempt $attempt/$max_retries: Root CA certificate not found. Retrying in $retry_delay seconds..."
-        sleep "$retry_delay"
-        attempt=$((attempt + 1))
-    done
-
-    log_fatal "Root CA certificate not found at $ca_root_cert_path after waiting. Cannot proceed."
-}
-
-# =====================================================================================
 # Function: main_lxc_orchestrator
 # Description: The main entry point for the LXC manager script. It parses the
 #              action and CTID, and then executes the appropriate lifecycle
@@ -1414,14 +1414,8 @@ main_lxc_orchestrator() {
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
 
-            # Check for dependency on Step CA and wait for its certificate if needed
-            local dependencies
-            dependencies=$(jq_get_array "$ctid" "(.dependencies // [])[]" || echo "")
-            if echo "$dependencies" | grep -q "103"; then
-                wait_for_ca_certificate
-            fi
 
-            if [ "$ctid" -eq 101 ] || [ "$ctid" -eq 103 ]; then
+            if [ "$ctid" -eq 103 ]; then
                 manage_ca_password_on_hypervisor "103"
                 manage_provisioner_password_on_hypervisor "103"
             fi
@@ -1433,6 +1427,7 @@ main_lxc_orchestrator() {
                 apply_lxc_configurations "$ctid"
                 apply_lxc_firewall_rules "$ctid"
                 apply_zfs_volumes "$ctid"
+                apply_secure_permissions "$ctid"
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
@@ -1461,10 +1456,14 @@ main_lxc_orchestrator() {
                     create_pre_configured_snapshot "$ctid"
                 fi
 
+                # Precautionary cleanup of apt lock files
+                log_info "Running precautionary cleanup of apt lock files for CTID $ctid..."
+                pct_exec "$ctid" -- bash -c "rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock /var/lib/dpkg/lock*"
+
                 apply_features "$ctid"
                 
                 run_application_script "$ctid"
-
+                
                 # Restart dependent containers to pick up changes from this container's application script
                 local dependents
                 dependents=$(jq -r --arg ctid "$ctid" '.lxc_configs | to_entries[] | select(.value.dependencies[]? == ($ctid | tonumber)) | .key' "$LXC_CONFIG_FILE")
@@ -1483,6 +1482,14 @@ main_lxc_orchestrator() {
                 fi
 
                 log_info "'create' workflow completed for CTID $ctid."
+            fi
+
+            # --- Idempotency Fix for NGINX Container ---
+            # Always run the application script for CTID 101 to ensure its
+            # configuration (especially CA trust) is always up-to-date.
+            if [ "$ctid" -eq 101 ]; then
+                log_info "Ensuring NGINX container (101) is correctly configured..."
+                run_application_script "$ctid"
             fi
             ;;
         start)

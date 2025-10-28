@@ -327,6 +327,18 @@ sort_by_boot_order() {
 #              manager script based on the specified verb and target type.
 # -----------------------------------------------------------------------------
 main() {
+    export PHOENIX_DRY_RUN="false"
+    local ARGS=()
+    for arg in "$@"; do
+        if [[ "$arg" == "--dry-run" ]]; then
+            export PHOENIX_DRY_RUN="true"
+            log_info "--- DRY RUN MODE ENABLED ---"
+        else
+            ARGS+=("$arg")
+        fi
+    done
+    set -- "${ARGS[@]}" # Re-set positional parameters
+
     if [[ "$1" == "--help" ]]; then
         print_usage
         exit 0

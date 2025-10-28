@@ -58,6 +58,11 @@ install_traefik_binary() {
         log_fatal "Failed to extract Traefik binary in container $CTID."
     fi
 
+    log_info "Removing default configuration files from extracted tarball..."
+    if ! pct exec "$CTID" -- /bin/rm -f "${TEMP_DIR}/traefik.yml" "${TEMP_DIR}/dashboard.yml"; then
+        log_warn "Could not remove default configuration files. They may not exist in this version."
+    fi
+
     log_info "Installing Traefik binary to ${TRAEFIK_INSTALL_DIR}..."
     if ! pct exec "$CTID" -- /usr/bin/install -m 755 "${TEMP_DIR}/traefik" "${TRAEFIK_INSTALL_DIR}/traefik"; then
         log_fatal "Failed to install Traefik binary to ${TRAEFIK_INSTALL_DIR} in container $CTID."
@@ -149,6 +154,48 @@ setup_traefik_tls() {
 }
 
 # =====================================================================================
+# Function: push_static_config
+# Description: Generates the static traefik.yml from a template and pushes it to the container.
+# =====================================================================================
+push_static_config() {
+    log_info "Generating and pushing static Traefik configuration..."
+
+    local template_file="${PHOENIX_BASE_DIR}/../etc/traefik/traefik.yml.template"
+    if [ ! -f "$template_file" ]; then
+        log_fatal "Traefik configuration template not found at ${template_file}."
+    fi
+
+    # Get the Step-CA IP address from the LXC config file
+    local lxc_config_file="${PHOENIX_BASE_DIR}/../etc/phoenix_lxc_configs.json"
+    local step_ca_ip=$(jq -r '.lxc_configs."103".network_config.ip | split("/")[0]' "$lxc_config_file")
+    if [ -z "$step_ca_ip" ] || [ "$step_ca_ip" == "null" ]; then
+        log_fatal "Could not determine Step-CA IP address from LXC configuration."
+    fi
+    local ca_url="https://ca.internal.thinkheads.ai:9000"
+
+    # Create a temporary file for the processed config
+    local temp_config_file
+    temp_config_file=$(mktemp)
+
+    # Replace placeholder in the template with the actual CA URL
+    sed "s|__CA_URL__|${ca_url}|g" "$template_file" > "$temp_config_file"
+
+    log_info "Pushing generated traefik.yml to ${TRAEFIK_CONFIG_DIR}/traefik.yml in container $CTID..."
+    if ! pct push "$CTID" "$temp_config_file" "${TRAEFIK_CONFIG_DIR}/traefik.yml"; then
+        rm "$temp_config_file"
+        log_fatal "Failed to push traefik.yml to container $CTID."
+    fi
+
+    # Set correct permissions on the config file inside the container
+    if ! pct exec "$CTID" -- chmod 644 "${TRAEFIK_CONFIG_DIR}/traefik.yml"; then
+        log_warn "Failed to set permissions on traefik.yml in container $CTID."
+    fi
+
+    rm "$temp_config_file" # Clean up the temporary file
+    log_success "Static Traefik configuration pushed successfully."
+}
+
+# =====================================================================================
 # Function: create_systemd_service
 # Description: Creates and enables a systemd service for Traefik.
 # Arguments:
@@ -217,6 +264,7 @@ main() {
     install_traefik_binary
     setup_traefik_directories
     setup_traefik_tls
+    push_static_config
     create_systemd_service
 
     log_info "Traefik feature installation completed for CTID $CTID."
