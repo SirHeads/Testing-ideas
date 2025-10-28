@@ -33,26 +33,29 @@ main() {
     # Check 2: Verify that the Traefik /ping endpoint is responsive
     log_info "Checking if Traefik /ping endpoint is responsive in LXC ${TRAEFIK_CTID}..."
     local PING_URL="http://localhost:8080/ping"
-    local PING_ATTEMPTS=3
-    local PING_DELAY=2
+    if ! pct_exec "$TRAEFIK_CTID" -- curl -s --fail "$PING_URL" > /dev/null; then
+        log_error "Traefik /ping endpoint is not responsive."
+        return 1
+    fi
+    log_success "Traefik /ping endpoint is responsive."
 
-    for ((i=1; i<=PING_ATTEMPTS; i++)); do
-        if pct_exec "$TRAEFIK_CTID" -- curl -s --fail "$PING_URL" > /dev/null; then
-            log_success "Traefik /ping endpoint is responsive in LXC ${TRAEFIK_CTID}."
-            log_info "--- Traefik Proxy Health Check Passed ---"
-            return 0
-        fi
-        if [ "$i" -lt "$PING_ATTEMPTS" ]; then
-            log_info "Traefik /ping endpoint not yet responsive. Retrying in ${PING_DELAY} seconds..."
-            sleep "$PING_DELAY"
-        fi
-    done
+    # Check 3: Verify the TLS certificate for the dashboard
+    log_info "Verifying TLS certificate for the Traefik dashboard..."
+    local DASHBOARD_URL="localhost:8443"
+    local EXPECTED_ISSUER="ThinkHeads Internal CA"
+    
+    # Use openssl s_client to get the certificate issuer
+    local issuer
+    issuer=$(pct_exec "$TRAEFIK_CTID" -- /bin/bash -c "echo | openssl s_client -connect ${DASHBOARD_URL} 2>/dev/null | openssl x509 -noout -issuer | sed 's/.*CN = //'")
 
-    log_error "Traefik /ping endpoint is not responsive in LXC ${TRAEFIK_CTID} after ${PING_ATTEMPTS} attempts."
-    log_info "Debug Information:"
-    log_info "  - Check the Traefik logs for any API-related errors: pct exec ${TRAEFIK_CTID} -- journalctl -u traefik"
-    log_info "  - Ensure the Traefik API is enabled in the configuration to expose the /ping endpoint."
-    return 1
+    if [ "$issuer" != "$EXPECTED_ISSUER" ]; then
+        log_error "TLS certificate issuer check failed."
+        log_error "  - Expected Issuer: '${EXPECTED_ISSUER}'"
+        log_error "  - Actual Issuer: '${issuer}'"
+        log_info "This indicates Traefik may be using a self-signed fallback certificate instead of one from our internal CA."
+        return 1
+    fi
+    log_success "TLS certificate for the dashboard was issued by '${EXPECTED_ISSUER}'."
 
     log_info "--- Traefik Proxy Health Check Passed ---"
     return 0

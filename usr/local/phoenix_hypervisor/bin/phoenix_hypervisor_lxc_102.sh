@@ -24,6 +24,52 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 CTID="$1"
 CA_URL="https://ca.internal.thinkheads.ai:9000"
 
+CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+ROOT_CA_CERT="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
+TRAEFIK_CERT_DIR="/etc/traefik/certs"
+TRAEFIK_CERT_FILE="${TRAEFIK_CERT_DIR}/traefik.internal.thinkheads.ai.crt"
+TRAEFIK_KEY_FILE="${TRAEFIK_CERT_DIR}/traefik.internal.thinkheads.ai.key"
+
+# =====================================================================================
+# Function: wait_for_ca
+# Description: Waits for the Step CA to be ready by checking for a file.
+# =====================================================================================
+wait_for_ca() {
+   log_info "Waiting for Step CA to become ready..."
+   while [ ! -f "${CA_READY_FILE}" ]; do
+       log_info "CA not ready yet. Waiting 5 seconds..."
+       sleep 5
+   done
+   log_success "Step CA is ready."
+}
+
+# =====================================================================================
+# Function: bootstrap_step_cli
+# Description: Bootstraps the step CLI to trust the internal CA.
+# =====================================================================================
+bootstrap_step_cli() {
+   log_info "Bootstrapping Step CLI..."
+   if ! step ca bootstrap --ca-url "${CA_URL}" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
+       log_fatal "Failed to bootstrap Step CLI."
+   fi
+   log_success "Step CLI bootstrapped successfully."
+}
+
+# =====================================================================================
+# Function: request_traefik_certificate
+# Description: Requests a TLS certificate for Traefik from the Step CA.
+# =====================================================================================
+request_traefik_certificate() {
+   log_info "Requesting Traefik dashboard certificate..."
+   mkdir -p "${TRAEFIK_CERT_DIR}"
+   
+   if ! step ca certificate traefik.internal.thinkheads.ai "${TRAEFIK_CERT_FILE}" "${TRAEFIK_KEY_FILE}" --provisioner "admin@thinkheads.ai" --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" --force; then
+       log_fatal "Failed to obtain Traefik certificate."
+   fi
+   log_success "Traefik certificate obtained successfully."
+}
+
 # =====================================================================================
 # Function: configure_traefik
 # Description: Configures Traefik with entrypoints and ACME provider.
@@ -106,15 +152,6 @@ setup_traefik_service() {
     if ! systemctl restart traefik; then
         log_fatal "Failed to restart traefik service in container $CTID."
     fi
-    
-    log_info "Traefik service started. Waiting 15 seconds for initial ACME challenge to complete..."
-    sleep 15
-
-    log_info "Reloading Traefik service to ensure it loads the new ACME certificate..."
-    if ! systemctl reload traefik; then
-        log_warn "Failed to reload Traefik. The service might be using a fallback certificate. Attempting a full restart..."
-        systemctl restart traefik || log_error "Failed to restart Traefik after reload failed."
-    fi
 
     log_info "Traefik service setup complete."
 }
@@ -134,6 +171,9 @@ main() {
 
     log_info "Starting Traefik application script for CTID $CTID."
 
+    wait_for_ca
+    bootstrap_step_cli
+    request_traefik_certificate
     configure_traefik
     setup_traefik_service
 

@@ -16,7 +16,7 @@ While the underlying architecture is sound, the complexity of the runtime intera
 The Phoenix Hypervisor employs a sophisticated, multi-layered architecture designed for security, scalability, and ease of management. The core components are:
 
 *   **Nginx Gateway (LXC 101):** The single point of entry for all external traffic. It terminates TLS using a certificate from the internal Step-CA and acts as a reverse proxy, forwarding requests to the internal service mesh.
-*   **Traefik Mesh (LXC 102):** Provides a service mesh for all internal services, handling service discovery, load balancing, and automatic certificate acquisition via an internal ACME server.
+*   **Traefik Mesh (LXC 102):** Provides a service mesh for all internal services, handling service discovery and load balancing. It proactively requests its own dashboard certificate from the Step-CA, ensuring a consistent and reliable TLS configuration.
 *   **Step-CA (LXC 103):** The cornerstone of the internal security model. It functions as a private Certificate Authority (CA), issuing trusted TLS certificates for all internal services.
 
 This separation of concerns is a robust design that aligns with modern best practices for secure and scalable infrastructure.
@@ -53,7 +53,7 @@ This model decouples the consumers from the producer, simplifying their logic an
 
 ### 3.4. Permissions and Ownership
 
-To ensure secure access, the hypervisor's `lxc-manager.sh` script sets the permissions of the shared directory on the host to `777`. While this may seem overly permissive, it is a necessary and secure step in this context. It allows the unprivileged containers, which operate as the `nobody` user from the host's perspective, to read and write files within the mounted volume, enabling them to generate passwords and request certificates as needed.
+To ensure secure access, the system uses a combination of host-level permissions and declarative ownership. For mount points that require root-level access inside an unprivileged container (such as writing TLS certificates), the declarative configuration in `phoenix_lxc_configs.json` specifies `"owner_uid": 0` and `"owner_gid": 0`. This explicitly grants the container's root user ownership of the mounted directory, providing the necessary permissions in a secure, targeted, and auditable manner.
 
 ### 3.5. Workflow Visualization
 
@@ -73,8 +73,8 @@ graph TD
     end
 
     subgraph "LXC 101/102 [Consumers]"
-        G["Application Script"] -- "Reads password" --> H["/etc/step-ca/ssl/provisioner_password.txt"];
-        H -- "Requests cert" --> I["Step-CA Service"];
+        G["LXC 101/102 Scripts"] -- "Read password" --> H["/etc/step-ca/ssl/provisioner_password.txt"];
+        H -- "Request certs" --> I["Step-CA Service"];
     end
 
     E -- "Mounts to" --> F;

@@ -107,13 +107,47 @@ log_info "Docker Engine installed successfully."
 
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
-INTERNAL_DNS_SERVER="10.0.0.1" # Use the network gateway for DNS
+INTERNAL_DNS_SERVER="10.0.0.1"
+CA_URL="https://ca.internal.thinkheads.ai:9000"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+ROOT_CA_FINGERPRINT_FILE="/etc/step-ca/ssl/root_ca.fingerprint"
+DOCKER_TLS_DIR="/etc/docker/tls"
+DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
+DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
+DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
 
-log_info "Setting Docker DNS to '$INTERNAL_DNS_SERVER'."
+# Bootstrap Step CLI
+log_info "Bootstrapping Step CLI to trust the internal CA..."
+if [ ! -f "$ROOT_CA_FINGERPRINT_FILE" ]; then
+    log_fatal "CA fingerprint file not found at $ROOT_CA_FINGERPRINT_FILE. Cannot bootstrap Step CLI."
+fi
+local ca_fingerprint
+ca_fingerprint=$(cat "$ROOT_CA_FINGERPRINT_FILE")
+step ca bootstrap --ca-url "$CA_URL" --fingerprint "$ca_fingerprint" --force
+
+# Generate Docker Client Certificate
+log_info "Generating TLS certificate for the Docker daemon..."
+mkdir -p "$DOCKER_TLS_DIR"
+local fqdn
+fqdn=$(hostname -f)
+step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
+cp "/etc/step-ca/ssl/phoenix_ca.crt" "$DOCKER_CA_FILE"
+
+# Configure Docker Daemon for mTLS
+log_info "Configuring Docker daemon for mTLS..."
 mkdir -p /etc/docker
-echo "{\"dns\": [\"$INTERNAL_DNS_SERVER\"]}" > /etc/docker/daemon.json
+cat <<EOF > /etc/docker/daemon.json
+{
+  "dns": ["$INTERNAL_DNS_SERVER"],
+  "tls": true,
+  "tlscert": "$DOCKER_CERT_FILE",
+  "tlskey": "$DOCKER_KEY_FILE",
+  "tlscacert": "$DOCKER_CA_FILE",
+  "hosts": ["tcp://0.0.0.0:2376", "unix:///var/run/docker.sock"]
+}
+EOF
 
-# 6. Enable and Start Docker Service
+ # 6. Enable and Start Docker Service
 log_info "Step 6: Enabling and starting Docker service (systemctl enable docker && systemctl start docker)..."
 if ! systemctl enable docker || ! systemctl start docker; then
     log_fatal "Failed to enable or start Docker service."
@@ -137,9 +171,6 @@ log_info "User '$USERNAME' added to the docker group successfully."
 log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 
 # Steps 9, 10, and 11 are now obsolete.
-# - Step 9 (Manual CA Trust) is handled by the 'trusted_ca' feature script, which runs before this one.
-# - Step 10 (Manual Certificate Generation) is no longer needed as Traefik will manage TLS.
-# - Step 11 (Service Startup) is now handled by the 'portainer-manager.sh' during a 'sync' operation.
-log_info "Steps 9, 10, and 11 are obsolete and have been removed."
+log_info "Step 9, 10, and 11 are now handled directly by this script for robust mTLS configuration."
 
 log_info "--- Docker Installation Complete ---"

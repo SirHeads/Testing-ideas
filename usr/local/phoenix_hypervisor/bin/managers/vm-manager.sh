@@ -771,32 +771,11 @@ apply_vm_features() {
         log_info "Copying HAProxy config to VM's persistent storage..."
         cp "${PHOENIX_BASE_DIR}/etc/haproxy/haproxy.cfg" "${hypervisor_scripts_dir}/haproxy.cfg"
 
-        # --- Definitive Fix: Copy Step-CA root certificate ---
-        log_info "Copying Step-CA root certificate to VM's persistent storage..."
-        local ca_cert_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
-        if [ -f "$ca_cert_source_path" ]; then
-            cp "$ca_cert_source_path" "${hypervisor_scripts_dir}/phoenix_ca.crt"
-        else
-            log_warn "Step-CA root certificate not found at $ca_cert_source_path. Docker feature might fail if it needs to trust internal services."
-        fi
-
-        # --- Definitive Fix: Copy Step-CA provisioner password file ---
-        log_info "Copying Step-CA provisioner password file to VM's persistent storage..."
-        local provisioner_password_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
-        if [ -f "$provisioner_password_source_path" ]; then
-            cp "$provisioner_password_source_path" "${hypervisor_scripts_dir}/provisioner_password.txt"
-        else
-            log_warn "Step-CA provisioner password file not found at $provisioner_password_source_path. Certificate generation for Portainer will fail."
-        fi
-
-        # --- Final Fix: Copy the root CA fingerprint ---
-        log_info "Copying Step-CA root fingerprint to VM's persistent storage..."
-        local fingerprint_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint"
-        if [ -f "$fingerprint_source_path" ]; then
-            cp "$fingerprint_source_path" "${hypervisor_scripts_dir}/root_ca.fingerprint"
-        else
-            log_warn "Step-CA root fingerprint not found at $fingerprint_source_path. VM bootstrap will fail."
-        fi
+        # The logic for copying Step-CA files (root cert, provisioner password, fingerprint)
+        # has been deprecated. This is now handled by a declarative mount point in the
+        # phoenix_vm_configs.json file, which makes the shared CA directory directly
+        # available to the VM. This aligns the VM provisioning process with the more
+        # robust and idempotent pattern used by the LXC containers.
 
         local persistent_mount_point
         persistent_mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" | head -n 1)

@@ -35,7 +35,8 @@
             "features": [
                 "base_setup",
                 "docker",
-                "trusted_ca"
+                "trusted_ca",
+                "step_cli"
             ],
             "portainer_role": "primary",
             "dependencies": [
@@ -60,6 +61,12 @@
                     "path": "/quickOS/vm-persistent-data/1001",
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
+                }
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ],
             "docker_stacks": [
@@ -111,7 +118,8 @@
             "features": [
                 "base_setup",
                 "docker",
-                "trusted_ca"
+                "trusted_ca",
+                "step_cli"
             ],
             "portainer_role": "agent",
             "portainer_environment_name": "dr-phoenix",
@@ -135,6 +143,12 @@
                     "path": "/quickOS/vm-persistent-data/1002",
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
+                }
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ],
             "docker_stacks": [

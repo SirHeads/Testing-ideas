@@ -121,34 +121,28 @@ setup_traefik_tls() {
     local CERT_DIR="/etc/traefik/certs"
     local FQDN="traefik.phoenix.thinkheads.ai"
     local INTERNAL_FQDN="traefik.internal.thinkheads.ai"
+    local CA_URL="https://ca.internal.thinkheads.ai:9000"
+    local ROOT_CA_CERT_SHARED="/etc/step-ca/ssl/phoenix_root_ca.crt"
+    local PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
 
     pct exec "$CTID" -- mkdir -p "$CERT_DIR"
 
-    # Generate Client Certificate
-    log_info "Generating client certificate for ${FQDN}..."
-    local TEMP_CERT_PATH="/tmp/${FQDN}.crt"
-    local TEMP_KEY_PATH="/tmp/${FQDN}.key"
-    pct exec 103 -- step ca certificate "${FQDN}" "$TEMP_CERT_PATH" "$TEMP_KEY_PATH" --san "${INTERNAL_FQDN}" \
+    # Bootstrap the step CLI within the Traefik container
+    log_info "Bootstrapping Step CLI inside Traefik container..."
+    pct exec "$CTID" -- /bin/bash -c "step ca bootstrap --ca-url \"${CA_URL}\" --fingerprint \"\$(step certificate fingerprint ${ROOT_CA_CERT_SHARED})\" --force"
+
+    # Generate Client Certificate inside the Traefik container
+    log_info "Generating client certificate for ${FQDN} inside Traefik container..."
+    pct exec "$CTID" -- step ca certificate "${FQDN}" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" --san "${INTERNAL_FQDN}" \
         --provisioner admin@thinkheads.ai \
-        --password-file /etc/step-ca/ssl/provisioner_password.txt --force
+        --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" --force
 
-    # Transfer certificates to Traefik container
-    log_info "Transferring certificates to Traefik container..."
-    local HOST_TEMP_CERT="/tmp/traefik_${CTID}.crt"
-    local HOST_TEMP_KEY="/tmp/traefik_${CTID}.key"
-    pct pull 103 "$TEMP_CERT_PATH" "$HOST_TEMP_CERT"
-    pct pull 103 "$TEMP_KEY_PATH" "$HOST_TEMP_KEY"
-    pct push "$CTID" "$HOST_TEMP_CERT" "${CERT_DIR}/cert.pem"
-    pct push "$CTID" "$HOST_TEMP_KEY" "${CERT_DIR}/key.pem"
-
-    # Transfer CA certificate
-    local HOST_TEMP_CA="/tmp/traefik_ca.pem"
-    pct pull 103 "/root/.step/certs/root_ca.crt" "$HOST_TEMP_CA"
+    # Transfer the root CA certificate using a robust pull/push method
+    log_info "Transferring root CA to ${CERT_DIR}/ca.pem..."
+    local HOST_TEMP_CA="/tmp/traefik_ca_${CTID}.pem"
+    pct pull "$CTID" "${ROOT_CA_CERT_SHARED}" "$HOST_TEMP_CA"
     pct push "$CTID" "$HOST_TEMP_CA" "${CERT_DIR}/ca.pem"
-
-    # Clean up temp files
-    rm -f "$HOST_TEMP_CERT" "$HOST_TEMP_KEY" "$HOST_TEMP_CA"
-    pct exec 103 -- rm -f "$TEMP_CERT_PATH" "$TEMP_KEY_PATH"
+    rm -f "$HOST_TEMP_CA"
 
     log_success "TLS certificates for Traefik Docker provider installed successfully."
 }

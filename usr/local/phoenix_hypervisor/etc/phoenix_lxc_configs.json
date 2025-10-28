@@ -756,9 +756,9 @@
             "clone_from_ctid": "900",
             "features": [
                 "base_setup",
-                "traefik",
                 "trusted_ca",
-                "step_cli"
+                "step_cli",
+                "traefik"
             ],
             "application_script": "phoenix_hypervisor_lxc_102.sh",
             "dependencies": [
@@ -850,7 +850,13 @@
             "mount_points": [
                 {
                     "host_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs",
-                    "container_path": "/etc/traefik/certs"
+                    "container_path": "/etc/traefik/certs",
+                    "owner_uid": 0,
+                    "owner_gid": 0
+                },
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
                 }
             ]
         }
