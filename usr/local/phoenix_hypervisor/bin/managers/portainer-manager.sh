@@ -476,6 +476,8 @@ sync_all() {
         fi
         if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml" /etc/traefik/dynamic/dynamic_conf.yml; then
             log_fatal "Failed to push Traefik dynamic config to container 102."
+        else
+            log_success "Successfully pushed Traefik dynamic config to container 102."
         fi
         pct exec "$traefik_ctid" -- chmod 644 /etc/traefik/dynamic/dynamic_conf.yml
         if ! pct exec "$traefik_ctid" -- systemctl reload traefik; then
