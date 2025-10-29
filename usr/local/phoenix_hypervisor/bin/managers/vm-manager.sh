@@ -290,9 +290,13 @@ orchestrate_vm() {
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
 
-        log_info "Step 9: Applying features to VM $VMID..."
-        apply_vm_features "$VMID"
+        log_info "Step 9: Preparing CA staging area for VM $VMID..."
+        prepare_vm_ca_staging_area "$VMID"
         log_info "Step 9: Completed."
+
+        log_info "Step 10: Applying features to VM $VMID..."
+        apply_vm_features "$VMID"
+        log_info "Step 10: Completed."
 
 
         log_info "Step 10: Managing post-feature snapshots for VM $VMID..."
@@ -563,7 +567,8 @@ apply_network_configurations() {
 
 # =====================================================================================
 # Function: apply_volumes
-# Description: Applies volume configurations to a VM.
+# Description: Applies all NFS volume configurations to a VM by iterating through
+#              the volumes defined in its configuration.
 # Arguments:
 #   $1 - The VMID of the VM to configure.
 # =====================================================================================
@@ -571,36 +576,66 @@ apply_volumes() {
     local VMID="$1"
     log_info "Applying volume configurations to VM $VMID..."
 
-    local server
-    server=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .server" || echo "")
-    local path
-    path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" || echo "")
-    local mount_point
-    mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" || echo "")
+    # Get all NFS volumes as a JSON array of objects
+    local volumes_json
+    volumes_json=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\")")
 
-    if [ -z "$server" ] || [ -z "$path" ] || [ -z "$mount_point" ]; then
+    if [ -z "$volumes_json" ]; then
         log_info "No NFS volumes defined for VM $VMID. Skipping volume configuration."
         return 0
     fi
 
-    log_info "Ensuring NFS source directory exists on hypervisor..."
-    # The 'path' from JSON is the absolute path on the hypervisor
-    local hypervisor_nfs_path="$path"
-    if [ ! -d "$hypervisor_nfs_path" ]; then
-        log_info "Creating NFS source directory: $hypervisor_nfs_path"
-        mkdir -p "$hypervisor_nfs_path"
-        chmod 777 "$hypervisor_nfs_path"
-    fi
+    # Wait for cloud-init to complete before attempting any mounts
+    wait_for_cloud_init "$VMID"
 
-    log_info "Waiting for cloud-init to complete in VM $VMID before mounting volumes..."
+    # Iterate over each volume object
+    echo "$volumes_json" | jq -c '.' | while read -r volume; do
+        local server=$(echo "$volume" | jq -r '.server')
+        local path=$(echo "$volume" | jq -r '.path')
+        local mount_point=$(echo "$volume" | jq -r '.mount_point')
+
+        log_info "Processing NFS volume: ${server}:${path} -> ${mount_point}"
+
+        log_info "Ensuring NFS source directory exists on hypervisor..."
+        if [ ! -d "$path" ]; then
+            log_info "Creating NFS source directory: $path"
+            mkdir -p "$path"
+            chmod 777 "$path"
+        fi
+
+        log_info "Configuring NFS mount inside VM..."
+        run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$mount_point"
+        local fstab_entry="${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "grep -qxF '${fstab_entry}' /etc/fstab || echo '${fstab_entry}' >> /etc/fstab"
+        
+        if ! run_qm_command guest exec "$VMID" -- /bin/mount -a; then
+            log_warn "Initial 'mount -a' failed. This can happen. Verifying mount status before declaring failure."
+        fi
+        
+        if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "mount | grep -q '${mount_point}'"; then
+            log_fatal "Failed to mount NFS share ${server}:${path} at ${mount_point} in VM $VMID."
+        fi
+        log_success "Successfully mounted ${server}:${path} at ${mount_point}."
+    done
+}
+
+# =====================================================================================
+# Function: wait_for_cloud_init
+# Description: A helper function to wait for cloud-init to complete, including handling
+#              reboots if necessary.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+wait_for_cloud_init() {
+    local VMID="$1"
+    log_info "Waiting for cloud-init to complete in VM $VMID..."
     local retries=3
     local success=false
-    local final_cloud_init_exit_code=1 # Default to a failure code
+    local final_cloud_init_exit_code=1
 
     for ((i=1; i<=retries; i++)); do
-        local output
         local exit_code=0
-        output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || exit_code=$?
 
         if [ "$exit_code" -eq 0 ]; then
             log_info "Cloud-init has finished successfully."
@@ -608,58 +643,28 @@ apply_volumes() {
             success=true
             break
         elif [ "$exit_code" -eq 2 ]; then
-            log_warn "Cloud-init finished with non-fatal errors (Exit Code: 2). Assuming a reboot is required."
+            log_warn "Cloud-init finished with non-fatal errors. Assuming a reboot is required."
             final_cloud_init_exit_code=2
-            success=true # Treat as a transient success to trigger the reboot logic
+            success=true
             break
         else
-            log_warn "Waiting for cloud-init failed with unexpected exit code $exit_code (attempt $i/$retries). Retrying in 15 seconds..."
+            log_warn "Waiting for cloud-init failed (attempt $i/$retries). Retrying..."
             sleep 15
         fi
     done
 
     if [ "$success" = false ]; then
-        log_fatal "Failed to wait for cloud-init completion in VM $VMID after $retries attempts."
+        log_fatal "Failed to wait for cloud-init completion in VM $VMID."
     fi
 
     if [ "$final_cloud_init_exit_code" -eq 2 ]; then
-        log_info "Rebooting VM $VMID to attempt to clear transient cloud-init error..."
+        log_info "Rebooting VM $VMID to clear transient cloud-init error..."
         run_qm_command reboot "$VMID"
         wait_for_guest_agent "$VMID"
-        log_info "VM has been rebooted. Performing second-pass verification of cloud-init status..."
-
-        local second_pass_success=false
-        for ((j=1; j<=retries; j++)); do
-            local second_pass_exit_code=0
-            run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || second_pass_exit_code=$?
-            
-            if [ "$second_pass_exit_code" -eq 0 ]; then
-                log_info "Second-pass cloud-init verification successful."
-                second_pass_success=true
-                break
-            else
-                log_warn "Second-pass cloud-init verification failed with exit code $second_pass_exit_code (attempt $j/$retries). Retrying in 15 seconds..."
-                sleep 15
-            fi
-        done
-
-        if [ "$second_pass_success" = false ]; then
-            log_fatal "Cloud-init did not report a clean status for VM $VMID after reboot. Provisioning failed."
+        log_info "VM rebooted. Re-verifying cloud-init status..."
+        if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait"; then
+            log_fatal "Cloud-init did not report a clean status after reboot."
         fi
-    fi
-
-    log_info "Configuring NFS mount for VM $VMID: ${server}:${path} -> ${mount_point}"
-    # nfs-common is now installed via virt-customize, so this is no longer needed.
-    run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$mount_point"
-    run_qm_command guest exec "$VMID" -- /bin/bash -c "grep -qxF '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' /etc/fstab || echo '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' >> /etc/fstab"
-    
-    if ! run_qm_command guest exec "$VMID" -- /bin/mount -a; then
-        log_warn "Initial 'mount -a' failed. This can happen. Verifying mount status before declaring failure."
-    fi
-    
-    # Robust mount verification
-    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "mount | grep -q '${mount_point}'"; then
-        log_fatal "Failed to mount NFS share ${server}:${path} at ${mount_point} in VM $VMID. Please check NFS server logs and network connectivity."
     fi
 }
 
@@ -770,12 +775,6 @@ apply_vm_features() {
         # --- Definitive Fix: Copy HAProxy config ---
         log_info "Copying HAProxy config to VM's persistent storage..."
         cp "${PHOENIX_BASE_DIR}/etc/haproxy/haproxy.cfg" "${hypervisor_scripts_dir}/haproxy.cfg"
-
-        # The logic for copying Step-CA files (root cert, provisioner password, fingerprint)
-        # has been deprecated. This is now handled by a declarative mount point in the
-        # phoenix_vm_configs.json file, which makes the shared CA directory directly
-        # available to the VM. This aligns the VM provisioning process with the more
-        # robust and idempotent pattern used by the LXC containers.
 
         local persistent_mount_point
         persistent_mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" | head -n 1)
@@ -890,6 +889,58 @@ manage_snapshots() {
     fi
 
     log_info "Snapshot '$snapshot_name' created successfully."
+}
+
+# =====================================================================================
+# Function: wait_for_step_ca_service
+# Description: Waits for the Step-CA service inside LXC 103 to become active.
+# =====================================================================================
+wait_for_step_ca_service() {
+    log_info "Waiting for Step-CA service in LXC 103 to become active..."
+    local timeout=300 # 5 minutes
+    local start_time=$SECONDS
+    while (( SECONDS - start_time < timeout )); do
+        if pct exec 103 -- systemctl is-active --quiet step-ca; then
+            log_success "Step-CA service is active in LXC 103. Proceeding."
+            return 0
+        fi
+        sleep 5
+    done
+    log_fatal "Timeout reached while waiting for Step-CA service in LXC 103."
+}
+
+# =====================================================================================
+# Function: prepare_vm_ca_staging_area
+# Description: Creates a dedicated staging area for the VM's CA files and copies
+#              the necessary artifacts into it. This allows the VM to securely mount
+#              the directory via NFS.
+# Arguments:
+#   $1 - The VMID of the target VM.
+# =====================================================================================
+prepare_vm_ca_staging_area() {
+    local VMID="$1"
+    log_info "Preparing CA file staging area for VM ${VMID}..."
+
+    wait_for_step_ca_service
+
+    local source_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
+    local dest_dir="/quickOS/vm-persistent-data/${VMID}/.step-ca"
+
+    log_info "Creating and preparing staging directory: ${dest_dir}"
+    mkdir -p "${dest_dir}"
+    rm -f "${dest_dir}"/* # Clean out old files
+
+    log_info "Copying CA files to staging area..."
+    cp "${source_dir}/certs/root_ca.crt" "${dest_dir}/root_ca.crt"
+    cp "${source_dir}/provisioner_password.txt" "${dest_dir}/provisioner_password.txt"
+    cp "${source_dir}/root_ca.fingerprint" "${dest_dir}/root_ca.fingerprint"
+
+    log_info "Setting world-readable permissions on staged CA files..."
+    chmod 644 "${dest_dir}/root_ca.crt"
+    chmod 644 "${dest_dir}/provisioner_password.txt"
+    chmod 644 "${dest_dir}/root_ca.fingerprint"
+
+    log_success "CA staging area for VM ${VMID} is ready."
 }
 
 # =====================================================================================

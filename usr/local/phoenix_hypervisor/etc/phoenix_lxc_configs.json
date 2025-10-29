@@ -678,6 +678,10 @@
                 "step_ca"
             ],
             "application_script": "phoenix_hypervisor_lxc_103.sh",
+            "traefik_service": {
+                "name": "ca",
+                "port": 9000
+            },
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,
@@ -761,6 +765,7 @@
                 "traefik"
             ],
             "application_script": "phoenix_hypervisor_lxc_102.sh",
+            "bootstrap_ca_url": "https://10.0.0.10:9000",
             "dependencies": [
                 "103"
             ],

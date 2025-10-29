@@ -108,30 +108,38 @@ log_info "Docker Engine installed successfully."
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
 INTERNAL_DNS_SERVER="10.0.0.1"
-CA_URL="https://ca.internal.thinkheads.ai:9000"
-PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
-ROOT_CA_FINGERPRINT_FILE="/etc/step-ca/ssl/root_ca.fingerprint"
+CA_URL="https://10.0.0.10:9000"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/certs/provisioner_password.txt"
+ROOT_CA_CERT_FILE="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 DOCKER_TLS_DIR="/etc/docker/tls"
 DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
 DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
 DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
 
 # Bootstrap Step CLI
+log_info "Waiting for DNS resolution of ca.internal.thinkheads.ai..."
+while ! getent hosts ca.internal.thinkheads.ai > /dev/null; do
+    log_info "DNS not ready yet. Retrying in 5 seconds..."
+    sleep 5
+done
+log_info "DNS resolution successful. Proceeding with Step CLI bootstrap..."
+
 log_info "Bootstrapping Step CLI to trust the internal CA..."
-if [ ! -f "$ROOT_CA_FINGERPRINT_FILE" ]; then
-    log_fatal "CA fingerprint file not found at $ROOT_CA_FINGERPRINT_FILE. Cannot bootstrap Step CLI."
+if [ ! -f "$ROOT_CA_CERT_FILE" ]; then
+    log_fatal "Root CA certificate not found at $ROOT_CA_CERT_FILE. The 'trusted_ca' feature must run first."
 fi
-local ca_fingerprint
-ca_fingerprint=$(cat "$ROOT_CA_FINGERPRINT_FILE")
-step ca bootstrap --ca-url "$CA_URL" --fingerprint "$ca_fingerprint" --force
+/usr/bin/step ca bootstrap --ca-url "$CA_URL" --fingerprint "$(/usr/bin/step certificate fingerprint "$ROOT_CA_CERT_FILE")" --force
 
 # Generate Docker Client Certificate
 log_info "Generating TLS certificate for the Docker daemon..."
 mkdir -p "$DOCKER_TLS_DIR"
-local fqdn
 fqdn=$(hostname -f)
-step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
-cp "/etc/step-ca/ssl/phoenix_ca.crt" "$DOCKER_CA_FILE"
+/usr/bin/step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
+cp "/etc/step-ca/certs/root_ca.crt" "$DOCKER_CA_FILE"
+
+# Securely remove the temporary files
+log_info "Securely removing temporary CA files..."
+# No longer need to remove files from /tmp, as we are using the mounted directory
 
 # Configure Docker Daemon for mTLS
 log_info "Configuring Docker daemon for mTLS..."

@@ -18,7 +18,7 @@ source "$PHOENIX_BASE_DIR/bin/managers/portainer-manager.sh"
 main() {
     log_info "--- Starting Portainer API Health Check (Authenticated) ---"
 
-    local PORTAINER_HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
+    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
     local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:443"
     local CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
 
@@ -40,7 +40,10 @@ main() {
 
     # 3. Perform an authenticated API call
     log_info "Performing authenticated API call to /api/endpoints..."
-    if ! curl -s --fail --cacert "$CA_CERT_PATH" -H "Authorization: Bearer ${JWT}" "${PORTAINER_URL}/api/endpoints" > /dev/null; then
+    if ! curl -s --fail --cacert "$CA_CERT_PATH" \
+              --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.12" \
+              -H "Authorization: Bearer ${JWT}" \
+              "${PORTAINER_URL}/api/endpoints" > /dev/null; then
         log_error "Health check failed: Authenticated API call to /api/endpoints failed."
         return 1
     fi

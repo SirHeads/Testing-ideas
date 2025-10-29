@@ -1,0 +1,35 @@
+# Refactoring Plan for portainer-manager.sh
+
+This document outlines the step-by-step plan to refactor the `portainer-manager.sh` script to align it with the new architecture.
+
+### 1. Remove Redundant Certificate Validation
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Function**: `get_portainer_jwt`
+- **Action**: Remove the proactive certificate validation block. This is no longer needed due to the centralized CA.
+
+### 2. Simplify Portainer Deployment Logic
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Function**: `deploy_portainer_instances`
+- **Actions**:
+    - Remove the check and installation logic for `yq`.
+    - Remove the logic that copies the `Dockerfile`.
+    - Change the `docker compose up` command to remove the `--build` flag.
+
+### 3. Fix Agent Health Check
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Function**: `deploy_portainer_instances`
+- **Action**: Change the agent health check `curl` command to use `http` instead of `https`.
+
+### 4. Update Portainer API URLs
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Functions**: `sync_stack`, `sync_portainer_endpoints`
+- **Action**: Update the hardcoded Portainer API hostnames and URLs to use `portainer.internal.thinkheads.ai` and a simplified URL structure.
+
+### 5. Streamline Admin User Setup
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Function**: `wait_for_portainer_api_and_setup_admin`
+- **Action**: Update the function to use the correct service URL (`http://10.0.0.111:9000`) and remove the `--insecure` flag from the `curl` command.
+
+### 6. Remove Obsolete Function
+- **File**: `usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh`
+- **Action**: Remove the entire `_get_agent_cert_paths` function, as it is no longer needed.

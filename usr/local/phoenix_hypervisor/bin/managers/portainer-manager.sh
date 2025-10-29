@@ -40,8 +40,9 @@ wait_for_system_ready() {
     local RETRY_DELAY=3
     local attempt=1
 
-    local health_checks=(
-        "check_dns_resolution.sh"
+    # Define critical internal domains and their expected IP addresses
+
+    local other_health_checks=(
         "check_nginx_gateway.sh"
         "check_traefik_proxy.sh"
         "check_step_ca.sh"
@@ -52,7 +53,28 @@ wait_for_system_ready() {
         log_info "Health check attempt ${attempt}/${MAX_RETRIES}..."
         local all_checks_passed=true
 
-        for check_script in "${health_checks[@]}"; do
+        # --- DNS Health Checks ---
+        for domain in "${!critical_domains[@]}"; do
+            local expected_ip="${critical_domains[$domain]}"
+            if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_dns_resolution.sh" --context host --domain "$domain" --expected-ip "$expected_ip"; then
+                log_warn "DNS health check failed for domain: $domain"
+                all_checks_passed=false
+                break 2 # Exit both loops to retry all checks
+            fi
+        done
+
+        if [ "$all_checks_passed" = false ]; then
+            # Go to the next attempt if DNS checks failed
+            if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+                log_info "One or more health checks failed. Retrying in ${RETRY_DELAY} seconds..."
+                sleep "$RETRY_DELAY"
+            fi
+            attempt=$((attempt + 1))
+            continue
+        fi
+
+        # --- Other Health Checks ---
+        for check_script in "${other_health_checks[@]}"; do
             if ! "${PHOENIX_BASE_DIR}/bin/health_checks/${check_script}"; then
                 log_warn "Health check failed: ${check_script}"
                 all_checks_passed=false
@@ -85,9 +107,9 @@ wait_for_system_ready() {
 # =====================================================================================
 get_portainer_jwt() {
     log_info "Attempting to authenticate with Portainer API..."
-    local PORTAINER_HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
+    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
     local PORTAINER_PORT="443" # Always connect via the public-facing Nginx proxy port
-    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:${PORTAINER_PORT}"
+    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}"
     local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
     local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
@@ -104,11 +126,6 @@ get_portainer_jwt() {
         log_fatal "CA certificate file not found at: ${CA_CERT_PATH}. Cannot authenticate with Portainer API."
     fi
 
-    # --- BEGIN: Proactive Certificate Validation ---
-    if ! validate_certificate_chain "$PORTAINER_HOSTNAME" "$PORTAINER_PORT" "$CA_CERT_PATH"; then
-        log_fatal "Certificate validation failed for Portainer API endpoint. Cannot proceed with authentication."
-    fi
-    # --- END: Proactive Certificate Validation ---
  
     local JWT_RESPONSE
     local JWT=""
@@ -119,7 +136,7 @@ get_portainer_jwt() {
 
     while [ -z "$JWT" ] && [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Authentication attempt ${attempt}/${MAX_RETRIES}..."
-        JWT=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X POST -H "Content-Type: application/json" -d "${AUTH_PAYLOAD}" "${PORTAINER_URL}/api/auth" | jq -r '.jwt // ""')
+        JWT=$(retry_api_call -s -X POST -H "Content-Type: application/json" -d "${AUTH_PAYLOAD}" "${PORTAINER_URL}/api/auth" | jq -r '.jwt // ""')
 
         if [ -z "$JWT" ]; then
             log_warn "Authentication failed on attempt ${attempt}."
@@ -145,22 +162,7 @@ get_portainer_jwt() {
 # =====================================================================================
 deploy_portainer_instances() {
     wait_for_system_ready || return 1
-    local intermediate_ca_path="$1"
     log_info "Deploying Portainer server and agent instances..."
-
-    # Check for yq and install if not found
-    if ! command -v yq &> /dev/null; then
-        log_info "yq not found. Attempting to install yq..."
-        if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            # For Debian/Ubuntu-based systems
-            sudo apt-get update && sudo apt-get install -y yq || log_fatal "Failed to install yq. Please install yq manually."
-        elif [[ "$OSTYPE" == "darwin"* ]]; then
-            # For macOS
-            brew install yq || log_fatal "Failed to install yq. Please install yq manually (brew install yq)."
-        else
-            log_fatal "Unsupported OS for automatic yq installation. Please install yq manually."
-        fi
-    fi
 
     local vms_with_portainer
     vms_with_portainer=$(jq -c '.vms[] | select(.portainer_role == "primary" or .portainer_role == "agent")' "$VM_CONFIG_FILE")
@@ -212,13 +214,7 @@ deploy_portainer_instances() {
                 rm -f "${hypervisor_portainer_dir}/docker-compose.yml"
                 cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml" || log_fatal "Failed to copy docker-compose.yml to hypervisor's NFS share."
 
-                # --- FIX: Copy Dockerfile and CA certificate for the build context ---
-                log_info "Copying Portainer Dockerfile to hypervisor's NFS share: ${hypervisor_portainer_dir}/Dockerfile"
-                cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/Dockerfile" "${hypervisor_portainer_dir}/Dockerfile" || log_fatal "Failed to copy Dockerfile to hypervisor's NFS share."
 
-                # --- END FIX ---
-
-                # Certificate generation is no longer needed. Traefik will handle TLS.
 
                 # Ensure the compose file and config.json are present on the VM's persistent storage
                 if ! qm guest exec "$VMID" -- /bin/bash -c "test -f $compose_file_path"; then
@@ -236,27 +232,30 @@ deploy_portainer_instances() {
                 qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly. This is expected if it's the first run."
 
 
-                # extra_hosts is no longer needed with declarative DNS
-
-                # Certificate verification is no longer needed.
 
                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'docker compose up -d' for Portainer server on VM $VMID."
                 else
-                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker compose -f ${compose_file_path} up --build -d"; then
+                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker compose -f ${compose_file_path} up -d"; then
                         log_fatal "Failed to deploy Portainer server on VM $VMID."
                     fi
                 fi
                 log_info "Portainer server deployment initiated on VM $VMID."
                 
                 log_info "Adding firewall rule to allow Traefik to access Portainer..."
-                # This is now handled by the declarative firewall configuration
                 
                 # The health check in sync_all will now handle waiting for the service to be ready.
                 
                 # --- BEGIN IMMEDIATE ADMIN SETUP ---
-                wait_for_portainer_api_and_setup_admin
+                log_info "Waiting for Portainer API and setting up admin user..."
+                # Use the direct internal IP for initial setup to bypass the proxy layers.
+                local portainer_server_ip="10.0.0.111"
+                local portainer_server_port="9000"
+                local PORTAINER_URL="http://${portainer_server_ip}:${portainer_server_port}"
+                # The second argument (CA_CERT_PATH) is empty because we are using http.
+                # The third argument (CURL_EXTRA_ARGS) is omitted as per the plan.
+                setup_portainer_admin_user "$PORTAINER_URL" ""
                 # --- END IMMEDIATE ADMIN SETUP ---
                 ;;
             agent)
@@ -267,7 +266,6 @@ deploy_portainer_instances() {
                 local agent_fqdn="${agent_name}.${domain_name}"
 
 
-                # Certificate verification is no longer needed.
 
                 log_info "Ensuring clean restart for Portainer agent on VM $VMID..."
                 qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly on VM $VMID. Proceeding with deployment."
@@ -291,7 +289,7 @@ deploy_portainer_instances() {
                 local agent_health_check_delay=5
                 local agent_health_check_attempt=1
                 while [ "$agent_health_check_attempt" -le "$agent_health_check_retries" ]; do
-                    local agent_status_json=$(qm guest exec "$VMID" -- /bin/bash -c "curl -s -o /dev/null -w '%{http_code}' --insecure https://localhost:9001/ping")
+                    local agent_status_json=$(qm guest exec "$VMID" -- /bin/bash -c "curl -s -o /dev/null -w '%{http_code}' http://localhost:9001/ping")
                     local agent_status_code=$(echo "$agent_status_json" | jq -r '."out-data" // ""')
                     if [ "$agent_status_code" == "204" ]; then
                         log_success "Portainer agent on VM $VMID is healthy."
@@ -314,8 +312,6 @@ deploy_portainer_instances() {
     done < <(echo "$vms_with_portainer" | jq -c '.')
     log_success "Portainer server and agent instances deployment process completed."
 
-    # The dynamic configuration is now handled by the centralized generate_traefik_config.sh script.
-    # This section is no longer needed.
 }
 
 # =====================================================================================
@@ -445,7 +441,6 @@ sync_all() {
         log_warn "Step-CA container (${step_ca_ctid}) not found. Skipping host trust installation."
     fi
 
-    # Certificate generation for agents is no longer needed.
 
     # Sync DNS server configuration
     if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh"; then
@@ -582,10 +577,8 @@ sync_stack() {
     log_info "DEBUG: STACK_CONFIG_JSON: ${STACK_CONFIG_JSON}"
     log_info "Synchronizing stack '${STACK_NAME}' (environment: '${ENVIRONMENT_NAME}') to VMID '${VMID}'..."
 
-    local domain_name=$(get_global_config_value '.domain_name')
-    local portainer_hostname="portainer.${domain_name}"
-    local portainer_server_port="443" # Always connect via the public-facing Nginx proxy port
-    local PORTAINER_URL="https://${portainer_hostname}:${portainer_server_port}"
+    local portainer_hostname="portainer.internal.thinkheads.ai"
+    local PORTAINER_URL="https://${portainer_hostname}"
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
 
     if [ -z "$JWT" ]; then
@@ -761,62 +754,6 @@ sync_stack() {
 }
 
 # =====================================================================================
-# Function: wait_for_portainer_api_and_setup_admin
-# Description: Waits for the Portainer API to become available and then immediately
-#              sets up the admin user to prevent the security timeout.
-# =====================================================================================
-wait_for_portainer_api_and_setup_admin() {
-    log_info "Waiting for Portainer API and setting up admin user..."
-    # Use the direct internal IP for initial setup to bypass the proxy layers.
-    local portainer_server_ip=$(get_global_config_value '.network.portainer_server_ip')
-    local portainer_server_port=$(get_global_config_value '.network.portainer_server_port')
-    local PORTAINER_URL="https://${portainer_server_ip}:${portainer_server_port}"
-    local ca_cert_path="${CENTRALIZED_CA_CERT_PATH}"
-    
-    # This call will now happen within the security window.
-    # We use --insecure because the certificate is for the hostname, not the direct IP.
-    setup_portainer_admin_user "$PORTAINER_URL" "" "--insecure"
-}
-
-# =====================================================================================
-# Function: _get_agent_cert_paths
-# Description: A helper function to derive and validate the certificate paths for a given agent.
-# Arguments:
-#   $1 - The JSON configuration object for the agent.
-#   $2 - A nameref to an associative array to be populated with the cert paths.
-# =====================================================================================
-_get_agent_cert_paths() {
-    local agent_config_json="$1"
-    declare -n cert_paths_ref="$2" # Use nameref for the output array
-
-    local persistent_volume_path
-    persistent_volume_path=$(echo "$agent_config_json" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
-    if [ -z "$persistent_volume_path" ]; then
-        log_fatal "Could not determine persistent volume path for agent. Cannot find certificates."
-    fi
-
-    cert_paths_ref["ca"]="${persistent_volume_path}/certs/ca.pem"
-    cert_paths_ref["cert"]="${persistent_volume_path}/certs/cert.pem"
-    cert_paths_ref["key"]="${persistent_volume_path}/certs/key.pem"
-    cert_paths_ref["leaf"]="${persistent_volume_path}/certs/cert-leaf.pem"
-
-    # --- Wait for certificates to be ready ---
-    local cert_files=("${cert_paths_ref["ca"]}" "${cert_paths_ref["cert"]}" "${cert_paths_ref["key"]}" "${cert_paths_ref["leaf"]}")
-    local cert_wait_retries=5
-    local cert_wait_delay=2
-    for i in $(seq 1 $cert_wait_retries); do
-        if [ -s "${cert_files[0]}" ] && [ -s "${cert_files[1]}" ] && [ -s "${cert_files[2]}" ]; then
-            log_info "All agent certificates are present and non-empty."
-            return 0
-        fi
-        log_warn "Agent certificates not yet available or are empty. Retrying in ${cert_wait_delay}s... (Attempt ${i}/${cert_wait_retries})"
-        sleep "$cert_wait_delay"
-    done
-
-    log_fatal "One or more agent certificates are missing or empty after multiple retries. Aborting endpoint operation."
-}
-
-# =====================================================================================
 # Function: sync_portainer_endpoints
 # Description: Ensures that all Portainer agent endpoints defined in the configuration
 #              are registered with the Portainer server.
@@ -827,8 +764,8 @@ _get_agent_cert_paths() {
 sync_portainer_endpoints() {
     local JWT="$1"
     local CA_CERT_PATH="$2"
-    local PORTAINER_HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
-    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:443"
+    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
+    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}"
 
     log_info "--- Synchronizing Portainer Endpoints ---"
 

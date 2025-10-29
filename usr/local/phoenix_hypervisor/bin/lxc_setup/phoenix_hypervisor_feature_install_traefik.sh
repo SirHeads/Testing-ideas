@@ -119,9 +119,10 @@ setup_traefik_directories() {
 setup_traefik_tls() {
     log_info "Setting up TLS for Traefik Docker provider..."
     local CERT_DIR="/etc/traefik/certs"
-    local FQDN="traefik.phoenix.thinkheads.ai"
+    local FQDN="traefik.internal.thinkheads.ai"
     local INTERNAL_FQDN="traefik.internal.thinkheads.ai"
-    local CA_URL="https://ca.internal.thinkheads.ai:9000"
+    local BOOTSTRAP_CA_URL="$2"
+    local FINAL_CA_URL="https://ca.internal.thinkheads.ai:9000"
     local ROOT_CA_CERT_SHARED="/etc/step-ca/ssl/phoenix_root_ca.crt"
     local PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
 
@@ -129,7 +130,8 @@ setup_traefik_tls() {
 
     # Bootstrap the step CLI within the Traefik container
     log_info "Bootstrapping Step CLI inside Traefik container..."
-    pct exec "$CTID" -- /bin/bash -c "step ca bootstrap --ca-url \"${CA_URL}\" --fingerprint \"\$(step certificate fingerprint ${ROOT_CA_CERT_SHARED})\" --force"
+    local ca_url_to_use="${BOOTSTRAP_CA_URL:-$FINAL_CA_URL}"
+    pct exec "$CTID" -- /bin/bash -c "step ca bootstrap --ca-url \"${ca_url_to_use}\" --fingerprint \"\$(step certificate fingerprint ${ROOT_CA_CERT_SHARED})\" --force"
 
     # Generate Client Certificate inside the Traefik container
     log_info "Generating client certificate for ${FQDN} inside Traefik container..."
@@ -257,7 +259,7 @@ main() {
 
     install_traefik_binary
     setup_traefik_directories
-    setup_traefik_tls
+    setup_traefik_tls "$@"
     push_static_config
     create_systemd_service
 

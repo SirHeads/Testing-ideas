@@ -22,7 +22,7 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-CA_URL="https://ca.internal.thinkheads.ai:9000"
+CA_URL="https://10.0.0.10:9000"
 
 CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
 PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
@@ -173,7 +173,11 @@ main() {
 
     wait_for_ca
     bootstrap_step_cli
-    request_traefik_certificate
+    # The request_traefik_certificate function is now deprecated.
+    # Traefik will dynamically obtain its own certificate for the dashboard
+    # using the ACME certResolver defined in its static configuration.
+    # This aligns with the design intent of a fully automated certificate
+    # management system.
     configure_traefik
     setup_traefik_service
 

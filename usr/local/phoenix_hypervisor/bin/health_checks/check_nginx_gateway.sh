@@ -18,8 +18,8 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 main() {
     log_info "--- Starting Nginx Gateway Health Check (v2.0.0) ---"
     local NGINX_CTID="101"
-    local CERT_PATH="/etc/nginx/ssl/phoenix.thinkheads.ai.crt"
-    local KEY_PATH="/etc/nginx/ssl/phoenix.thinkheads.ai.key"
+    local CERT_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.crt"
+    local KEY_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.key"
 
     # Check 1: Nginx Configuration Syntax
     log_info "Checking Nginx configuration syntax..."

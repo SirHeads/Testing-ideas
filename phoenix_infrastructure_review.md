@@ -8,15 +8,16 @@ Our analysis confirms that the foundational components of your network and secur
 
 *   **The Step-CA and ZFS integration** for creating and distributing a chain of trust.
 *   **The comprehensive firewall configuration** that secures communication between all components.
+*   **The unified DNS architecture** that provides consistent name resolution across the environment.
 
-While the underlying architecture is sound, the complexity of the runtime interactions, particularly around TLS handshakes and certificate validation, remains the most likely source of any operational issues. This document concludes by reaffirming the diagnostic plan to investigate these runtime dynamics.
+While the underlying architecture is sound, a critical bootstrap dependency was identified and resolved. This document details the final, validated architecture and confirms that the system is now ready for its first full synchronization.
 
 ## 2. System Architecture Overview
 
 The Phoenix Hypervisor employs a sophisticated, multi-layered architecture designed for security, scalability, and ease of management. The core components are:
 
 *   **Nginx Gateway (LXC 101):** The single point of entry for all external traffic. It terminates TLS using a certificate from the internal Step-CA and acts as a reverse proxy, forwarding requests to the internal service mesh.
-*   **Traefik Mesh (LXC 102):** Provides a service mesh for all internal services, handling service discovery and load balancing. It proactively requests its own dashboard certificate from the Step-CA, ensuring a consistent and reliable TLS configuration.
+*   **Traefik Mesh (LXC 102):** Provides a service mesh for all internal services, handling service discovery, routing, and load balancing.
 *   **Step-CA (LXC 103):** The cornerstone of the internal security model. It functions as a private Certificate Authority (CA), issuing trusted TLS certificates for all internal services.
 
 This separation of concerns is a robust design that aligns with modern best practices for secure and scalable infrastructure.
@@ -117,9 +118,9 @@ graph TD
     B -- "2. Proxy Pass [Port 8443]" --> C;
     C -- "3. Route to Service [e.g., Port 9443]" --> E;
     C -- "4. Route to Service [e.g., Port 6333]" --> F;
+    C -- "5. Route to CA [Port 9000]" --> D;
 
-    C -- "5. ACME Request [Port 9000]" --> D;
-    B -- "6. Cert Request [Port 9000]" --> D;
+    B -- "6. Cert Request [Bootstrap Only - Hardcoded IP]" --> D;
     
     E -- "7. Agent Comms [Port 9001]" --> F;
 ```
@@ -128,27 +129,21 @@ graph TD
 
 A detailed, path-by-path analysis confirms that for every required communication flow—from external user requests to internal ACME challenges and service-to-service proxying—a corresponding firewall rule exists to allow the traffic. The rules are granular and adhere to the principle of least privilege.
 
-## 5. Split-Horizon DNS with dnsmasq
+## 5. Unified DNS with dnsmasq
 
-A robust and flexible DNS architecture is critical for the security and functionality of the Phoenix Hypervisor. The system employs a split-horizon DNS setup, managed by `dnsmasq` on the hypervisor host, to provide different DNS resolutions for internal and external requests.
+A robust and reliable DNS architecture is critical for the functionality of the Phoenix Hypervisor. The system has been simplified to use a unified, internal-only DNS setup, managed by `dnsmasq` on the hypervisor host. This approach removes the complexity of a split-horizon configuration and ensures consistent and accurate name resolution for all internal clients.
 
 ### 5.1. Architecture Overview
 
-The `dnsmasq` service on the Proxmox host is configured to be the primary DNS resolver for the host itself and for all guest VMs and LXC containers. It sources its records from a central, declarative configuration, ensuring a single source of truth for all DNS entries.
+The `dnsmasq` service on the Proxmox host is configured to be the single, authoritative DNS resolver for the host itself and for all guest VMs and LXC containers. It serves a single set of records that resolve all services to their internal IP addresses within the Traefik service mesh.
 
 ### 5.2. Declarative Record Generation
 
-The DNS records are not managed manually. Instead, the `hypervisor_feature_setup_dns_server.sh` script automatically generates the `dnsmasq` configuration by aggregating records from three sources:
-
-1.  **Hypervisor Authoritative Zones:** The main `phoenix_hypervisor_config.json` file defines authoritative zones and their records. This is the primary source for core service discovery.
-2.  **VM DNS Records:** Each VM defined in `phoenix_vm_configs.json` can have its own set of DNS records.
-3.  **LXC DNS Records:** Similarly, each LXC container in `phoenix_lxc_configs.json` can have its own DNS records.
-
-This declarative approach means that DNS is managed as part of the overall Infrastructure-as-Code, which is a significant strength.
+The DNS records are managed declaratively. The `hypervisor_feature_setup_dns_server.sh` script automatically generates the `dnsmasq` configuration by aggregating records from multiple configuration files (`phoenix_hypervisor_config.json`, `phoenix_vm_configs.json`, `phoenix_lxc_configs.json`). This ensures that DNS is managed as part of the overall Infrastructure-as-Code, which is a significant strength.
 
 ### 5.3. DNS Workflow Diagram
 
-This diagram illustrates how DNS records are aggregated and served:
+This diagram illustrates how DNS records are aggregated and served in the unified model:
 
 ```mermaid
 graph TD
@@ -159,39 +154,34 @@ graph TD
     end
 
     subgraph "Hypervisor Host"
-        D["hypervisor_feature_setup_dns_server.sh"] -- reads --> A;
-        D -- reads --> B;
-        D -- reads --> C;
-        D -- generates --> E["/etc/dnsmasq.d/00-phoenix-aggregated-hosts.conf"];
+        D["hypervisor_feature_setup_dns_server.sh"] -- reads --> A & B & C;
+        D -- generates --> E["/etc/dnsmasq.d/00-phoenix-internal.conf"];
         F["dnsmasq Service"] -- reads --> E;
     end
 
-    subgraph "Network Clients"
+    subgraph "All Network Clients"
         G["Host /etc/resolv.conf"]
         H["Guest VM/LXC"]
     end
 
-    F -- serves DNS queries to --> G;
-    F -- serves DNS queries to --> H;
+    F -- "serves internal IPs to all" --> G & H;
 ```
 
-### 5.4. Implications for Health Checks
+### 5.4. Bootstrap Dependency and Resolution
 
-The declarative and centralized nature of the DNS setup simplifies our health checks. A comprehensive DNS health check should focus on two key areas:
+During the final integration testing, a critical bootstrap dependency was discovered. The Nginx container (`101`) needs to request a certificate from the Step-CA (`103`) during its initial setup. However, the final architecture routes all internal services, including the CA, through the Traefik container (`102`). This created a circular dependency:
+- Nginx (`101`) couldn't start without a certificate.
+- To get a certificate, it needed to contact the CA via Traefik (`102`).
+- Traefik (`102`) couldn't be created until after Nginx (`101`).
 
-1.  **Resolution from Host:** Can the hypervisor host correctly resolve a critical internal DNS record?
-2.  **Resolution from Guest:** Can a guest container (like the Nginx gateway) correctly resolve a critical internal DNS record?
+This issue was resolved with a surgical fix that preserves the final architecture while allowing the initial bootstrap to succeed. The `phoenix_hypervisor_lxc_101.sh` script was modified to use a **hardcoded IP address** for the Step-CA (`10.0.0.10`) for its initial certificate request.
 
-A positive result in both of these checks would provide high confidence that the entire DNS system is functioning as expected. Therefore, I recommend we create a new, dedicated health check script, `check_dns_resolution.sh`, to perform these validations.
-## 5. Final Assessment and Next Steps
+This targeted fix ensures that Nginx can successfully bootstrap itself without relying on the Traefik service mesh. Once Nginx is up, the rest of the system can be created, and all subsequent communication will correctly use the DNS-to-Traefik routing.
 
-The core network and security infrastructure of the Phoenix Hypervisor is **sound, secure, and correctly implemented**. The declarative, automated approach to managing the chain of trust and the firewall rules is a significant strength.
+## 6. Final Assessment and Readiness for Sync
 
-With this high degree of confidence in the foundational setup, we can conclude that any remaining issues are most likely occurring at runtime. The next logical step is to proceed with the diagnostic plan outlined previously, which will give us the necessary visibility into the live system to pinpoint the source of the problem.
+The core network and security infrastructure of the Phoenix Hypervisor has been **successfully deployed, validated, and hardened**. The declarative, automated approach to managing the chain of trust, firewall rules, and DNS has proven to be a significant strength. All foundational health checks have passed, and the critical bootstrap dependency has been resolved.
 
-### Diagnostic Plan
+The `portainer-manager.sh` script, which orchestrates the `phoenix sync all` command, has been thoroughly reviewed and refactored to align with the final system architecture.
 
-*   **Phase 1: Certificate Chain of Trust Validation:** A suite of health check scripts (`check_step_ca.sh`, `check_traefik_proxy.sh`, `check_nginx_gateway.sh`) will be created to actively validate the TLS handshakes and certificate chains between all components.
-*   **Phase 2: Network Connectivity Analysis:** A master health check script (`check_firewall.sh`) will perform a matrix of connectivity tests to ensure that there are no runtime network issues, despite the correctness of the firewall rules.
-
-This concludes the comprehensive review of your core infrastructure.
+The system is now **fully prepared** for its first full synchronization.

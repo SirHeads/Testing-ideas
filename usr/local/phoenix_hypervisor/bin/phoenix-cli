@@ -80,6 +80,7 @@ print_usage() {
     echo "  restart   Restarts a specific LXC container or VM."
     echo "  status    Gets the status of a specific LXC container or VM."
     echo "  sync      Synchronizes Portainer environments and/or Docker stacks."
+    echo "  health-check Validates the foundational health of a specific VM."
     echo "  LetsGo    Creates and starts all defined guests in the correct order."
     echo ""
     echo "OPTIONS:"
@@ -367,7 +368,7 @@ main() {
 
     # --- VERB VALIDATION ---
     # Before proceeding, ensure the provided verb is valid.
-    local valid_verbs="setup create delete start stop restart status sync LetsGo converge"
+    local valid_verbs="setup create delete start stop restart status sync LetsGo converge health-check"
     if ! [[ $valid_verbs =~ (^|[[:space:]])"$VERB"($|[[:space:]]) ]]; then
         log_error "Invalid verb '$VERB'."
         print_usage
@@ -451,6 +452,15 @@ main() {
         log_info "Sync command detected. Routing to portainer-manager.sh..."
         "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "${TARGETS[@]}" --config "$HYPERVISOR_CONFIG_FILE"
         exit 0
+    elif [ "$VERB" == "health-check" ]; then
+        log_info "Health-check command detected. Routing to health check script..."
+        local target_vm="${TARGETS[0]}"
+        if [ -z "$target_vm" ]; then
+            log_error "The 'health-check' verb requires a VMID as a target."
+            exit 1
+        fi
+        "$SCRIPT_DIR/health_checks/check_vm_foundation.sh" "$target_vm"
+        exit $?
     else
         log_info "Targets detected. Resolving dependencies for all targets..."
         local sorted_targets

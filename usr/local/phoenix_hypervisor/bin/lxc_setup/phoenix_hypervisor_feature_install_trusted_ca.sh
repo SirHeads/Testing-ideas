@@ -36,8 +36,10 @@ CA_CERT_DEST_PATH="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 #   None.
 # =====================================================================================
 main() {
-    if [ -z "$CTID" ]; then
+    if [ "$#" -lt 1 ]; then
         log_fatal "Usage: $0 <CTID>"
+        log_fatal "This script requires at least the LXC Container ID as an argument."
+        exit 1
     fi
 
     log_info "Starting trusted CA installation for CTID $CTID."

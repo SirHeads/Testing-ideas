@@ -832,7 +832,8 @@ apply_features() {
             log_fatal "Feature script not found at $feature_script_path."
         fi
 
-        if ! (set +e; "$feature_script_path" "$CTID"); then
+        local bootstrap_ca_url=$(jq_get_value "$CTID" ".bootstrap_ca_url" || echo "")
+        if ! (set +e; "$feature_script_path" "$CTID" "$bootstrap_ca_url"); then
             log_error "Feature script '$feature' failed for CTID $CTID."
             return 1
         fi
@@ -1123,80 +1124,28 @@ run_health_check() {
         fi
     fi
 
-    # --- Special Health Checks ---
-    if [ "$CTID" -eq 101 ]; then
-        log_info "Running specialized health checks for Nginx Gateway (LXC 101)..."
-        local dns_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_dns_resolution.sh"
-        local nginx_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_nginx_gateway.sh"
+    # --- Declarative Health Checks ---
+    local health_checks_json
+    health_checks_json=$(jq_get_value "$CTID" ".health_checks" || echo "")
 
-        # DNS Check
-        if ! "$dns_check_script" --context guest --guest-id 101 --domain "ca.internal.thinkheads.ai" --expected-ip "10.0.0.10"; then
-            log_fatal "DNS health check failed for CTID 101."
-        fi
-
-        # Nginx Check
-        if ! "$nginx_check_script"; then
-            log_fatal "Nginx gateway health check failed for CTID 101."
-        fi
+    if [ -z "$health_checks_json" ] || [ "$health_checks_json" == "null" ] || [ "$health_checks_json" == "[]" ]; then
+        log_info "No declarative health checks to run for CTID $CTID."
         return 0
     fi
 
-    # --- Generic Health Check ---
-    local health_check_command
-    health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
+    echo "$health_checks_json" | jq -c '.[]' | while read -r check_config; do
+        local check_name=$(echo "$check_config" | jq -r '.name')
+        local check_script=$(echo "$check_config" | jq -r '.script')
+        local check_args=$(echo "$check_config" | jq -r '.args // ""')
+        local health_check_command="${PHOENIX_BASE_DIR}/bin/health_checks/${check_script} ${check_args}"
 
-    if [ -z "$health_check_command" ]; then
-        log_info "No generic health check to run for CTID $CTID."
-        return 0
-    fi
-
-    log_info "Executing generic health check command inside container: $health_check_command"
-    local attempts=0
-    local max_attempts
-    max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
-    local interval
-    interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
-
-    # Check if the health check command is a script that exists on the host
-    if [[ "$health_check_command" == *.sh ]] && [ -f "$health_check_command" ]; then
-        local script_name
-        script_name=$(basename "$health_check_command")
-        local dest_path_in_container="/tmp/$script_name"
-        
-        log_info "Health check is a script. Pushing '$health_check_command' to '$CTID:$dest_path_in_container'..."
-        if ! pct push "$CTID" "$health_check_command" "$dest_path_in_container"; then
-            log_fatal "Failed to push health check script to container $CTID."
-        fi
-        
-        log_info "Making health check script executable in container..."
-        if ! pct exec "$CTID" -- chmod +x "$dest_path_in_container"; then
-            log_fatal "Failed to make health check script executable in container $CTID."
-        fi
-        
-        # Update the command to be executed inside the container
-        health_check_command="$dest_path_in_container"
-    fi
-
-    while [ "$attempts" -lt "$max_attempts" ]; do
-        if pct exec "$CTID" -- $health_check_command; then
-            log_info "Health check passed successfully for CTID $CTID."
-            # Clean up the script after a successful run
-            if [[ "$health_check_command" == /tmp/*.sh ]]; then
-                pct exec "$CTID" -- rm -f "$health_check_command"
-            fi
-            return 0
-        else
-            attempts=$((attempts + 1))
-            log_error "WARNING: Health check command '$health_check_command' failed for CTID $CTID (Attempt $attempts/$max_attempts)."
-            if [ "$attempts" -lt "$max_attempts" ]; then
-                log_info "Retrying in $interval seconds..."
-                sleep "$interval"
-            fi
+        log_info "Running health check: $check_name"
+        if ! eval "$health_check_command"; then
+            log_fatal "Health check '$check_name' failed for CTID $CTID."
         fi
     done
-
-    log_fatal "Health check failed for CTID $CTID after $max_attempts attempts."
 }
+
 
 # =====================================================================================
 # Function: run_post_deployment_validation

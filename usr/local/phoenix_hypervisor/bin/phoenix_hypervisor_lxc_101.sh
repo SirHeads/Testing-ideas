@@ -47,19 +47,17 @@ temp_dir="/tmp/phoenix_run"
 # --- Define Directories ---
 SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
 SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
-STREAM_CONF_DIR="/etc/nginx/stream.d"
 
 # --- Clean and Create Directories ---
 echo "Cleaning up and creating Nginx directory structure..."
-rm -rf $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $STREAM_CONF_DIR /etc/nginx/conf.d/*
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $STREAM_CONF_DIR /var/cache/nginx
+rm -rf $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR /etc/nginx/stream.d /etc/nginx/conf.d/*
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR /var/cache/nginx
 chown -R www-data:www-data /var/cache/nginx
 
 # --- Copy Core Configuration Files ---
 echo "Copying core Nginx configuration files..."
 cp "${temp_dir}/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in ${temp_dir}." >&2; exit 1; }
 cp "${temp_dir}/sites-available/gateway" "$SITES_AVAILABLE_DIR/gateway" || { echo "Generated gateway config file missing in ${temp_dir}." >&2; exit 1; }
-cp "${temp_dir}/stream.d/stream-gateway.conf" "$STREAM_CONF_DIR/stream-gateway.conf" || { echo "Generated stream gateway config file missing in ${temp_dir}." >&2; exit 1; }
 
 # --- Link Enabled Site ---
 echo "Enabling the main gateway site..."
@@ -73,14 +71,14 @@ ensure_ca_trust
 # --- Certificate Generation ---
 echo "Bootstrapping Step CLI and generating Nginx certificate..."
 # Bootstrap the step CLI with the CA URL and fingerprint from the trusted CA feature
-step ca bootstrap --ca-url "https://ca.internal.thinkheads.ai:9000" --fingerprint "$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_root_ca.crt)" --force
+step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_root_ca.crt)" --force
  
 # Generate the certificate, explicitly requesting an RSA key
-step ca certificate phoenix.thinkheads.ai /etc/nginx/ssl/phoenix.thinkheads.ai.crt /etc/nginx/ssl/phoenix.thinkheads.ai.key --provisioner "admin@thinkheads.ai" --provisioner-password-file "/etc/step-ca/ssl/provisioner_password.txt" --force --kty RSA
- 
+step ca certificate nginx.internal.thinkheads.ai /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt /etc/nginx/ssl/nginx.internal.thinkheads.ai.key --provisioner "admin@thinkheads.ai" --provisioner-password-file "/etc/step-ca/ssl/provisioner_password.txt" --force --kty RSA
+
 # --- NEW: Diagnostic Logging ---
 echo "--- BEGIN PRIVATE KEY DIAGNOSTIC ---"
-cat /etc/nginx/ssl/phoenix.thinkheads.ai.key
+cat /etc/nginx/ssl/nginx.internal.thinkheads.ai.key
 echo "--- END PRIVATE KEY DIAGNOSTIC ---"
 # --- END NEW ---
 

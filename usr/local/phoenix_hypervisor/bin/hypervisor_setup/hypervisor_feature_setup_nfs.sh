@@ -45,6 +45,7 @@ check_root
 log_info "Starting NFS server and exports setup."
 
 # Get the configuration file path from the first argument
+# The HYPERVISOR_CONFIG_FILE is passed as the first argument by the hypervisor-manager.
 if [ -z "$1" ]; then
     log_fatal "Configuration file path not provided."
 fi

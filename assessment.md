@@ -1,54 +1,106 @@
-# Phoenix Hypervisor Health Assessment
+# Phoenix Certificate Lifecycle Assessment Plan
 
-## 1. Executive Summary
+This document outlines the step-by-step plan to diagnose the certificate lifecycle issues within the Phoenix Hypervisor environment. The goal is to trace the creation, distribution, and consumption of certificates during a full environment recreation to identify the root cause of state inconsistencies.
 
-The Phoenix Hypervisor system is a well-architected and highly automated platform for managing virtualized resources. It is built on a solid foundation of declarative principles, with a clear separation of concerns between the core components. However, the complexity of the interactions between these components, particularly in the areas of networking, security, and certificate management, introduces several potential points of failure.
+## Phase 1: Initial State Capture (Baseline)
 
-This assessment provides a detailed analysis of the system's current state and identifies two primary areas of concern that are most likely the source of the issues you are experiencing:
+Before executing any commands, we will capture the baseline state of the system.
 
-*   **Certificate Chain of Trust:** The internal security model relies on a custom PKI managed by Step-CA. Any breaks in this chain of trust will lead to a complete breakdown in secure communication.
-*   **Firewall and Network Connectivity:** The firewall rules are extensive and highly specific. A single misconfigured rule could be blocking critical traffic between the containers.
+1.  **List Initial Shared SSL Directory Contents:**
+    ```bash
+    ls -la /mnt/pve/quickOS/lxc-persistent-data/103/ssl
+    ```
 
-To address these potential issues, this report includes a set of diagnostic checks that can be implemented to pinpoint the exact source of the problem.
+2.  **Record Initial Timestamps:**
+    ```bash
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/phoenix_assessment_start_time.log
+    ```
 
-## 2. Detailed Findings
+## Phase 2: Post-Creation Analysis (LXC 103 - Step-CA)
 
-### 2.1. Architectural Review
+After `phoenix create 103` is executed:
 
-The overall architecture is sound. The use of Nginx as an external gateway, Traefik as an internal service mesh, and Step-CA for internal PKI is a robust and secure design. The declarative nature of the system, with all state defined in JSON configuration files, is a major strength.
+1.  **Verify Shared SSL Directory Contents:**
+    ```bash
+    ls -la /mnt/pve/quickOS/lxc-persistent-data/103/ssl
+    ```
 
-### 2.2. Configuration Analysis
+2.  **Inspect Step-CA Logs:**
+    ```bash
+    pct exec 103 -- journalctl -u step-ca -n 50 --no-pager
+    ```
 
-The JSON configuration files are comprehensive and well-structured. They provide a single source of truth for the entire system, which is excellent for maintainability and reproducibility. The use of `jq` to parse these files in the automation scripts is efficient and powerful.
+3.  **Verify Root CA Certificate:**
+    ```bash
+    pct exec 103 -- step certificate inspect /etc/step-ca/ssl/certs/root_ca.crt
+    ```
 
-### 2.3. Automation Scripts
+## Phase 3: Post-Creation Analysis (LXC 101 & 102)
 
-The shell scripts demonstrate a high level of automation. The setup scripts for the core LXC containers are self-contained and handle all the necessary steps to bring the services online. The `generate_traefik_config.sh` script is a key piece of the automation, dynamically creating the Traefik configuration from the JSON definitions.
+After `phoenix create 101` and `phoenix create 102` are executed:
 
-## 3. Potential Issues and Recommendations
+1.  **Inspect Nginx Logs (LXC 101):**
+    ```bash
+    pct exec 101 -- journalctl -u nginx -n 50 --no-pager
+    ```
 
-### 3.1. Certificate Chain of Trust
+2.  **Verify Nginx Certificate:**
+    ```bash
+    pct exec 101 -- step certificate inspect /etc/nginx/ssl/nginx.crt
+    ```
 
-**Potential Issue:** The entire system relies on a custom PKI. If the root CA certificate is not correctly installed and trusted by all components, TLS handshakes will fail.
+3.  **Inspect Traefik Logs (LXC 102):**
+    ```bash
+    pct exec 102 -- journalctl -u traefik -n 50 --no-pager
+    ```
 
-**Recommendation:** Implement a series of checks to validate the certificate chain of trust at each stage of the request flow. This includes:
+4.  **Verify Traefik Certificate:**
+    ```bash
+    pct exec 102 -- step certificate inspect /etc/traefik/ssl/traefik.crt
+    ```
 
-*   Verifying that the root CA certificate is correctly installed in the trust store of each container.
-*   Checking that the certificates presented by Nginx and Traefik are valid and signed by the internal CA.
-*   Using `openssl` or `curl` to test TLS connections between the components.
+## Phase 4: Post-Creation Analysis (VM 1001 & 1002)
 
-### 3.2. Firewall and Network Connectivity
+After `phoenix create 1001` and `phoenix create 1002` are executed:
 
-**Potential Issue:** The firewall rules are complex and could be blocking critical traffic.
+1.  **Verify Trusted CA in VM 1001:**
+    ```bash
+    qm guest exec 1001 -- ls -la /usr/local/share/ca-certificates/
+    ```
 
-**Recommendation:** Add logging and diagnostic checks to the firewall rules to identify any blocked traffic. This includes:
+2.  **Inspect Portainer Server Logs (VM 1001):**
+    ```bash
+    qm guest exec 1001 -- docker logs portainer_server
+    ```
 
-*   Adding `LOG` rules to the firewall to see which packets are being dropped.
-*   Using `tcpdump` or `tshark` to capture and analyze traffic between the containers.
-*   Implementing a set of health checks that test connectivity between all the core components.
+3.  **Verify Trusted CA in VM 1002:**
+    ```bash
+    qm guest exec 1002 -- ls -la /usr/local/share/ca-certificates/
+    ```
 
-## 4. Next Steps
+4.  **Inspect Portainer Agent Logs (VM 1002):**
+    ```bash
+    qm guest exec 1002 -- docker logs portainer_agent
+    ```
 
-I have prepared a detailed plan to implement the diagnostic checks described above. This plan includes a set of scripts and configuration changes that will add the necessary logging and validation to your system.
+## Phase 5: Final State Verification (Post `phoenix sync all`)
 
-Please review this assessment and let me know if you would like to proceed with the implementation of the diagnostic checks.
+After `phoenix sync all` is executed:
+
+1.  **Check Portainer API Status:**
+    ```bash
+    curl -s --cacert /mnt/pve/quickOS/lxc-persistent-data/103/ssl/certs/root_ca.crt https://portainer.phoenix.thinkheads.ai/api/system/status
+    ```
+
+2.  **Check Portainer Endpoints:**
+    ```bash
+    JWT=$(source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh && source /usr/local/phoenix_hypervisor/bin/managers/portainer-manager.sh && get_portainer_jwt) && \
+    PORTAINER_HOSTNAME=$(source /usr/local/phoenix_hypervisor/bin/phoenix_hypervisor_common_utils.sh && get_global_config_value '.portainer_api.portainer_hostname') && \
+    PORTAINER_URL="https://${PORTAINER_HOSTNAME}:443" && \
+    CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/certs/root_ca.crt" && \
+    curl -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}" | jq '.'
+    ```
+
+3.  **Record End Timestamps:**
+    ```bash
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/phoenix_assessment_end_time.log

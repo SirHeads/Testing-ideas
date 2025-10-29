@@ -25,8 +25,8 @@ source "/persistent-storage/.phoenix_scripts/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 VMID="$1"
-CA_CERT_SOURCE_PATH="/persistent-storage/.phoenix_scripts/phoenix_ca.crt"
-CA_CERT_DEST_PATH="/usr/local/share/ca-certificates/phoenix_ca.crt"
+CA_CERT_SOURCE_PATH="/etc/step-ca/certs/root_ca.crt"
+CA_CERT_DEST_PATH="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 
 # =====================================================================================
 # Function: main
@@ -60,7 +60,11 @@ main() {
         log_fatal "Failed to update certificate store."
     fi
 
-    # 4. Restart Docker to apply the new trust settings
+    # 4. Securely remove the temporary CA certificate
+    # The source file is now on a persistent NFS mount, so we no longer remove it.
+    log_info "CA certificate has been installed."
+
+    # 5. Restart Docker to apply the new trust settings
     log_info "Restarting Docker daemon to apply new CA certificate..."
     if ! systemctl restart docker; then
         log_warn "Failed to restart Docker daemon. This might cause issues with trust."

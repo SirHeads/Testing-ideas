@@ -87,19 +87,11 @@ initialize_step_ca() {
     # Initialize the CA with a password from the mounted file
     log_info "Initializing Smallstep CA using the generated password files..."
  
-     if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "phoenix.thinkheads.ai" --dns "*.phoenix.thinkheads.ai" --dns "*.internal.thinkheads.ai" --dns "127.0.0.1" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
+     if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "internal.thinkheads.ai" --dns "*.internal.thinkheads.ai" --dns "127.0.0.1" --dns "10.0.0.10" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
          log_fatal "Failed to initialize Smallstep CA in container $CTID."
      fi
     log_success "Smallstep CA initialized successfully."
  
-    # Add ca.internal.thinkheads.ai to /etc/hosts for internal resolution
-    log_info "Adding '127.0.0.1 ca.internal.thinkheads.ai' to /etc/hosts..."
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        echo "127.0.0.1 ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add entry to /etc/hosts."
-    fi
-    log_success "Entry added to /etc/hosts successfully."
-
-
    log_info "Dumping content of $CA_CONFIG_FILE after initialization for debugging:"
    cat "$CA_CONFIG_FILE" || log_warn "Could not read $CA_CONFIG_FILE"
    log_info "End of $CA_CONFIG_FILE dump."
@@ -302,18 +294,19 @@ EOF
     local SERVICE_CONTENT="[Unit]
 Description=Step CA Service
 After=network.target
- 
+
 [Service]
 ExecStart=${WRAPPER_SCRIPT_PATH}
-StandardOutput=append:/var/log/step-ca-startup.log
-StandardError=append:/var/log/step-ca-startup.log
 Restart=always
 User=root
- 
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+
 [Install]
 WantedBy=multi-user.target"
- 
-     # Push the service file to the container
+
+    # Push the service file to the container
     if ! /bin/bash -c "echo \"$SERVICE_CONTENT\" > \"$CA_SERVICE_FILE\""; then
         log_fatal "Failed to create systemd service file in container $CTID."
     fi
@@ -326,8 +319,14 @@ WantedBy=multi-user.target"
         log_fatal "Failed to enable step-ca service in container $CTID."
     fi
     if ! systemctl start step-ca; then
-        log_fatal "Failed to start step-ca service in container $CTID."
+        log_warn "Initial start of step-ca service failed. This can be normal. Checking status..."
     fi
+
+    # --- BEGIN IMMEDIATE DIAGNOSTICS ---
+    log_info "Performing immediate diagnostics on step-ca service..."
+    systemctl status step-ca --no-pager || log_warn "Could not get systemctl status."
+    journalctl -u step-ca -n 20 --no-pager || log_warn "Could not get journalctl logs."
+    # --- END IMMEDIATE DIAGNOSTICS ---
 
     # Health check loop to wait for the service to be ready
     log_info "Waiting for Step CA service to become healthy..."
@@ -335,55 +334,39 @@ WantedBy=multi-user.target"
     local delay=3
     for ((i=0; i<retries; i++)); do
         if /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" &> /dev/null; then
-            log_info "Step CA service is healthy."
-            break
+            log_success "Step CA service is healthy."
+            return 0 # Exit the function on success
         fi
         log_info "Service not ready yet, waiting ${delay}s... ($((i+1))/${retries})"
         sleep $delay
     done
 
-    if ! /usr/bin/step ca health --ca-url "https://$CA_DNS$CA_ADDRESS" --root "${STEPPATH}/certs/root_ca.crt" &> /dev/null; then
-        log_error "Step CA service failed to become healthy after $((retries * delay)) seconds."
-        log_info "Displaying /var/log/step-ca-startup.log for more details:"
-        cat /var/log/step-ca-startup.log || log_warn "Could not read /var/log/step-ca-startup.log"
-        log_fatal "Step CA service failed to become healthy."
-    fi
- 
-     # Add detailed logging for systemd status and journalctl
-    log_info "Gathering detailed systemd status for step-ca..."
-    systemctl status step-ca > /tmp/step-ca_systemctl_status.log 2>&1
-    log_info "Systemd status logged to /tmp/step-ca_systemctl_status.log"
- 
-    log_info "Gathering detailed journalctl logs for step-ca..."
-    journalctl -u step-ca --no-pager > /tmp/step-ca_journalctl.log 2>&1
-    log_info "Journalctl logs logged to /tmp/step-ca_journalctl.log"
+    # If the loop finishes, the service is not healthy.
+    log_error "Step CA service failed to become healthy after $((retries * delay)) seconds."
+    log_info "--- FINAL DIAGNOSTICS ---"
+    log_info "Final systemctl status:"
+    systemctl status step-ca --no-pager || log_warn "Could not get final systemctl status."
+    log_info "Final journalctl logs:"
+    journalctl -u step-ca -n 50 --no-pager || log_warn "Could not get final journalctl logs."
+    log_fatal "Step CA service failed to become healthy."
+}
 
-    # Add process and network inspection for step-ca
-    log_info "Inspecting step-ca process details..."
-    local step_ca_pid
-    step_ca_pid=$(systemctl show --value --property MainPID step-ca)
-    if [ -n "$step_ca_pid" ] && [ "$step_ca_pid" -ne 0 ]; then
-        log_info "step-ca process (PID: $step_ca_pid) found. Checking open files and network connections..."
-        lsof -p "$step_ca_pid" > /tmp/step-ca_lsof.log 2>&1 || log_warn "Failed to run lsof for step-ca process."
-        log_info "lsof output for step-ca logged to /tmp/step-ca_lsof.log"
-        
-        # Check network connections specifically for the process
-        netstat -tulnp | grep "$step_ca_pid" > /tmp/step-ca_netstat.log 2>&1 || log_warn "Failed to run netstat for step-ca process."
-        log_info "netstat output for step-ca logged to /tmp/step-ca_netstat.log"
+# =====================================================================================
+# Function: ensure_hosts_entry
+# Description: Ensures the CA hostname resolves to localhost within the container.
+# Arguments:
+#   None.
+# Returns:
+#   None.
+# =====================================================================================
+ensure_hosts_entry() {
+    log_info "Ensuring '/etc/hosts' contains entry for CA..."
+    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
+        log_info "Adding '127.0.0.1 ca.internal.thinkheads.ai' to /etc/hosts..."
+        echo "127.0.0.1 ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add entry to /etc/hosts."
+        log_success "Entry added to /etc/hosts successfully."
     else
-        log_warn "step-ca process not found or PID is 0. Cannot perform lsof/netstat."
-    fi
-
-    log_info "ufw has been deprecated in favor of pve-firewall. Skipping internal firewall check."
-
-    log_success "Smallstep CA service set up and started successfully with extended diagnostics."
-
-    # Install net-tools for future debugging
-    log_info "Installing net-tools (for netstat) in container..."
-    if ! apt-get update > /dev/null 2>&1 || ! apt-get install -y net-tools > /dev/null 2>&1; then
-        log_warn "Failed to install net-tools in container. netstat command may not be available."
-    else
-        log_info "net-tools installed successfully."
+        log_info "Hosts entry already exists."
     fi
 }
 
@@ -402,21 +385,7 @@ main() {
 
     log_info "Starting Step CA application script for CTID $CTID."
  
-    # --- NEW: Enforce idempotency by ensuring a clean slate ---
-    log_info "Wiping shared SSL directory to ensure a clean initialization..."
-    local shared_ssl_dir="/etc/step-ca/ssl"
-    local log_file_name="phoenix_hypervisor_lxc_103.log"
-    # Use find to delete everything *except* our log file. This is safer than rm -rf /*
-    find "$shared_ssl_dir" -mindepth 1 -not -name "$log_file_name" -exec rm -rf {} + || log_fatal "Failed to wipe contents of $shared_ssl_dir."
-    log_info "Contents of $shared_ssl_dir (excluding log file) have been wiped."
-    # --- END NEW ---
-    
-    # --- NEW: Also remove the default step configuration directory to prevent interactive prompts ---
-    log_info "Removing default step configuration directory at /root/.step..."
-    rm -rf /root/.step
-    log_info "Default step configuration directory removed."
-    # --- END NEW ---
-
+    ensure_hosts_entry
     initialize_step_ca
     export_root_ca_certificate
     setup_ca_service

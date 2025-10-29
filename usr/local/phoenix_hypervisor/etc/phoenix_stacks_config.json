@@ -12,7 +12,7 @@
                         "qdrant": {
                             "traefik_labels": [
                                 "traefik.enable=true",
-                                "traefik.http.routers.qdrant.rule=Host(`qdrant.phoenix.thinkheads.ai`)",
+                                "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)",
                                 "traefik.http.routers.qdrant.entrypoints=websecure",
                                 "traefik.http.routers.qdrant.tls=true",
                                 "traefik.http.services.qdrant.loadbalancer.server.port=6333"
@@ -33,7 +33,7 @@
                         "portainer": {
                             "traefik_labels": [
                                 "traefik.enable=true",
-                                "traefik.http.routers.portainer.rule=Host(`portainer.phoenix.thinkheads.ai`)",
+                                "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)",
                                 "traefik.http.routers.portainer.entrypoints=websecure",
                                 "traefik.http.routers.portainer.tls=true",
                                 "traefik.http.services.portainer.loadbalancer.server.port=9000",

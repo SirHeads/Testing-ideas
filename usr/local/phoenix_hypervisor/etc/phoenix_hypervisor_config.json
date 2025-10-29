@@ -1,7 +1,7 @@
 {
     "version": "1.0.0",
     "author": "Heads, Qwen3-coder, Roo",
-    "domain_name": "phoenix.thinkheads.ai",
+    "domain_name": "internal.thinkheads.ai",
     "users": {
         "username": "phoenix_admin",
         "password_hash": "NOT_SET",
@@ -472,6 +472,15 @@
                     "proto": "tcp",
                     "port": "9000",
                     "comment": "Allow Traefik to connect to Step-CA for ACME challenges"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.13",
+                    "dest": "10.0.0.12",
+                    "proto": "tcp",
+                    "port": "80,443,8443",
+                    "comment": "Allow hypervisor host to access Traefik directly"
                 }
             ]
         }
@@ -479,7 +488,7 @@
     "portainer_api": {
         "admin_user": "admin",
         "admin_password": "SecurePassword2025",
-        "portainer_hostname": "portainer.phoenix.thinkheads.ai"
+        "portainer_hostname": "portainer.internal.thinkheads.ai"
     },
     "vm_defaults": {
         "ubuntu_release": "noble"
@@ -490,90 +499,7 @@
             "8.8.8.8",
             "1.1.1.1"
         ],
-        "authoritative_zones": [
-            {
-                "zone_name": "phoenix.thinkheads.ai",
-                "records": [
-                    {
-                        "hostname": "portainer",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "drphoenix",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "qdrant",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "ollama",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "granite-embedding",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "llamacpp",
-                        "ip_external": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "granite-3b",
-                        "ip_external": "10.0.0.153"
-                    }
-                ]
-            },
-            {
-                "zone_name": "internal.thinkheads.ai",
-                "records": [
-                    {
-                        "hostname": "traefik",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "ca",
-                        "ip_internal": "10.0.0.10"
-                    },
-                    {
-                        "hostname": "portainer",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "drphoenix",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "granite-embedding",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "granite-3b",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "ollama",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "llamacpp",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "portainer.phoenix",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "portainer-agent",
-                        "ip_internal": "10.0.0.153"
-                    },
-                    {
-                        "hostname": "qdrant",
-                        "ip_internal": "10.0.0.153"
-                    }
-                ]
-            }
-        ]
+        "authoritative_zones": []
     },
     "step_ca": {
         "root_ca_name": "ThinkHeads Internal CA",

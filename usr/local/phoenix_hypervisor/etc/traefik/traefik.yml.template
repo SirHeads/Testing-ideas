@@ -46,7 +46,8 @@ certificatesResolvers:
   internal-resolver:
     acme:
       email: admin@thinkheads.ai
-      storage: /etc/traefik/internal-acme.json
+      storage: /etc/traefik/acme.json
       caServer: __CA_URL__/acme/acme/directory
       keyType: EC384
-      tlsChallenge: {}
+      httpChallenge:
+        entryPoint: web
