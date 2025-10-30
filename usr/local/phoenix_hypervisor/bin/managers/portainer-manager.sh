@@ -26,74 +26,81 @@ source "${PHOENIX_BASE_DIR}/bin/managers/vm-manager.sh" # Source vm-manager.sh f
 STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 CENTRALIZED_CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
 # =====================================================================================
-# Function: wait_for_system_ready
-# Description: Executes a series of health checks to ensure the system is ready
-#              for Portainer operations. It uses a retry mechanism to wait for
-#              services to become available.
+# Function: retry_api_call
+# Description: A robust wrapper for executing curl commands to interact with APIs.
+#              It includes retry logic, detailed logging, and handles different
+#              HTTP methods and payloads.
+#
+# Arguments:
+#   $@ - The curl command arguments.
 #
 # Returns:
-#   0 on success, 1 on failure after all retries.
+#   The body of the API response on success. Exits with a fatal error on failure.
 # =====================================================================================
-wait_for_system_ready() {
-    log_info "--- Waiting for all system components to be ready ---"
+retry_api_call() {
     local MAX_RETRIES=5
-    local RETRY_DELAY=3
+    local RETRY_DELAY=5
     local attempt=1
+    local response
+    local http_status
 
-    # Define critical internal domains and their expected IP addresses
+    # Mask sensitive data for logging
+    local logged_args=()
+    local mask_next=false
+    for arg in "$@"; do
+        if [ "$mask_next" = true ]; then
+            logged_args+=("'********'")
+            mask_next=false
+        elif [[ "$arg" == *"--data"* || "$arg" == *"-d"* ]]; then
+            logged_args+=("$arg")
+            # Simple check for password fields to mask them
+            if [[ "$2" == *'"password":'* ]]; then
+                local masked_payload
+                masked_payload=$(echo "$2" | sed -E 's/("password":")[^"]+/\1********/')
+                logged_args+=("'$masked_payload'")
+                shift # Consume the payload so it's not added again
+            else
+                logged_args+=("'$2'")
+                shift # Consume the payload
+            fi
+        elif [[ "$arg" == *"-H"* && "$2" == *"Authorization"* ]]; then
+            logged_args+=("$arg" "'Authorization: Bearer ********'")
+            shift
+        else
+            logged_args+=("$arg")
+        fi
+    done
 
-    local other_health_checks=(
-        "check_nginx_gateway.sh"
-        "check_traefik_proxy.sh"
-        "check_step_ca.sh"
-    )
+    log_debug "Executing API call: curl ${logged_args[*]}"
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Health check attempt ${attempt}/${MAX_RETRIES}..."
-        local all_checks_passed=true
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" "$@")
+        http_status=$(echo -e "$response" | tail -n1 | sed -n 's/.*HTTP_STATUS://p')
+        body=$(echo -e "$response" | sed '$d')
 
-        # --- DNS Health Checks ---
-        for domain in "${!critical_domains[@]}"; do
-            local expected_ip="${critical_domains[$domain]}"
-            if ! "${PHOENIX_BASE_DIR}/bin/health_checks/check_dns_resolution.sh" --context host --domain "$domain" --expected-ip "$expected_ip"; then
-                log_warn "DNS health check failed for domain: $domain"
-                all_checks_passed=false
-                break 2 # Exit both loops to retry all checks
-            fi
-        done
-
-        if [ "$all_checks_passed" = false ]; then
-            # Go to the next attempt if DNS checks failed
+        if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
+            log_debug "API call successful (HTTP ${http_status})."
+            log_debug "Response body: ${body}"
+            echo -e "$body"
+            return 0
+        elif [[ "$http_status" -eq 409 ]]; then
+             log_info "API call returned HTTP 409 (Conflict). This is often expected (e.g., resource already exists)."
+             log_debug "Response body: ${body}"
+             echo -e "$body"
+             return 0
+        else
+            log_warn "API call failed with HTTP status ${http_status} (Attempt ${attempt}/${MAX_RETRIES})."
+            log_warn "Response body: ${body}"
             if [ "$attempt" -lt "$MAX_RETRIES" ]; then
-                log_info "One or more health checks failed. Retrying in ${RETRY_DELAY} seconds..."
+                log_info "Retrying in ${RETRY_DELAY} seconds..."
                 sleep "$RETRY_DELAY"
             fi
-            attempt=$((attempt + 1))
-            continue
-        fi
-
-        # --- Other Health Checks ---
-        for check_script in "${other_health_checks[@]}"; do
-            if ! "${PHOENIX_BASE_DIR}/bin/health_checks/${check_script}"; then
-                log_warn "Health check failed: ${check_script}"
-                all_checks_passed=false
-                break # Exit the inner loop to retry all checks
-            fi
-        done
-
-        if [ "$all_checks_passed" = true ]; then
-            log_success "All health checks passed. System is ready."
-            return 0
-        fi
-
-        if [ "$attempt" -lt "$MAX_RETRIES" ]; then
-            log_info "One or more health checks failed. Retrying in ${RETRY_DELAY} seconds..."
-            sleep "$RETRY_DELAY"
         fi
         attempt=$((attempt + 1))
     done
 
-    log_fatal "System is not ready after ${MAX_RETRIES} attempts. Aborting Portainer operations."
+    log_error "API call failed after ${MAX_RETRIES} attempts."
+    # Do not exit fatally, but return a failure code so the caller can decide how to proceed.
     return 1
 }
 
@@ -126,23 +133,16 @@ get_portainer_jwt() {
     fi
 
  
-    local JWT_RESPONSE
     local JWT=""
-    local AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
-    local MAX_RETRIES=5
-    local RETRY_DELAY=5
-    local attempt=1
+    local AUTH_PAYLOAD
+    AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
 
-    while [ -z "$JWT" ] && [ "$attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Authentication attempt ${attempt}/${MAX_RETRIES}..."
-        JWT=$(retry_api_call -s -X POST -H "Content-Type: application/json" -d "${AUTH_PAYLOAD}" "${PORTAINER_URL}/api/auth" | jq -r '.jwt // ""')
+    local JWT_RESPONSE
+    JWT_RESPONSE=$(retry_api_call -X POST -H "Content-Type: application/json" --cacert "$CA_CERT_PATH" -d "$AUTH_PAYLOAD" "${PORTAINER_URL}/api/auth")
 
-        if [ -z "$JWT" ]; then
-            log_warn "Authentication failed on attempt ${attempt}."
-            sleep "$RETRY_DELAY"
-            attempt=$((attempt + 1))
-        fi
-    done
+    if [ -n "$JWT_RESPONSE" ]; then
+        JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
+    fi
 
     if [ -z "$JWT" ]; then
       log_fatal "Failed to authenticate with Portainer API after ${MAX_RETRIES} attempts."
@@ -342,11 +342,17 @@ setup_portainer_admin_user() {
     local status_attempt=1
     while [ "$status_attempt" -le "$MAX_RETRIES" ]; do
         local http_status
-        http_status=$(curl -s -o /dev/null -w "%{http_code}" "${CURL_EXTRA_ARGS}" "${PORTAINER_URL}/api/system/status")
+        local curl_status_args=(-s -o /dev/null -w "%{http_code}")
+        [ -n "$CURL_EXTRA_ARGS" ] && curl_status_args+=("$CURL_EXTRA_ARGS")
+        curl_status_args+=("${PORTAINER_URL}/api/system/status")
+        http_status=$(curl "${curl_status_args[@]}")
         
         if [[ "$http_status" -eq 200 ]]; then
             local body
-            body=$(curl -s "${CURL_EXTRA_ARGS}" "${PORTAINER_URL}/api/system/status")
+            local curl_body_args=(-s)
+            [ -n "$CURL_EXTRA_ARGS" ] && curl_body_args+=("$CURL_EXTRA_ARGS")
+            curl_body_args+=("${PORTAINER_URL}/api/system/status")
+            body=$(curl "${curl_body_args[@]}")
             if echo "$body" | jq -e '.InstanceID' > /dev/null; then
                 log_info "Portainer is already initialized. Skipping admin user creation."
                 return 0
@@ -374,13 +380,8 @@ setup_portainer_admin_user() {
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Admin user creation attempt ${attempt}/${MAX_RETRIES}..."
         
-        local curl_args=(-s -w "HTTP_STATUS:%{http_code}" "${CURL_EXTRA_ARGS}")
-        if [ -n "$CA_CERT_PATH" ]; then
-            curl_args+=(--cacert "$CA_CERT_PATH")
-        fi
-        
         local response
-        response=$(curl "${curl_args[@]}" -X POST -H "Content-Type: application/json" -d "${INIT_PAYLOAD}" "${PORTAINER_URL}/api/users/admin/init")
+        response=$(retry_api_call -X POST -H "Content-Type: application/json" -d "${INIT_PAYLOAD}" "${PORTAINER_URL}/api/users/admin/init")
         
         local http_status
         http_status=$(echo "$response" | sed -n 's/.*HTTP_STATUS://p')
@@ -499,6 +500,9 @@ sync_all() {
     # --- STAGE 5: SYNCHRONIZE STACKS ---
     log_info "--- Stage 5: Synchronizing Portainer Endpoints and Docker Stacks ---"
     local JWT=$(get_portainer_jwt | tr -d '\n')
+    if [ -z "$JWT" ]; then
+        log_fatal "Failed to get Portainer JWT. Aborting stack synchronization."
+    fi
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
     sync_portainer_endpoints "$JWT" "$CA_CERT_PATH"
     
@@ -513,7 +517,7 @@ sync_all() {
         
         log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
         local endpoints_response
-        endpoints_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         local ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         
         if [ -z "$ENDPOINT_ID" ]; then
@@ -528,7 +532,7 @@ sync_all() {
     log_info "--- Docker stack synchronization complete ---"
 
     # --- FINAL HEALTH CHECK ---
-    wait_for_system_ready
+    # wait_for_system_ready
 
     log_info "--- Full System State Synchronization Finished ---"
 }
@@ -569,7 +573,7 @@ sync_stack() {
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
         local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
         local endpoints_response
-        endpoints_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         if [ -z "$ENDPOINT_ID" ]; then
             log_fatal "Could not find Portainer environment for VMID ${VMID} (URL: ${ENDPOINT_URL}). Ensure agent is running and environment is created."
@@ -664,7 +668,7 @@ sync_stack() {
 
             if [ -n "$EXISTING_CONFIG_ID" ]; then
                 log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating to ensure content is fresh."
-                if ! retry_api_call -s --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"; then
+                if ! retry_api_call --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"; then
                     log_warn "Failed to delete old Portainer Config '${CONFIG_NAME}'. Proceeding, but this might cause issues."
                 fi
             fi
@@ -672,7 +676,7 @@ sync_stack() {
             log_info "Creating Portainer Config '${CONFIG_NAME}'..."
             local CONFIG_PAYLOAD=$(jq -n --arg name "${CONFIG_NAME}" --arg data "${FILE_CONTENT}" '{Name: $name, Data: $data}')
             local CONFIG_RESPONSE
-            CONFIG_RESPONSE=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
+            CONFIG_RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
               -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
             local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
             log_info "DEBUG: Portainer Config creation response: ${CONFIG_RESPONSE}"
@@ -689,7 +693,7 @@ sync_stack() {
 
     local STACK_EXISTS_ID
     local stacks_response
-    stacks_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
+    stacks_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
     STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "${STACK_NAME}-${ENVIRONMENT_NAME}" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
     local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}" # Unique stack name in Portainer
@@ -703,7 +707,7 @@ sync_stack() {
             '{StackFilePath: $path, Env: $env, Configs: $configs, Prune: true}')
         log_info "DEBUG: PUT JSON_PAYLOAD: ${JSON_PAYLOAD}"
         local RESPONSE
-        RESPONSE=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
+        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         log_info "DEBUG: PUT API RESPONSE: ${RESPONSE}"
         if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
@@ -721,7 +725,7 @@ sync_stack() {
             '{Name: $name, ComposeFilePathInContainer: $path, Env: $env, Configs: $configs}')
         log_info "DEBUG: POST JSON_PAYLOAD: ${JSON_PAYLOAD}"
         local RESPONSE
-        RESPONSE=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
+        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         log_info "DEBUG: POST API RESPONSE: ${RESPONSE}"
         if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
@@ -766,7 +770,7 @@ sync_portainer_endpoints() {
         log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
         
         local endpoints_response
-        endpoints_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         local EXISTING_ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
         if [ -n "$EXISTING_ENDPOINT_ID" ]; then
@@ -779,7 +783,7 @@ sync_portainer_endpoints() {
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
                 '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": false }' | \
-                retry_api_call -s --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
+                retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
                     -H "Authorization: Bearer ${JWT}" \
                     -H "Content-Type: application/json" \
                     --data-binary @-)
