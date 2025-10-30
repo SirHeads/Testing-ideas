@@ -160,7 +160,6 @@ get_portainer_jwt() {
 #   None. Exits with a fatal error if deployment fails.
 # =====================================================================================
 deploy_portainer_instances() {
-    wait_for_system_ready || return 1
     log_info "Deploying Portainer server and agent instances..."
 
     local vms_with_portainer
@@ -529,23 +528,7 @@ sync_all() {
     log_info "--- Docker stack synchronization complete ---"
 
     # --- FINAL HEALTH CHECK ---
-    log_info "--- Performing final health check on Portainer API endpoint ---"
-    local health_check_script="${PHOENIX_BASE_DIR}/bin/health_checks/check_portainer_api.sh"
-    local max_retries=10
-    local retry_delay=10
-    local attempt=1
-    while [ "$attempt" -le "$max_retries" ]; do
-        if "$health_check_script"; then
-            log_success "Portainer API health check passed."
-            break
-        fi
-        log_warn "Portainer API health check failed on attempt $attempt/$max_retries. Retrying in $retry_delay seconds..."
-        sleep "$retry_delay"
-        attempt=$((attempt + 1))
-    done
-    if [ "$attempt" -gt "$max_retries" ]; then
-        log_fatal "Portainer API did not become healthy after $max_retries attempts. Aborting."
-    fi
+    wait_for_system_ready
 
     log_info "--- Full System State Synchronization Finished ---"
 }

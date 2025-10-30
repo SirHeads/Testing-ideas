@@ -138,8 +138,8 @@
                 "1001"
             ],
             "traefik_service": {
-                "name": "drphoenix",
-                "port": 80
+                "name": "portainer-agent",
+                "port": 9001
             },
             "network_config": {
                 "ip": "10.0.0.102/24",

@@ -52,17 +52,6 @@ main() {
                     "resolver": "internal-resolver"
                 }
             ),
-            # Add Portainer Agent Service
-            ($vms[0].vms[]? | select(.portainer_role == "agent" and .portainer_agent_hostname) |
-                {
-                    "name": "portainer-agent-internal",
-                    "rule": "Host(`\(.portainer_agent_hostname)`)",
-                    "url": "https://\(.network_config.ip | split("/")[0]):9001",
-                    "transport": "portainer-agent-transport",
-                    "serverName": "\(.portainer_agent_hostname)",
-                    "resolver": "internal-resolver"
-                }
-            ),
             {
                 "name": "traefik-internal",
                 "rule": "Host(`traefik.\($internal_domain)`)",
