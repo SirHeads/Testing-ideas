@@ -282,10 +282,10 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
+
         log_info "Step 7: Applying firewall rules for VM $VMID..."
         apply_vm_firewall_rules "$VMID"
         log_info "Step 7: Completed."
-
         log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
@@ -943,6 +943,7 @@ prepare_vm_ca_staging_area() {
     log_success "CA staging area for VM ${VMID} is ready."
 }
 
+
 # =====================================================================================
 # Function: apply_vm_firewall_rules
 # Description: Applies firewall rules to a VM based on its declarative configuration.
@@ -1018,11 +1019,47 @@ apply_vm_firewall_rules() {
         log_info "  - Added rule: $rule_line"
     done
 
+    # Add rules from Docker Compose files via VM assignments
+    log_info "Aggregating Docker stack firewall rules for VM $VMID..."
+    local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
+    jq_get_vm_value "$VMID" ".docker_stacks[]?" | jq -c '.' | while read -r stack_ref; do
+        local stack_name=$(echo "$stack_ref" | jq -r '.name')
+        local compose_path=$(jq -r ".docker_stacks.\"$stack_name\".compose_file_path" "$STACKS_CONFIG_FILE")
+        local stack_env=$(echo "$stack_ref" | jq -r '.environment')
+        
+        if [ -f "${PHOENIX_BASE_DIR}/${compose_path}" ]; then
+            # Read the compose file content
+            local compose_content=$(cat "${PHOENIX_BASE_DIR}/${compose_path}")
+
+            # Find all variables like ${VAR_NAME} in the compose file
+            local vars_to_replace=$(echo "$compose_content" | grep -oP '\$\{\K[^}]+')
+
+            # Replace each variable with its value from the stacks config
+            for var in $vars_to_replace; do
+                local var_value=$(jq -r ".docker_stacks.\"$stack_name\".environments.\"$stack_env\".variables[] | select(.name == \"$var\") | .value" "$STACKS_CONFIG_FILE")
+                if [ -n "$var_value" ]; then
+                    compose_content=$(echo "$compose_content" | sed "s|\${${var}}|${var_value}|g")
+                fi
+            done
+
+            # Use yq to parse the resolved docker-compose content for ports
+            echo "$compose_content" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
+                local host_port=$(echo "$port_mapping" | cut -d':' -f1)
+                local rule=$(jq -n \
+                    --arg dest "$vm_ip" \
+                    --arg port "$host_port" \
+                    '{type: "in", action: "ACCEPT", proto: "tcp", source: "10.0.0.12", dest: $dest, port: $port, comment: "Allow Traefik to access Docker stack '\'$stack_name\''"}')
+                generate_rule_string "$rule" >> "$vm_fw_file"
+            done
+        else
+            log_warn "Compose file not found for stack '$stack_name': ${PHOENIX_BASE_DIR}/${compose_path}"
+        fi
+    done
+
     log_info "Firewall rules for VM $VMID have been written to $vm_fw_file."
     log_info "Reloading Proxmox firewall to apply changes..."
     pve-firewall restart
 }
-
 # =====================================================================================
 # Function: main_vm_orchestrator
 # Description: The main entry point for the VM manager script. It parses the

@@ -372,6 +372,7 @@ apply_lxc_configurations() {
     log_info "Configurations applied successfully for CTID $CTID."
 }
 
+
 # =====================================================================================
 # Function: apply_lxc_firewall_rules
 # Description: Configures the firewall for a given container based on the rules

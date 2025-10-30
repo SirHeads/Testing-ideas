@@ -467,6 +467,15 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "dest": "10.0.0.102",
+                    "proto": "tcp",
+                    "port": "80",
+                    "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
                     "source": "10.0.0.12",
                     "dest": "10.0.0.10",
                     "proto": "tcp",

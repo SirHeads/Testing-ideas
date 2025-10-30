@@ -1716,3 +1716,31 @@ retry_api_call() {
     echo "$body"
     return 1
 }
+
+# =====================================================================================
+# Function: generate_rule_string
+# Description: Generates a firewall rule string from a JSON object.
+# Arguments:
+#   $1 - A JSON object representing a firewall rule.
+# Returns:
+#   A formatted firewall rule string.
+# =====================================================================================
+generate_rule_string() {
+    local rule_json="$1"
+    local type=$(echo "$rule_json" | jq -r '.type // ""')
+    local action=$(echo "$rule_json" | jq -r '.action // ""')
+    local proto=$(echo "$rule_json" | jq -r '.proto // ""')
+    local source=$(echo "$rule_json" | jq -r '.source // ""')
+    local dest=$(echo "$rule_json" | jq -r '.dest // ""')
+    local port=$(echo "$rule_json" | jq -r '.port // ""')
+    local comment=$(echo "$rule_json" | jq -r '.comment // ""')
+
+    local rule_string="${type^^} ${action}"
+    [ -n "$proto" ] && rule_string+=" -p ${proto}"
+    [ -n "$source" ] && rule_string+=" -source ${source}"
+    [ -n "$dest" ] && rule_string+=" -dest ${dest}"
+    [ -n "$port" ] && rule_string+=" -dport ${port}"
+    [ -n "$comment" ] && rule_string+=" # ${comment}"
+    
+    echo "$rule_string"
+}

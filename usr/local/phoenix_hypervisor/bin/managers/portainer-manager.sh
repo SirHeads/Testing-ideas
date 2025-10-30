@@ -46,7 +46,6 @@ wait_for_system_ready() {
         "check_nginx_gateway.sh"
         "check_traefik_proxy.sh"
         "check_step_ca.sh"
-        "check_firewall.sh"
     )
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
@@ -448,11 +447,6 @@ sync_all() {
     fi
     log_success "DNS server configuration synchronized."
 
-    # Sync global firewall rules
-    if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh" "$HYPERVISOR_CONFIG_FILE"; then
-        log_fatal "Global firewall synchronization failed. Aborting."
-    fi
-    log_success "Global firewall rules synchronized."
 
     # --- STAGE 2: DEPLOY & VERIFY UPSTREAM SERVICES ---
     log_info "--- Stage 2: Deploying and Verifying Portainer ---"
@@ -827,24 +821,6 @@ sync_portainer_endpoints() {
 main_portainer_orchestrator() {
     local action="$1"
     shift
-
-    local config_file_override=""
-    while [[ "$#" -gt 0 ]]; do
-        case "$1" in
-            --config)
-                config_file_override="$2"
-                shift 2
-                ;;
-            *)
-                break
-                ;;
-        esac
-    done
-
-    if [ -n "$config_file_override" ]; then
-        export HYPERVISOR_CONFIG_FILE="$config_file_override"
-        log_debug "HYPERVISOR_CONFIG_FILE overridden to: $HYPERVISOR_CONFIG_FILE"
-    fi
 
     local config_file_override=""
     while [[ "$#" -gt 0 ]]; do

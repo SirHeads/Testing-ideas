@@ -6,36 +6,26 @@
 #              that need to be exposed via Traefik and creates the necessary routers
 #              and services.
 #
-# Version: 2.0.0
+# Version: 3.0.0 (Simplified)
 # Author: Roo
-
 # --- SCRIPT INITIALIZATION ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." &> /dev/null && pwd)
 source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
-
 # --- CONFIGURATION ---
 LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
 HYPERVISOR_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 OUTPUT_FILE="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
 INTERNAL_DOMAIN_NAME="internal.thinkheads.ai"
-EXTERNAL_DOMAIN_NAME=$(get_global_config_value '.domain_name')
-
 # --- MAIN LOGIC ---
 main() {
-    log_info "--- Starting Traefik Dynamic Configuration Generation ---"
-
+    log_info "--- Starting Traefik Dynamic Configuration Generation (Simplified) ---"
     # --- AGGREGATE ALL GUESTS THAT NEED A TRAEFIK ROUTE ---
-    # This query is designed to be resilient. It safely checks for the existence of
-    # traefik_service definitions in both LXC and VM configs. If a guest doesn't
-    # have the definition, it's simply skipped, preventing errors when the system
-    # is in a partially created state.
     local traefik_services_json=$(jq -n \
         --slurpfile vms "$VM_CONFIG_FILE" \
         --slurpfile lxcs "$LXC_CONFIG_FILE" \
         --arg internal_domain "$INTERNAL_DOMAIN_NAME" \
-        --arg external_domain "$EXTERNAL_DOMAIN_NAME" \
         '
         [
             # Process VMs
@@ -83,9 +73,7 @@ main() {
         ]
         '
     )
-
     log_info "Aggregated Traefik services JSON: $(echo "$traefik_services_json" | jq -c)"
-
     # --- GENERATE YAML FROM JSON ---
     {
         echo "http:"
@@ -100,7 +88,6 @@ main() {
             "      tls:\n" +
             "        certResolver: \(.resolver)"
         '
-
         echo ""
         echo "  services:"
         echo "$traefik_services_json" | jq -r '
@@ -112,7 +99,6 @@ main() {
             (if .transport then "        serversTransport: \"\(.transport)\"\n" else "" end) +
             "        passHostHeader: true"
         '
-
         echo ""
         echo "  serversTransports:"
         echo "$traefik_services_json" | jq -r '
@@ -123,7 +109,6 @@ main() {
             "        - \"/etc/step-ca/ssl/phoenix_ca.crt\""
         '
     } > "$OUTPUT_FILE"
-
     log_success "Traefik dynamic configuration generated successfully at ${OUTPUT_FILE}"
     
     # --- Add a final check to ensure the file is not empty ---
@@ -132,5 +117,4 @@ main() {
         echo "http:" > "$OUTPUT_FILE"
     fi
 }
-
 main

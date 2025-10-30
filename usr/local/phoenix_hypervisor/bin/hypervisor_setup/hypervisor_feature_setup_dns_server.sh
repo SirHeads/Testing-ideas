@@ -72,7 +72,7 @@ EOF
             # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
             ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": $traefik_ip
+                "ip": (if .traefik_service.name == "ca" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
             }),
             ($vm_config.vms[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
