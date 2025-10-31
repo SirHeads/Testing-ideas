@@ -104,6 +104,14 @@
                         "comment": "Allow VM to access the Nginx gateway"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Proxmox host to access Portainer for initial setup"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.102",

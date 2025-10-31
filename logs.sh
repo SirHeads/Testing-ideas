@@ -29,3 +29,9 @@ pct exec 102 -- curl https://ca.internal.thinkheads.ai:9000
  qm guest exec 1002 -- docker ps -a
  &&
  qm guest exec 1001 -- docker ps -a
+ &&
+ cat /etc/pve/firewall/1001.fw && cat /etc/pve/firewall/1002.fw && cat /etc/pve/firewall/101.fw && cat /etc/pve/firewall/102.fw && cat /etc/pve/firewall/103.fw && cat /etc/pve/firewall/900.fw && cat /etc/pve/firewall/cluster.fw
+
+
+
+ phoenix delete 1002 1001 9000 102 101 103 900 && phoenix setup && phoenix create 900 103 101 102 9000 1001 1002 && phoenix sync all

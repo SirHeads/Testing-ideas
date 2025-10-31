@@ -468,32 +468,18 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow HTTP traffic"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
                         "source": "10.0.0.111",
                         "proto": "tcp",
                         "port": "443",
                         "comment": "Allow Portainer VM to access the gateway"
                     },
                     {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow HTTPS traffic"
-                    },
-                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "443",
-                        "comment": "Allow Nginx to proxy to Traefik"
+                        "port": "8443",
+                        "comment": "Allow Nginx to proxy HTTPS to Traefik"
                     },
                     {
                         "type": "out",
@@ -518,6 +504,14 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow Nginx to communicate with Step-CA for certificates"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.13",
+                        "proto": "udp",
+                        "port": "53",
+                        "comment": "Allow outbound DNS queries to CoreDNS"
                     }
                 ]
             },
@@ -706,6 +700,14 @@
                         "proto": "tcp",
                         "port": "80",
                         "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
                     },
                     {
                         "type": "in",

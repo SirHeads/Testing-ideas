@@ -496,7 +496,7 @@
     },
     "portainer_api": {
         "admin_user": "admin",
-        "admin_password": "SecurePassword2025",
+        "admin_password": "NewKick@$$2025",
         "portainer_hostname": "portainer.internal.thinkheads.ai"
     },
     "vm_defaults": {

@@ -47,6 +47,9 @@ server {
     location /.well-known/acme-challenge/ {
         proxy_pass http://10.0.0.12:80;
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # Redirect all other traffic to the HTTPS equivalent
@@ -66,7 +69,7 @@ server {
     ssl_certificate_key /etc/nginx/ssl/nginx.internal.thinkheads.ai.key;
 
     location / {
-        proxy_pass http://10.0.0.12:80;
+        proxy_pass https://10.0.0.12:8443;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;

@@ -77,6 +77,13 @@ main() {
             "      tls:\n" +
             "        certResolver: \(.resolver)"
         '
+        cat <<'EOF'
+    acme-http-router:
+      rule: "PathPrefix(`/.well-known/acme-challenge/`)"
+      service: "acme-http@internal"
+      entryPoints:
+        - web
+EOF
         echo ""
         echo "  services:"
         echo "$traefik_services_json" | jq -r '

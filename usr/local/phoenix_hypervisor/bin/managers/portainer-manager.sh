@@ -44,34 +44,7 @@ retry_api_call() {
     local response
     local http_status
 
-    # Mask sensitive data for logging
-    local logged_args=()
-    local mask_next=false
-    for arg in "$@"; do
-        if [ "$mask_next" = true ]; then
-            logged_args+=("'********'")
-            mask_next=false
-        elif [[ "$arg" == *"--data"* || "$arg" == *"-d"* ]]; then
-            logged_args+=("$arg")
-            # Simple check for password fields to mask them
-            if [[ "$2" == *'"password":'* ]]; then
-                local masked_payload
-                masked_payload=$(echo "$2" | sed -E 's/("password":")[^"]+/\1********/')
-                logged_args+=("'$masked_payload'")
-                shift # Consume the payload so it's not added again
-            else
-                logged_args+=("'$2'")
-                shift # Consume the payload
-            fi
-        elif [[ "$arg" == *"-H"* && "$2" == *"Authorization"* ]]; then
-            logged_args+=("$arg" "'Authorization: Bearer ********'")
-            shift
-        else
-            logged_args+=("$arg")
-        fi
-    done
-
-    log_debug "Executing API call: curl ${logged_args[*]}"
+    log_debug "Executing API call with sensitive data masked..."
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" "$@")
@@ -113,9 +86,10 @@ retry_api_call() {
 # =====================================================================================
 get_portainer_jwt() {
     log_info "Attempting to authenticate with Portainer API..."
+    local GATEWAY_HOSTNAME="nginx.internal.thinkheads.ai"
     local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
-    local PORTAINER_PORT="443" # Always connect via the public-facing Nginx proxy port
-    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}"
+    local PORTAINER_PORT="443"
+    local GATEWAY_URL="https://${GATEWAY_HOSTNAME}"
     local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
     local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
@@ -124,7 +98,8 @@ get_portainer_jwt() {
     log_debug "Raw admin_user from config: $(jq -r '.portainer_api.admin_user' "$HYPERVISOR_CONFIG_FILE")"
     log_debug "Raw admin_password from config: $(jq -r '.portainer_api.admin_password' "$HYPERVISOR_CONFIG_FILE")"
 
-    log_debug "Portainer URL: ${PORTAINER_URL}"
+    log_debug "Gateway URL: ${GATEWAY_URL}"
+    log_debug "Target Host: ${PORTAINER_HOSTNAME}"
     log_debug "Portainer Username: ${USERNAME}"
     log_debug "Portainer Password (first 3 chars): ${PASSWORD:0:3}..." # Mask password for security
 
@@ -132,13 +107,20 @@ get_portainer_jwt() {
         log_fatal "CA certificate file not found at: ${CA_CERT_PATH}. Cannot authenticate with Portainer API."
     fi
 
- 
     local JWT=""
     local AUTH_PAYLOAD
     AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
 
     local JWT_RESPONSE
-    JWT_RESPONSE=$(retry_api_call -X POST -H "Content-Type: application/json" --cacert "$CA_CERT_PATH" -d "$AUTH_PAYLOAD" "${PORTAINER_URL}/api/auth")
+    local nginx_ip=$(jq -r '.lxc_configs."101".network_config.ip | split("/")[0]' "${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json")
+    
+    JWT_RESPONSE=$(retry_api_call -X POST \
+        -H "Content-Type: application/json" \
+        -H "Host: ${PORTAINER_HOSTNAME}" \
+        --cacert "$CA_CERT_PATH" \
+        --resolve "${GATEWAY_HOSTNAME}:${PORTAINER_PORT}:${nginx_ip}" \
+        -d "$AUTH_PAYLOAD" \
+        "${GATEWAY_URL}/api/auth")
 
     if [ -n "$JWT_RESPONSE" ]; then
         JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
@@ -287,7 +269,7 @@ deploy_portainer_instances() {
                 local agent_health_check_delay=5
                 local agent_health_check_attempt=1
                 while [ "$agent_health_check_attempt" -le "$agent_health_check_retries" ]; do
-                    local agent_status_json=$(qm guest exec "$VMID" -- /bin/bash -c "curl -s -o /dev/null -w '%{http_code}' http://localhost:9001/ping")
+                    local agent_status_json=$(qm guest exec "$VMID" -- /bin/bash -c "curl -s -o /dev/null -w '%{http_code}' --insecure https://localhost:9001/ping")
                     local agent_status_code=$(echo "$agent_status_json" | jq -r '."out-data" // ""')
                     if [ "$agent_status_code" == "204" ]; then
                         log_success "Portainer agent on VM $VMID is healthy."
@@ -782,7 +764,7 @@ sync_portainer_endpoints() {
                 --arg name "$AGENT_NAME" \
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
-                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": false }' | \
+                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": true }' | \
                 retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
                     -H "Authorization: Bearer ${JWT}" \
                     -H "Content-Type: application/json" \
