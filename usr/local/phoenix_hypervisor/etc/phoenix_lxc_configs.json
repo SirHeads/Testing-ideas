@@ -712,6 +712,14 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
+                        "dest": "10.0.0.153",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
                         "dest": "10.0.0.12",
                         "proto": "tcp",
                         "port": "80",

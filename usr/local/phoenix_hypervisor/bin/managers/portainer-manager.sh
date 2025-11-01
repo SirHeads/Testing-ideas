@@ -134,6 +134,72 @@ get_portainer_jwt() {
 }
 
 # =====================================================================================
+# Function: generate_portainer_certificate
+# Description: Generates a TLS certificate for the Portainer server using Step CA.
+# Arguments:
+#   $1 - The VMID of the Portainer server.
+#   $2 - The FQDN for the certificate.
+#   $3 - The path inside the VM to store the generated certificate file.
+#   $4 - The path inside the VM to store the generated key file.
+#   $5 - The path on the hypervisor to the directory where certs are stored.
+# Returns:
+#   None. Exits with a fatal error if certificate generation fails.
+# =====================================================================================
+generate_portainer_certificate() {
+    local VMID="$1"
+    local FQDN="$2"
+    local CERT_PATH="$3" # Full path to cert file inside the VM
+    local KEY_PATH="$4"  # Full path to key file inside the VM
+    local CERT_DIR_HOST="$5" # Full path to certs directory on the hypervisor host
+
+    log_info "Generating TLS certificate for Portainer server (${FQDN})..."
+
+    # Ensure the target directory for the certs exists on the host
+    mkdir -p "$CERT_DIR_HOST" || log_fatal "Failed to create directory for Portainer certificate on host."
+
+    # --- BEGIN: Securely handle provisioner password via NFS share ---
+    local provisioner_password_file_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
+    local password_file_on_share="${CERT_DIR_HOST}/provisioner_password.txt"
+
+    if [ ! -f "$provisioner_password_file_on_host" ]; then
+        log_fatal "Provisioner password file not found on host at: $provisioner_password_file_on_host"
+    fi
+
+    log_info "Copying provisioner password file to NFS share for VM ${VMID}..."
+    if ! cp "$provisioner_password_file_on_host" "$password_file_on_share"; then
+        log_fatal "Failed to copy provisioner password file to NFS share."
+    fi
+    # --- END: Securely handle provisioner password via NFS share ---
+
+    # Use the step CLI within the Portainer VM to generate the certificate
+    local safe_fqdn=$(printf "%q" "${FQDN}")
+    # The password file path must be the full path inside the VM, corresponding to where it was copied on the host's NFS share.
+    local cert_dir_in_vm=$(dirname "$CERT_PATH")
+    local password_file_in_vm="${cert_dir_in_vm}/provisioner_password.txt"
+    local step_command="step ca certificate ${safe_fqdn} \"${CERT_PATH}\" \"${KEY_PATH}\" --provisioner admin@thinkheads.ai --provisioner-password-file ${password_file_in_vm} --force"
+
+    log_info "Executing step command in VM ${VMID}: ${step_command}"
+    
+    local output
+    if ! output=$(qm guest exec "$VMID" -- /bin/bash -c "$step_command" 2>&1); then
+        log_error "Command execution failed. Output:"
+        log_error "${output}"
+        # --- BEGIN: Cleanup password file on failure ---
+        log_info "Cleaning up provisioner password file from NFS share..."
+        rm -f "$password_file_on_share"
+        # --- END: Cleanup password file on failure ---
+        log_fatal "Failed to generate Portainer TLS certificate in VM ${VMID}."
+    fi
+
+    # --- BEGIN: Cleanup password file on success ---
+    log_info "Cleaning up provisioner password file from NFS share..."
+    rm -f "$password_file_on_share"
+    # --- END: Cleanup password file on success ---
+
+    log_success "Successfully generated Portainer TLS certificate."
+}
+
+# =====================================================================================
 # Function: deploy_portainer_instances
 # Description: Deploys the Portainer server and agent containers to their respective VMs.
 # Arguments:
@@ -171,9 +237,6 @@ deploy_portainer_instances() {
                 mkdir -p "$hypervisor_portainer_dir" || log_fatal "Failed to create hypervisor Portainer directory: $hypervisor_portainer_dir"
 
                 # --- BEGIN: Idempotent Data Directory Creation ---
-                # Ensure the data directory exists on the host with the correct permissions for the NFS mount.
-                # This prevents "permission denied" errors when Docker (running as root inside the VM)
-                # tries to create the directory via the bind mount, due to root_squash mapping root to nobody:nogroup.
                 local hypervisor_portainer_data_dir="${hypervisor_portainer_dir}/data"
                 log_info "Ensuring Portainer data directory exists at: ${hypervisor_portainer_data_dir}"
                 if [ ! -d "$hypervisor_portainer_data_dir" ]; then
@@ -188,30 +251,39 @@ deploy_portainer_instances() {
                 fi
                 # --- END: Idempotent Data Directory Creation ---
 
-                # Copy the docker-compose.yml from the source of truth to the hypervisor's NFS share
-                log_info "Copying Portainer docker-compose.yml to hypervisor's NFS share: ${hypervisor_portainer_dir}/docker-compose.yml"
-                log_info "Forcefully removing old docker-compose.yml to ensure a clean copy..."
+                # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
+                local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
+                local hypervisor_cert_dir="${hypervisor_portainer_dir}/certs"
+                
+                log_info "Ensuring correct permissions on Portainer certs directory..."
+                mkdir -p "$hypervisor_cert_dir"
+                if [ "$(stat -c '%U:%G' "$hypervisor_cert_dir")" != "nobody:nogroup" ]; then
+                    log_info "Setting ownership to nobody:nogroup for certs directory..."
+                    chown nobody:nogroup "$hypervisor_cert_dir" || log_fatal "Failed to set ownership on Portainer certs directory."
+                fi
+
+                local vm_cert_dir="${vm_mount_point}/portainer/certs"
+                generate_portainer_certificate "$VMID" "$portainer_fqdn" "${vm_cert_dir}/portainer.crt" "${vm_cert_dir}/portainer.key" "$hypervisor_cert_dir"
+                # --- END: DYNAMIC CERTIFICATE GENERATION ---
+
+                # Copy the docker-compose.yml and modify it for TLS
+                log_info "Copying and modifying Portainer docker-compose.yml for TLS..."
                 rm -f "${hypervisor_portainer_dir}/docker-compose.yml"
-                cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml" || log_fatal "Failed to copy docker-compose.yml to hypervisor's NFS share."
+                cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml"
+                
+                # Use yq to add the command and volumes for TLS
+                # Use yq to add the command and volumes for TLS. The syntax is for the python-based yq (v3.x).
+                yq -i -y '.services.portainer.command = "--tlsverify --tlscert /certs/portainer.crt --tlskey /certs/portainer.key" | .services.portainer.volumes += ["./certs:/certs"]' "${hypervisor_portainer_dir}/docker-compose.yml"
 
 
-
-                # Ensure the compose file and config.json are present on the VM's persistent storage
+                # Ensure the compose file is present on the VM's persistent storage
                 if ! qm guest exec "$VMID" -- /bin/bash -c "test -f $compose_file_path"; then
                     log_fatal "Portainer server compose file not found in VM $VMID at $compose_file_path."
                 fi
-                if ! qm guest exec "$VMID" -- /bin/bash -c "test -f $config_json_path"; then
-                    log_warn "Portainer server config.json not found in VM $VMID at $config_json_path. Declarative endpoints may not be created."
-                fi
 
                 log_info "Ensuring clean restart for Portainer server on VM $VMID..."
-                # Bring down the existing stack to apply changes without destroying data
-                qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly on VM $VMID. Proceeding with deployment."
-                
-                # Forcefully remove the container by name to prevent conflicts
-                qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly. This is expected if it's the first run."
-
-
+                qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly."
+                qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly."
 
                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
@@ -223,19 +295,12 @@ deploy_portainer_instances() {
                 fi
                 log_info "Portainer server deployment initiated on VM $VMID."
                 
-                log_info "Adding firewall rule to allow Traefik to access Portainer..."
-                
-                # The health check in sync_all will now handle waiting for the service to be ready.
-                
                 # --- BEGIN IMMEDIATE ADMIN SETUP ---
                 log_info "Waiting for Portainer API and setting up admin user..."
-                # Use the direct internal IP for initial setup to bypass the proxy layers.
                 local portainer_server_ip="10.0.0.111"
-                local portainer_server_port="9000"
-                local PORTAINER_URL="http://${portainer_server_ip}:${portainer_server_port}"
-                # The second argument (CA_CERT_PATH) is empty because we are using http.
-                # The third argument (CURL_EXTRA_ARGS) is omitted as per the plan.
-                setup_portainer_admin_user "$PORTAINER_URL" ""
+                local portainer_server_port="9443" # Use HTTPS port now
+                local PORTAINER_URL="https://${portainer_server_ip}:${portainer_server_port}"
+                setup_portainer_admin_user "$PORTAINER_URL" "" "--insecure" # Use insecure for initial setup against IP
                 # --- END IMMEDIATE ADMIN SETUP ---
                 ;;
             agent)
