@@ -1,21 +1,21 @@
-# Remediation Plan: Nginx Firewall DNS Egress
+# Firewall Remediation Plan
 
-## 1. Problem Analysis
+## 1. Diagnosis
 
-The Nginx container (101) is unable to resolve internal hostnames, despite being configured with the correct DNS server (`10.0.0.13`). This is because the container's firewall is blocking outbound DNS traffic.
+The `phoenix-cli --sync all` command is failing due to a malformed firewall rule in `/etc/pve/firewall/cluster.fw`. The rule `IN ACCEPT iface vmbr0` is syntactically incorrect and redundant.
 
-## 2. Proposed Solution
+The Proxmox firewall requires more specific parameters than just an interface for `IN` rules. Furthermore, the existing rule `IN ACCEPT -source 10.0.0.0/24 -dest 10.0.0.0/24` already allows all necessary internal traffic on the `vmbr0` bridge.
 
-The solution is to add a new firewall rule to the Nginx container's configuration in `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`. This rule will explicitly allow outbound UDP traffic on port 53 to the DNS server.
+## 2. Remediation
 
-## 3. Implementation Steps
+The invalid rule will be removed from the `global_firewall_rules` section of `usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json`.
 
-1.  **Modify `phoenix_lxc_configs.json`:**
-    *   Locate the `firewall.rules` array for LXC container `101`.
-    *   Add a new rule to allow outbound UDP traffic to `10.0.0.13` on port `53`.
+## 3. Validation
 
-2.  **Switch to Code Mode:** Request a switch to the `code` persona to apply the necessary changes to the `phoenix_lxc_configs.json` file.
+After the change is applied, the `phoenix-cli --sync all` command will be re-run. We will verify that:
+1.  The command completes without any firewall-related errors.
+2.  The original ACME challenge issue is resolved, and certificates are being issued successfully.
 
-## 4. Validation
+## 4. Rollback
 
-After the fix is applied, the user will re-run the `phoenix sync all` command. We will monitor the output to confirm that the Portainer authentication succeeds and the `sync` process completes successfully.
+In the event of a failure, the change to `phoenix_hypervisor_config.json` can be reverted.

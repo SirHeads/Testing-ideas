@@ -69,18 +69,21 @@ ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
 ensure_ca_trust
 
 # --- Certificate Generation ---
-echo "Bootstrapping Step CLI and generating Nginx certificate..."
-# Bootstrap the step CLI with the CA URL and fingerprint from the trusted CA feature
-step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_root_ca.crt)" --force
- 
-# Generate the certificate, explicitly requesting an RSA key
-step ca certificate nginx.internal.thinkheads.ai /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt /etc/nginx/ssl/nginx.internal.thinkheads.ai.key --provisioner "admin@thinkheads.ai" --provisioner-password-file "/etc/step-ca/ssl/provisioner_password.txt" --force --kty RSA
+echo "Ensuring SSL certificate for Nginx exists..."
+CERT_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.crt"
+KEY_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.key"
 
-# --- NEW: Diagnostic Logging ---
-echo "--- BEGIN PRIVATE KEY DIAGNOSTIC ---"
-cat /etc/nginx/ssl/nginx.internal.thinkheads.ai.key
-echo "--- END PRIVATE KEY DIAGNOSTIC ---"
-# --- END NEW ---
+if [ -f "$CERT_PATH" ] && [ -f "$KEY_PATH" ]; then
+    echo "Nginx SSL certificate already exists. Skipping generation."
+else
+    echo "Generating self-signed SSL certificate for Nginx..."
+    mkdir -p /etc/nginx/ssl
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+        -keyout "$KEY_PATH" \
+        -out "$CERT_PATH" \
+        -subj "/CN=nginx.internal.thinkheads.ai"
+    echo "Self-signed certificate generated."
+fi
 
 # --- Service Management and Validation ---
 echo "Testing Nginx configuration..."

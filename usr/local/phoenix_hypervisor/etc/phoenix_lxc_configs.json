@@ -474,6 +474,14 @@
                         "comment": "Allow Portainer VM to access the gateway"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Proxmox host to access the gateway for Portainer API calls"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
@@ -724,6 +732,14 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow Nginx to connect to Step CA for certificates"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.13",
+                        "proto": "udp",
+                        "port": "53",
+                        "comment": "Allow outbound DNS queries to CoreDNS"
                     }
                 ]
             },
@@ -789,6 +805,14 @@
                         "proto": "tcp",
                         "port": "80,443",
                         "comment": "Allow Step CA (10.0.0.10) for ACME challenges"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
                     },
                     {
                         "type": "out",

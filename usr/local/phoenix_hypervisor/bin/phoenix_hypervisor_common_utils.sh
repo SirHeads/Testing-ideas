@@ -1733,9 +1733,11 @@ generate_rule_string() {
     local source=$(echo "$rule_json" | jq -r '.source // ""')
     local dest=$(echo "$rule_json" | jq -r '.dest // ""')
     local port=$(echo "$rule_json" | jq -r '.port // ""')
+    local iface=$(echo "$rule_json" | jq -r '.iface // ""')
     local comment=$(echo "$rule_json" | jq -r '.comment // ""')
 
     local rule_string="${type^^} ${action}"
+    [ -n "$iface" ] && rule_string+=" iface ${iface}"
     [ -n "$proto" ] && rule_string+=" -p ${proto}"
     [ -n "$source" ] && rule_string+=" -source ${source}"
     [ -n "$dest" ] && rule_string+=" -dest ${dest}"

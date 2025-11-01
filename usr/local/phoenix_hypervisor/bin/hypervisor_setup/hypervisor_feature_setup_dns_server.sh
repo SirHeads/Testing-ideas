@@ -41,6 +41,16 @@ port=53
 domain-needed
 bogus-priv
 strict-order
+# Never forward plain names (without a dot or domain part)
+domain-needed
+# Never forward addresses in the non-routed address spaces.
+bogus-priv
+# Prevent DNS-rebind attacks
+stop-dns-rebind
+# Do not read /etc/resolv.conf for upstream servers
+no-resolv
+# Do not forward queries for the internal domain
+local=/internal.thinkheads.ai/
 # Listen on the host's primary IP address
 listen-address=$(get_global_config_value '.network.interfaces.address' | cut -d'/' -f1)
 # Include configuration files from /etc/dnsmasq.d
@@ -72,7 +82,7 @@ EOF
             # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
             ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": (if .traefik_service.name == "ca" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
+                "ip": (if .traefik_service.name == "ca" then "10.0.0.10" else (.network_config.ip | split("/")[0]) end)
             }),
             ($vm_config.vms[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
@@ -91,7 +101,20 @@ EOF
             ($vm_config.vms[] | select(.portainer_role == "agent") | {
                 "hostname": .portainer_agent_hostname,
                 "ip": (.network_config.ip | split("/")[0])
-            })
+            }),
+            {
+                "hostname": "portainer.internal.thinkheads.ai",
+                "ip": $traefik_ip
+            },
+            {
+                "hostname": "portainer-agent.internal.thinkheads.ai",
+                "ip": $traefik_ip
+            },
+            # 5. Add a static record for the Traefik dashboard itself
+            {
+                "hostname": "traefik.internal.thinkheads.ai",
+                "ip": $traefik_ip
+            }
         ] | unique_by(.hostname) # Ensure no duplicate hostnames
         '
     )

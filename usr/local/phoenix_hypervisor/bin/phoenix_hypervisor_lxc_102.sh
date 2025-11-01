@@ -50,7 +50,8 @@ wait_for_ca() {
 # =====================================================================================
 bootstrap_step_cli() {
    log_info "Bootstrapping Step CLI..."
-   if ! step ca bootstrap --ca-url "${CA_URL}" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
+   # Use the direct IP address for the initial bootstrap to bypass DNS resolution issues.
+   if ! step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
        log_fatal "Failed to bootstrap Step CLI."
    fi
    log_success "Step CLI bootstrapped successfully."
@@ -173,11 +174,7 @@ main() {
 
     wait_for_ca
     bootstrap_step_cli
-    # The request_traefik_certificate function is now deprecated.
-    # Traefik will dynamically obtain its own certificate for the dashboard
-    # using the ACME certResolver defined in its static configuration.
-    # This aligns with the design intent of a fully automated certificate
-    # management system.
+    request_traefik_certificate
     configure_traefik
     setup_traefik_service
 

@@ -328,12 +328,6 @@
                 {
                     "type": "in",
                     "action": "ACCEPT",
-                    "iface": "vmbr0",
-                    "comment": "Allow all traffic from the internal bridge (for guest agents, etc.)"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow HTTPS traffic to Nginx gateway"
@@ -468,7 +462,16 @@
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.10",
-                    "dest": "10.0.0.102",
+                    "dest": "10.0.0.12",
+                    "proto": "tcp",
+                    "port": "80",
+                    "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "dest": "10.0.0.12",
                     "proto": "tcp",
                     "port": "80",
                     "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
@@ -490,6 +493,14 @@
                     "proto": "tcp",
                     "port": "80,443,8443",
                     "comment": "Allow hypervisor host to access Traefik directly"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.10",
+                    "proto": "tcp",
+                    "port": "8443",
+                    "comment": "Allow Step-CA to perform ACME TLS-ALPN challenges with Traefik"
                 }
             ]
         }

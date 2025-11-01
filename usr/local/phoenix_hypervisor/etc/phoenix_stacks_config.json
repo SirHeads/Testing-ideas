@@ -15,6 +15,7 @@
                                 "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)",
                                 "traefik.http.routers.qdrant.entrypoints=websecure",
                                 "traefik.http.routers.qdrant.tls=true",
+                                "traefik.http.routers.qdrant.tls.certresolver=internal-resolver",
                                 "traefik.http.services.qdrant.loadbalancer.server.port=6333"
                             ]
                         }
@@ -36,6 +37,7 @@
                                 "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)",
                                 "traefik.http.routers.portainer.entrypoints=websecure",
                                 "traefik.http.routers.portainer.tls=true",
+                                "traefik.http.routers.portainer.tls.certresolver=internal-resolver",
                                 "traefik.http.services.portainer.loadbalancer.server.port=9000",
                                 "traefik.http.services.portainer.loadbalancer.server.scheme=http"
                             ]
