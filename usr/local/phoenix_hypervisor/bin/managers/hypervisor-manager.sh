@@ -189,6 +189,7 @@ setup_hypervisor() {
         "hypervisor_feature_provision_shared_resources.sh"
         "hypervisor_feature_setup_apparmor.sh"
         "hypervisor_feature_fix_apparmor_tunables.sh"
+        "hypervisor_feature_setup_auto_renewal.sh"
     )
 
 

@@ -25,6 +25,53 @@ TRAEFIK_INTERNAL_FQDN="traefik.${INTERNAL_DOMAIN_NAME}"
 # --- Main execution ---
 log_info "--- Starting NGINX Gateway Configuration Generation (v8 - TLS Termination) ---"
 
+# --- BEGIN: Dynamic Certificate Generation (Temporary Fix) ---
+# This section ensures a valid certificate is in place for the gateway.
+# The long-term solution is the centralized certificate-renewal-manager.sh
+
+# Ensure the Step CLI is bootstrapped before trying to use it
+source "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_bootstrap_step_cli.sh"
+
+log_info "Ensuring TLS certificate for NGINX gateway is up-to-date..."
+CERT_DIR="/mnt/pve/quickOS/lxc-persistent-data/101/ssl"
+CERT_PATH="${CERT_DIR}/nginx.internal.thinkheads.ai.crt"
+KEY_PATH="${CERT_DIR}/nginx.internal.thinkheads.ai.key"
+mkdir -p "$CERT_DIR"
+
+# Check if renewal is needed (expires in next 7 days, or doesn't exist)
+RENEW_NEEDED=false
+if [ ! -f "$CERT_PATH" ]; then
+    RENEW_NEEDED=true
+else
+    if ! openssl x509 -in "$CERT_PATH" -checkend 604800 > /dev/null 2>&1; then
+        RENEW_NEEDED=true
+    fi
+fi
+
+if [ "$RENEW_NEEDED" = true ]; then
+    log_info "Generating new TLS certificate for nginx.internal.thinkheads.ai..."
+    provisioner_password_file="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
+    if [ ! -f "$provisioner_password_file" ]; then
+        log_fatal "Provisioner password file not found at: $provisioner_password_file"
+    fi
+    
+    step ca certificate "nginx.internal.thinkheads.ai" "$CERT_PATH" "$KEY_PATH" \
+        --provisioner admin@thinkheads.ai \
+        --provisioner-password-file "$provisioner_password_file" \
+        --not-after 24h --force
+    
+    if [ $? -eq 0 ]; then
+        log_success "Successfully generated NGINX gateway TLS certificate."
+        chown admin:admin "$CERT_PATH" "$KEY_PATH"
+        chmod 644 "$CERT_PATH" "$KEY_PATH"
+    else
+        log_fatal "Failed to generate NGINX gateway TLS certificate."
+    fi
+else
+    log_info "NGINX gateway certificate is current. No renewal needed."
+fi
+# --- END: Dynamic Certificate Generation ---
+
 # Clean up the old stream configuration directory if it exists
 if [ -d "$(dirname "$STREAM_CONFIG_OUTPUT")" ]; then
     rm -rf "$(dirname "$STREAM_CONFIG_OUTPUT")"

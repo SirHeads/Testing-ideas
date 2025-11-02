@@ -1,0 +1,18 @@
+[
+    {
+        "common_name": "nginx.internal.thinkheads.ai",
+        "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt",
+        "key_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key",
+        "owner": "admin:admin",
+        "permissions": "644",
+        "post_renewal_command": "pct exec 101 -- systemctl reload nginx"
+    },
+    {
+        "common_name": "portainer.internal.thinkheads.ai",
+        "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt",
+        "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key",
+        "owner": "nobody:nogroup",
+        "permissions": "600",
+        "post_renewal_command": "qm guest exec 1001 -- docker restart portainer_server"
+    }
+]

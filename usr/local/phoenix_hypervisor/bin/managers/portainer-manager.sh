@@ -133,71 +133,6 @@ get_portainer_jwt() {
     echo "$JWT"
 }
 
-# =====================================================================================
-# Function: generate_portainer_certificate
-# Description: Generates a TLS certificate for the Portainer server using Step CA.
-# Arguments:
-#   $1 - The VMID of the Portainer server.
-#   $2 - The FQDN for the certificate.
-#   $3 - The path inside the VM to store the generated certificate file.
-#   $4 - The path inside the VM to store the generated key file.
-#   $5 - The path on the hypervisor to the directory where certs are stored.
-# Returns:
-#   None. Exits with a fatal error if certificate generation fails.
-# =====================================================================================
-generate_portainer_certificate() {
-    local VMID="$1"
-    local FQDN="$2"
-    local CERT_PATH="$3" # Full path to cert file inside the VM
-    local KEY_PATH="$4"  # Full path to key file inside the VM
-    local CERT_DIR_HOST="$5" # Full path to certs directory on the hypervisor host
-
-    log_info "Generating TLS certificate for Portainer server (${FQDN})..."
-
-    # Ensure the target directory for the certs exists on the host
-    mkdir -p "$CERT_DIR_HOST" || log_fatal "Failed to create directory for Portainer certificate on host."
-
-    # --- BEGIN: Securely handle provisioner password via NFS share ---
-    local provisioner_password_file_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
-    local password_file_on_share="${CERT_DIR_HOST}/provisioner_password.txt"
-
-    if [ ! -f "$provisioner_password_file_on_host" ]; then
-        log_fatal "Provisioner password file not found on host at: $provisioner_password_file_on_host"
-    fi
-
-    log_info "Copying provisioner password file to NFS share for VM ${VMID}..."
-    if ! cp "$provisioner_password_file_on_host" "$password_file_on_share"; then
-        log_fatal "Failed to copy provisioner password file to NFS share."
-    fi
-    # --- END: Securely handle provisioner password via NFS share ---
-
-    # Use the step CLI within the Portainer VM to generate the certificate
-    local safe_fqdn=$(printf "%q" "${FQDN}")
-    # The password file path must be the full path inside the VM, corresponding to where it was copied on the host's NFS share.
-    local cert_dir_in_vm=$(dirname "$CERT_PATH")
-    local password_file_in_vm="${cert_dir_in_vm}/provisioner_password.txt"
-    local step_command="step ca certificate ${safe_fqdn} \"${CERT_PATH}\" \"${KEY_PATH}\" --provisioner admin@thinkheads.ai --provisioner-password-file ${password_file_in_vm} --force"
-
-    log_info "Executing step command in VM ${VMID}: ${step_command}"
-    
-    local output
-    if ! output=$(qm guest exec "$VMID" -- /bin/bash -c "$step_command" 2>&1); then
-        log_error "Command execution failed. Output:"
-        log_error "${output}"
-        # --- BEGIN: Cleanup password file on failure ---
-        log_info "Cleaning up provisioner password file from NFS share..."
-        rm -f "$password_file_on_share"
-        # --- END: Cleanup password file on failure ---
-        log_fatal "Failed to generate Portainer TLS certificate in VM ${VMID}."
-    fi
-
-    # --- BEGIN: Cleanup password file on success ---
-    log_info "Cleaning up provisioner password file from NFS share..."
-    rm -f "$password_file_on_share"
-    # --- END: Cleanup password file on success ---
-
-    log_success "Successfully generated Portainer TLS certificate."
-}
 
 # =====================================================================================
 # Function: deploy_portainer_instances
@@ -263,7 +198,7 @@ deploy_portainer_instances() {
                 fi
 
                 local vm_cert_dir="${vm_mount_point}/portainer/certs"
-                generate_portainer_certificate "$VMID" "$portainer_fqdn" "${vm_cert_dir}/portainer.crt" "${vm_cert_dir}/portainer.key" "$hypervisor_cert_dir"
+                # Certificate generation is now handled by the centralized certificate-renewal-manager.sh
                 # --- END: DYNAMIC CERTIFICATE GENERATION ---
 
                 # Copy the docker-compose.yml and modify it for TLS
