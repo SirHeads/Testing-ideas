@@ -3,7 +3,7 @@
         "common_name": "nginx.internal.thinkheads.ai",
         "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt",
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key",
-        "owner": "admin:admin",
+        "owner": "root:root",
         "permissions": "644",
         "post_renewal_command": "pct exec 101 -- systemctl reload nginx"
     },
@@ -13,6 +13,14 @@
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key",
         "owner": "nobody:nogroup",
         "permissions": "600",
-        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c \"docker --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem restart portainer_server\""
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c \"cd /persistent-storage/portainer && docker compose up -d --force-recreate\""
+    },
+    {
+        "common_name": "traefik.internal.thinkheads.ai",
+        "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/traefik.internal.thinkheads.ai.crt",
+        "key_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/traefik.internal.thinkheads.ai.key",
+        "owner": "root:root",
+        "permissions": "600",
+        "post_renewal_command": "pct exec 102 -- systemctl reload traefik"
     }
 ]

@@ -10,7 +10,7 @@
 
 # --- Determine script's absolute directory ---
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" > /dev/null && pwd)
-PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/.." > /dev/null && pwd)
+PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." > /dev/null && pwd)
 
 # --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
