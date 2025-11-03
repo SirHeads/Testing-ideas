@@ -450,7 +450,8 @@ main() {
         targets_to_process=("${TARGETS[@]}")
     elif [ "$VERB" == "sync" ]; then
         log_info "Sync command detected. Routing to portainer-manager.sh..."
-        "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "${TARGETS[@]}" --config "$HYPERVISOR_CONFIG_FILE"
+        # Pass the verb, all targets, and any extra flags like --reset-portainer
+        "$SCRIPT_DIR/managers/portainer-manager.sh" "$VERB" "$@"
         exit 0
     elif [ "$VERB" == "health-check" ]; then
         log_info "Health-check command detected. Routing to health check script..."

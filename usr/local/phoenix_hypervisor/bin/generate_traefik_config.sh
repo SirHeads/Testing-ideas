@@ -48,7 +48,7 @@ main() {
                 {
                     "name": $service_def.name,
                     "rule": "Host(`\($service_def.name).\($internal_domain)`)",
-                    "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)",
+                    "url": (if $service_def.name == "ca" then "https://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)" else "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)" end),
                     "resolver": "internal-resolver"
                 }
             ),
@@ -95,7 +95,7 @@ main() {
             "    \(.transport):\n" +
             "      serverName: \"\(.serverName)\"\n" +
             "      rootCAs:\n" +
-            "        - \"/etc/step-ca/ssl/phoenix_ca.crt\""
+            "        - \"/etc/step-ca/ssl/phoenix_root_ca.crt\""
         '
     } > "$OUTPUT_FILE"
     log_success "Traefik dynamic configuration generated successfully at ${OUTPUT_FILE}"

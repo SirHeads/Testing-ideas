@@ -66,16 +66,30 @@ EOF
     # --- BEGIN UNIFIED AGGREGATION LOGIC ---
     log_info "Aggregating all DNS records for internal view..."
     # Create a single combined JSON object of all records
+    # --- New Stack Discovery Logic ---
+    local STACKS_DIR="${PHOENIX_BASE_DIR}/stacks"
+    local discovered_stacks_json="[]"
+    if [ -d "$STACKS_DIR" ]; then
+        for stack_dir in "$STACKS_DIR"/*/; do
+            if [ -d "$stack_dir" ]; then
+                local manifest_file="${stack_dir}phoenix.json"
+                if [ -f "$manifest_file" ]; then
+                    local manifest_content=$(jq -c . "$manifest_file")
+                    discovered_stacks_json=$(echo "$discovered_stacks_json" | jq --argjson content "$manifest_content" '. + [$content]')
+                fi
+            fi
+        done
+    fi
+
     local ALL_RECORDS_JSON=$(jq -n \
-        --argjson stacks_config "$(cat "${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json")" \
+        --argjson stacks "$discovered_stacks_json" \
         --argjson lxc_config "$(cat "$LXC_CONFIG_FILE")" \
         --argjson vm_config "$(cat "$VM_CONFIG_FILE")" \
         '
-        # Define a variable for the Traefik IP by finding it in the LXC config
         ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Traefik-Internal") | .value.network_config.ip | split("/")[0]) as $traefik_ip |
         [
-            # 1. Process Docker Stacks for Traefik-routed services from stacks config
-            ($stacks_config.docker_stacks | values[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | {
+            # 1. Process Discovered Docker Stacks for Traefik-routed services
+            ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | {
                 "hostname": .hostname,
                 "ip": $traefik_ip
             }),
@@ -102,20 +116,11 @@ EOF
                 "hostname": .portainer_agent_hostname,
                 "ip": (.network_config.ip | split("/")[0])
             }),
-            {
-                "hostname": "portainer.internal.thinkheads.ai",
-                "ip": $traefik_ip
-            },
-            {
-                "hostname": "portainer-agent.internal.thinkheads.ai",
-                "ip": $traefik_ip
-            },
-            # 5. Add a static record for the Traefik dashboard itself
-            {
-                "hostname": "traefik.internal.thinkheads.ai",
-                "ip": $traefik_ip
-            }
-        ] | unique_by(.hostname) # Ensure no duplicate hostnames
+            # 5. Add static records
+            { "hostname": "portainer.internal.thinkheads.ai", "ip": $traefik_ip },
+            { "hostname": "portainer-agent.internal.thinkheads.ai", "ip": $traefik_ip },
+            { "hostname": "traefik.internal.thinkheads.ai", "ip": $traefik_ip }
+        ] | unique_by(.hostname)
         '
     )
     # --- Write Unified Internal DNS Records ---

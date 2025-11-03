@@ -11,7 +11,6 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
 # --- Load external configurations ---
-STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 
 # =====================================================================================
 # Function: run_qm_command
@@ -410,7 +409,7 @@ create_vm_from_image() {
     local nameserver
     nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver")
     local searchdomain
-    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
+    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || get_global_config_value ".domain_name")
 
     # --- The One Command to Rule Them All ---
     # This single, atomic command creates the VM with all necessary settings from the start.
@@ -739,6 +738,9 @@ apply_vm_features() {
     log_info "Preparing script directory at $hypervisor_scripts_dir..."
     rm -rf "$hypervisor_scripts_dir"
     mkdir -p "$hypervisor_scripts_dir"
+ 
+    # The flawed Docker volume creation logic has been removed from this script.
+    # This responsibility is now correctly handled by portainer-manager.sh.
 
     for feature in $features; do
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
@@ -753,7 +755,6 @@ apply_vm_features() {
         # --- Definitive Fix: Copy all required configs ---
         log_info "Copying core configuration files to VM's persistent storage..."
         cp "$VM_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_vm_configs.json"
-        cp "$STACKS_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_stacks_config.json"
         cp "$HYPERVISOR_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_hypervisor_config.json"
 
         # --- Verification Step ---
@@ -766,7 +767,7 @@ apply_vm_features() {
         log_info "Copying Portainer docker-compose.yml to VM's persistent storage..."
         local portainer_compose_dest_dir="${persistent_volume_path}/portainer"
         mkdir -p "$portainer_compose_dest_dir"
-        cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "$portainer_compose_dest_dir/"
+        cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "$portainer_compose_dest_dir/"
 
         # --- Definitive Fix: Copy Portainer config.json ---
         log_info "Copying Portainer config.json to VM's persistent storage..."
@@ -1019,41 +1020,44 @@ apply_vm_firewall_rules() {
         log_info "  - Added rule: $rule_line"
     done
 
-    # Add rules from Docker Compose files via VM assignments
+    # Add rules from Docker stacks based on the new convention-based structure
     log_info "Aggregating Docker stack firewall rules for VM $VMID..."
-    local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
-    jq_get_vm_value "$VMID" ".docker_stacks[]?" | jq -c '.' | while read -r stack_ref; do
-        local stack_name=$(echo "$stack_ref" | jq -r '.name')
-        local compose_path=$(jq -r ".docker_stacks.\"$stack_name\".compose_file_path" "$STACKS_CONFIG_FILE")
-        local stack_env=$(echo "$stack_ref" | jq -r '.environment')
+    jq_get_vm_value "$VMID" ".docker_stacks[]?" | while read -r stack_name; do
+        local stack_name=$(echo "$stack_name" | tr -d '"') # Sanitize stack name
+        local manifest_path="${PHOENIX_BASE_DIR}/stacks/${stack_name}/phoenix.json"
         
-        if [ -f "${PHOENIX_BASE_DIR}/${compose_path}" ]; then
-            # Read the compose file content
-            local compose_content=$(cat "${PHOENIX_BASE_DIR}/${compose_path}")
-
-            # Find all variables like ${VAR_NAME} in the compose file
-            local vars_to_replace=$(echo "$compose_content" | grep -oP '\$\{\K[^}]+')
-
-            # Replace each variable with its value from the stacks config
-            for var in $vars_to_replace; do
-                local var_value=$(jq -r ".docker_stacks.\"$stack_name\".environments.\"$stack_env\".variables[] | select(.name == \"$var\") | .value" "$STACKS_CONFIG_FILE")
-                if [ -n "$var_value" ]; then
-                    compose_content=$(echo "$compose_content" | sed "s|\${${var}}|${var_value}|g")
-                fi
-            done
-
-            # Use yq to parse the resolved docker-compose content for ports
-            echo "$compose_content" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
-                local host_port=$(echo "$port_mapping" | cut -d':' -f1)
-                local rule=$(jq -n \
-                    --arg dest "$vm_ip" \
-                    --arg port "$host_port" \
-                    '{type: "in", action: "ACCEPT", proto: "tcp", source: "10.0.0.12", dest: $dest, port: $port, comment: "Allow Traefik to access Docker stack '\'$stack_name\''"}')
-                generate_rule_string "$rule" >> "$vm_fw_file"
-            done
-        else
-            log_warn "Compose file not found for stack '$stack_name': ${PHOENIX_BASE_DIR}/${compose_path}"
+        if [ ! -f "$manifest_path" ]; then
+            log_warn "Manifest file not found for stack '$stack_name' at: $manifest_path. Skipping firewall rule aggregation for this stack."
+            continue
         fi
+
+        # Assuming 'production' environment for now. This can be parameterized later if needed.
+        local stack_firewall_rules=$(jq -r '.environments.production.firewall_rules // "[]"' "$manifest_path")
+
+        if [ -z "$stack_firewall_rules" ] || [ "$stack_firewall_rules" == "[]" ]; then
+            log_info "No firewall rules defined in the manifest for stack '$stack_name'. Skipping."
+            continue
+        fi
+
+        echo "$stack_firewall_rules" | jq -c '.[]' | while read -r rule; do
+            local type=$(echo "$rule" | jq -r '.type')
+            local action=$(echo "$rule" | jq -r '.action')
+            local proto=$(echo "$rule" | jq -r '.proto // ""')
+            local port=$(echo "$rule" | jq -r '.port // ""')
+            local source=$(echo "$rule" | jq -r '.source // ""')
+            local dest=$(echo "$rule" | jq -r '.dest // ""')
+            local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+            local rule_line="${type^^} ${action^^}"
+            [ -n "$proto" ] && rule_line+=" -p $proto"
+            [ -n "$port" ] && rule_line+=" -dport $port"
+            [ -n "$source" ] && rule_line+=" -source $source"
+            [ -n "$dest" ] && rule_line+=" -dest $dest"
+            [ -n "$comment" ] && rule_line+=" # $comment"
+            
+            echo "$rule_line" >> "$vm_fw_file"
+            log_info "  - Added rule from stack '$stack_name': $rule_line"
+        done
     done
 
     log_info "Firewall rules for VM $VMID have been written to $vm_fw_file."

@@ -454,6 +454,10 @@
                 "lxc.mount.auto:sys:rw"
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
+            "traefik_service": {
+                "name": "nginx",
+                "port": 443
+            },
             "dependencies": [
                 "103"
             ],
@@ -722,8 +726,8 @@
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
+                        "port": "80,443",
+                        "comment": "Allow Step-CA to perform ACME challenges with Traefik"
                     },
                     {
                         "type": "in",

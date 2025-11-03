@@ -23,9 +23,49 @@ source "${PHOENIX_BASE_DIR}/bin/managers/vm-manager.sh" # Source vm-manager.sh f
 
 # --- Load external configurations ---
 # Rely on HYPERVISOR_CONFIG_FILE exported from phoenix_hypervisor_common_utils.sh
-STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
-CENTRALIZED_CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+CENTRALIZED_CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
 # =====================================================================================
+# =====================================================================================
+# Function: discover_stacks
+# Description: Scans the stacks directory, validates each stack's configuration,
+#              and compiles them into a single JSON object.
+#
+# Returns:
+#   A JSON object containing the configurations of all valid stacks.
+# =====================================================================================
+discover_stacks() {
+    local stacks_dir="${PHOENIX_BASE_DIR}/stacks"
+    local all_stacks_json="{}"
+
+    if [ ! -d "$stacks_dir" ]; then
+        log_warn "Stacks directory not found at: ${stacks_dir}"
+        echo "$all_stacks_json"
+        return
+    fi
+
+    for stack_dir in "$stacks_dir"/*/; do
+        if [ -d "$stack_dir" ]; then
+            local stack_name=$(basename "$stack_dir")
+            local compose_file="${stack_dir}docker-compose.yml"
+            local manifest_file="${stack_dir}phoenix.json"
+
+            if [ ! -f "$compose_file" ]; then
+                log_warn "Stack '${stack_name}' is missing a docker-compose.yml file. Skipping."
+                continue
+            fi
+
+            if [ ! -f "$manifest_file" ]; then
+                log_warn "Stack '${stack_name}' is missing a phoenix.json manifest file. Skipping."
+                continue
+            fi
+
+            local manifest_content=$(jq -c . "$manifest_file")
+            all_stacks_json=$(echo "$all_stacks_json" | jq --argjson content "$manifest_content" --arg name "$stack_name" '. + {($name): $content}')
+        fi
+    done
+
+    echo "$all_stacks_json"
+}
 # Function: retry_api_call
 # Description: A robust wrapper for executing curl commands to interact with APIs.
 #              It includes retry logic, detailed logging, and handles different
@@ -120,7 +160,7 @@ get_portainer_jwt() {
         --cacert "$CA_CERT_PATH" \
         --resolve "${GATEWAY_HOSTNAME}:${PORTAINER_PORT}:${nginx_ip}" \
         -d "$AUTH_PAYLOAD" \
-        "${GATEWAY_URL}/api/auth")
+        "https://${PORTAINER_HOSTNAME}/api/auth")
 
     if [ -n "$JWT_RESPONSE" ]; then
         JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
@@ -143,6 +183,7 @@ get_portainer_jwt() {
 #   None. Exits with a fatal error if deployment fails.
 # =====================================================================================
 deploy_portainer_instances() {
+    local reset_portainer_flag=${1:-false}
     log_info "Deploying Portainer server and agent instances..."
 
     local vms_with_portainer
@@ -166,25 +207,59 @@ deploy_portainer_instances() {
                 log_info "Deploying Portainer server on VM $VMID..."
                 local compose_file_path="${vm_mount_point}/portainer/docker-compose.yml"
                 local config_json_path="${vm_mount_point}/portainer/config.json"
-
-                # Ensure the Portainer directory exists on the hypervisor's NFS share
+ 
+                 # Ensure the Portainer directory exists on the hypervisor's NFS share
                 local hypervisor_portainer_dir="${persistent_volume_path}/portainer"
                 mkdir -p "$hypervisor_portainer_dir" || log_fatal "Failed to create hypervisor Portainer directory: $hypervisor_portainer_dir"
 
                 # --- BEGIN: Idempotent Data Directory Creation ---
                 local hypervisor_portainer_data_dir="${hypervisor_portainer_dir}/data"
+                if [ "$reset_portainer_flag" = true ]; then
+                    log_warn "Resetting Portainer data directory as requested."
+                    log_info "Removing Portainer data directory from hypervisor..."
+                    if [ -d "$hypervisor_portainer_data_dir" ]; then
+                        rm -rf "$hypervisor_portainer_data_dir" || log_fatal "Failed to remove Portainer data directory."
+                    fi
+                    log_info "Removing Portainer data directory from within VM ${VMID} to bypass NFS cache..."
+                    qm guest exec "$VMID" -- rm -rf "${vm_mount_point}/portainer/data" || log_warn "Failed to remove Portainer data directory from within VM. This may not be a fatal error."
+                    log_info "Removing existing Portainer Docker volume from VM ${VMID}..."
+                    qm guest exec "$VMID" -- /bin/bash -c "docker volume rm portainer_data_nfs" || log_warn "Failed to remove Portainer Docker volume. It might not have existed."
+                fi
                 log_info "Ensuring Portainer data directory exists at: ${hypervisor_portainer_data_dir}"
                 if [ ! -d "$hypervisor_portainer_data_dir" ]; then
                     log_info "Creating Portainer data directory..."
                     mkdir -p "$hypervisor_portainer_data_dir" || log_fatal "Failed to create Portainer data directory."
                 fi
-
+ 
                 log_info "Ensuring correct permissions on Portainer data directory..."
+                if [ "$(stat -c '%U:%G' "$hypervisor_portainer_dir")" != "nobody:nogroup" ]; then
+                    log_info "Setting ownership to nobody:nogroup for parent directory..."
+                    chown nobody:nogroup "$hypervisor_portainer_dir" || log_fatal "Failed to set ownership on Portainer parent directory."
+                fi
                 if [ "$(stat -c '%U:%G' "$hypervisor_portainer_data_dir")" != "nobody:nogroup" ]; then
-                    log_info "Setting ownership to nobody:nogroup..."
+                    log_info "Setting ownership to nobody:nogroup for data directory..."
                     chown nobody:nogroup "$hypervisor_portainer_data_dir" || log_fatal "Failed to set ownership on Portainer data directory."
                 fi
                 # --- END: Idempotent Data Directory Creation ---
+
+                # --- BEGIN: Idempotent Docker Volume Creation ---
+                log_info "Ensuring Portainer NFS Docker volume exists on VM ${VMID}..."
+                local nfs_server_ip=$(get_global_config_value '.network.nfs_server')
+                local volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/portainer/data portainer_data_nfs"
+                
+                log_info "Checking for existing Docker volume 'portainer_data_nfs' inside VM ${VMID}..."
+                # This command now correctly checks the exit code from the guest.
+                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect portainer_data_nfs > /dev/null 2>&1"; then
+                    log_info "Docker volume 'portainer_data_nfs' already exists. No action needed."
+                else
+                    log_info "Portainer Docker volume not found. Creating it now..."
+                    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "$volume_create_command"; then
+                        log_fatal "Failed to create the Portainer Docker volume on VM ${VMID}."
+                    else
+                        log_success "Successfully created Portainer Docker volume 'portainer_data_nfs'."
+                    fi
+                fi
+                # --- END: Idempotent Docker Volume Creation ---
 
                 # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
                 local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
@@ -204,7 +279,7 @@ deploy_portainer_instances() {
                 # Copy the docker-compose.yml and modify it for TLS
                 log_info "Copying and modifying Portainer docker-compose.yml for TLS..."
                 rm -f "${hypervisor_portainer_dir}/docker-compose.yml"
-                cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml"
+                cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml"
                 
                 # Use yq to add the command and volumes for TLS
                 # Use yq to add the command and volumes for TLS. The syntax is for the python-based yq (v3.x).
@@ -217,14 +292,20 @@ deploy_portainer_instances() {
                 fi
 
                 log_info "Ensuring clean restart for Portainer server on VM $VMID..."
-                qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly."
-                qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly."
-
-                log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
+                local DOCKER_TLS_DIR="/etc/docker/tls"
+                local DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
+                local DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
+                local DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
+                local DOCKER_TLS_FLAGS="--tls --tlscert=${DOCKER_CERT_FILE} --tlskey=${DOCKER_KEY_FILE} --tlscacert=${DOCKER_CA_FILE}"
+ 
+                qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker ${DOCKER_TLS_FLAGS} compose down -v --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly."
+                qm guest exec "$VMID" -- /bin/bash -c "docker ${DOCKER_TLS_FLAGS} rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly."
+ 
+                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'docker compose up -d' for Portainer server on VM $VMID."
                 else
-                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker compose -f ${compose_file_path} up -d"; then
+                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker ${DOCKER_TLS_FLAGS} compose -f ${compose_file_path} up -d"; then
                         log_fatal "Failed to deploy Portainer server on VM $VMID."
                     fi
                 fi
@@ -298,7 +379,7 @@ deploy_portainer_instances() {
 # Function: setup_portainer_admin_user
 # Description: Sets up the initial admin user for Portainer if it hasn't been initialized yet.
 # Arguments:
-#   $1 - The Portainer URL (e.g., https://portainer.phoenix.local:9443)
+#   $1 - The Portainer URL (e.g., https://portainer.internal.thinkheads.ai)
 #   $2 - The path to the CA certificate file.
 # Returns:
 #   None. Exits with a fatal error if admin user setup fails.
@@ -406,6 +487,7 @@ setup_portainer_admin_user() {
 #   None. Exits with a fatal error on failure.
 # =====================================================================================
 sync_all() {
+    local reset_portainer_on_sync=${1:-false}
     log_info "--- Starting Full System State Synchronization ---"
 
     # --- STAGE 1: CERTIFICATE GENERATION & CORE INFRASTRUCTURE ---
@@ -435,7 +517,7 @@ sync_all() {
     local portainer_vmid="1001"
     if qm status "$portainer_vmid" > /dev/null 2>&1; then
         log_info "Portainer VM (1001) is running. Proceeding with deployment."
-        deploy_portainer_instances
+        deploy_portainer_instances "$reset_portainer_on_sync"
     else
         log_warn "Portainer VM (1001) is not running. Skipping all subsequent stages."
         log_info "--- Full System State Synchronization Finished (Aborted) ---"
@@ -488,9 +570,20 @@ sync_all() {
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
     sync_portainer_endpoints "$JWT" "$CA_CERT_PATH"
     
+    log_info "Discovering all available Docker stacks..."
+    local all_stacks_config
+    all_stacks_config=$(discover_stacks)
+    if [ -z "$all_stacks_config" ] || [ "$all_stacks_config" == "{}" ]; then
+        log_info "No stacks found to synchronize."
+        log_info "--- Full System State Synchronization Finished ---"
+        return
+    fi
+    log_info "Discovered stacks: $(echo "$all_stacks_config" | jq 'keys_unsorted | join(", ")')"
+
     log_info "--- Synchronizing all declared Docker stacks ---"
     local vms_with_stacks
     vms_with_stacks=$(jq -c '.vms[] | select(.docker_stacks and (.docker_stacks | length > 0))' "$VM_CONFIG_FILE")
+    
     while read -r vm_config; do
         local VMID=$(echo "$vm_config" | jq -r '.vmid')
         local agent_ip=$(echo "$vm_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
@@ -507,8 +600,10 @@ sync_all() {
             continue
         fi
 
-        echo "$vm_config" | jq -c '.docker_stacks[]' | while read -r stack_config; do
-            sync_stack "$VMID" "$stack_config" "$JWT" "$ENDPOINT_ID"
+        echo "$vm_config" | jq -r '.docker_stacks[]' | while read -r stack_name; do
+            # We assume the "production" environment by default for now.
+            # This could be made more flexible in the future if needed.
+            sync_stack "$VMID" "$stack_name" "production" "$all_stacks_config" "$JWT" "$ENDPOINT_ID"
         done
     done < <(echo "$vms_with_stacks" | jq -c '.')
     log_info "--- Docker stack synchronization complete ---"
@@ -521,25 +616,26 @@ sync_all() {
 
 # =====================================================================================
 # Function: sync_stack
-# Description: Synchronizes a specific Docker stack to a given VM's Portainer environment.
+# Description: Synchronizes a specific Docker stack to a given VM's Portainer environment
+#              using the new convention-based directory structure.
 # Arguments:
 #   $1 - The VMID of the target VM.
-#   $2 - The JSON object defining the stack and its environment (e.g., { "name": "stack_name", "environment": "env_name" }).
-#   $3 - (Optional) The JWT for Portainer API authentication. If not provided, it will be fetched.
-#   $4 - (Optional) The Portainer Endpoint ID. If not provided, it will be fetched.
+#   $2 - The name of the stack (corresponds to the directory name in /stacks).
+#   $3 - The name of the environment to deploy (e.g., "production").
+#   $4 - A JSON object containing all discovered stack configurations.
+#   $5 - (Optional) The JWT for Portainer API authentication.
+#   $6 - (Optional) The Portainer Endpoint ID.
 # Returns:
 #   None. Exits with a fatal error on failure.
 # =====================================================================================
 sync_stack() {
     local VMID="$1"
-    local STACK_CONFIG_JSON="$2" # This will be the JSON object: { "name": "stack_name", "environment": "env_name" }
-    local JWT="${3:-}" # Use provided JWT or fetch new one
-    local ENDPOINT_ID="${4:-}" # Use provided Endpoint ID or fetch new one
+    local STACK_NAME="$2"
+    local ENVIRONMENT_NAME="$3"
+    local ALL_STACKS_CONFIG="$4"
+    local JWT="${5:-}"
+    local ENDPOINT_ID="${6:-}"
 
-    local STACK_NAME=$(echo "$STACK_CONFIG_JSON" | jq -r '.name')
-    local ENVIRONMENT_NAME=$(echo "$STACK_CONFIG_JSON" | jq -r '.environment')
-
-    log_info "DEBUG: STACK_CONFIG_JSON: ${STACK_CONFIG_JSON}"
     log_info "Synchronizing stack '${STACK_NAME}' (environment: '${ENVIRONMENT_NAME}') to VMID '${VMID}'..."
 
     local portainer_hostname="portainer.internal.thinkheads.ai"
@@ -562,18 +658,19 @@ sync_stack() {
         fi
     fi
 
-    local STACK_DEFINITION
-    STACK_DEFINITION=$(jq -r ".docker_stacks.\"${STACK_NAME}\".environments.\"${ENVIRONMENT_NAME}\"" "$STACKS_CONFIG_FILE")
-    log_info "DEBUG: STACK_DEFINITION: ${STACK_DEFINITION}"
-    if [ "$STACK_DEFINITION" == "null" ]; then
-        log_fatal "Stack '${STACK_NAME}' with environment '${ENVIRONMENT_NAME}' not found in ${STACKS_CONFIG_FILE}."
+    local STACK_MANIFEST=$(echo "$ALL_STACKS_CONFIG" | jq -r --arg name "$STACK_NAME" '.[$name]')
+    if [ -z "$STACK_MANIFEST" ] || [ "$STACK_MANIFEST" == "null" ]; then
+        log_fatal "Stack '${STACK_NAME}' not found in discovered configurations."
     fi
 
-    local COMPOSE_FILE_PATH=$(jq -r ".docker_stacks.\"${STACK_NAME}\".compose_file_path" "$STACKS_CONFIG_FILE")
-    local FULL_COMPOSE_PATH="${PHOENIX_BASE_DIR}/${COMPOSE_FILE_PATH}"
+    local STACK_DEFINITION=$(echo "$STACK_MANIFEST" | jq -r --arg env "$ENVIRONMENT_NAME" '.environments[$env]')
+    if [ -z "$STACK_DEFINITION" ] || [ "$STACK_DEFINITION" == "null" ]; then
+        log_fatal "Environment '${ENVIRONMENT_NAME}' not found for stack '${STACK_NAME}'."
+    fi
 
+    local FULL_COMPOSE_PATH="${PHOENIX_BASE_DIR}/stacks/${STACK_NAME}/docker-compose.yml"
     if [ ! -f "$FULL_COMPOSE_PATH" ]; then
-        log_fatal "Compose file ${FULL_COMPOSE_PATH} not found for stack '${STACK_NAME}'. Cannot deploy."
+        log_fatal "Compose file not found for stack '${STACK_NAME}' at ${FULL_COMPOSE_PATH}."
     fi
 
     # --- BEGIN FILE-BASED DEPLOYMENT LOGIC ---
@@ -589,9 +686,6 @@ sync_stack() {
     local agent_stack_path="${vm_mount_point}/stacks/${STACK_NAME}/docker-compose.yml"
 
     log_info "Preparing stack file on persistent storage for VM ${VMID}..."
-    log_info "Hypervisor path: ${hypervisor_stack_dir}/docker-compose.yml"
-    log_info "Agent path: ${agent_stack_path}"
-
     mkdir -p "$hypervisor_stack_dir" || log_fatal "Failed to create stack directory on hypervisor: $hypervisor_stack_dir"
     chmod 777 "$hypervisor_stack_dir" || log_warn "Failed to set permissions on stack directory: $hypervisor_stack_dir"
     cp "$FULL_COMPOSE_PATH" "${hypervisor_stack_dir}/docker-compose.yml" || log_fatal "Failed to copy compose file to hypervisor's persistent storage."
@@ -614,45 +708,36 @@ sync_stack() {
     log_success "Traefik label injection complete."
     # --- END TRAEFIK LABEL INJECTION ---
 
-    # --- END FILE-BASED DEPLOYMENT LOGIC ---
-
     # --- Handle Environment Variables ---
     local ENV_VARS_JSON="[]"
     local variables_array=$(echo "$STACK_DEFINITION" | jq -c '.variables // []')
-    log_info "DEBUG: Raw variables_array: ${variables_array}"
     if [ "$(echo "$variables_array" | jq 'length')" -gt 0 ]; then
         ENV_VARS_JSON=$(echo "$variables_array" | jq -c '. | map({name: .name, value: .value})')
-        log_info "DEBUG: Processed ENV_VARS_JSON: ${ENV_VARS_JSON}"
     fi
 
     # --- Handle Configuration Files (Portainer Configs) ---
     local CONFIG_IDS_JSON="[]"
     local files_array=$(echo "$STACK_DEFINITION" | jq -c '.files // []')
-    log_info "DEBUG: Raw files_array: ${files_array}"
     if [ "$(echo "$files_array" | jq 'length')" -gt 0 ]; then
         local temp_config_ids="[]"
         echo "$files_array" | jq -c '.[]' | while read -r file_config; do
             local SOURCE_PATH=$(echo "$file_config" | jq -r '.source')
             local DESTINATION_PATH=$(echo "$file_config" | jq -r '.destination_in_container')
-            local CONFIG_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}-$(basename "$SOURCE_PATH" | tr '.' '-')" # Unique name for Portainer Config
-            log_info "DEBUG: Processing file config: ${file_config}"
-            log_info "DEBUG: SOURCE_PATH: ${SOURCE_PATH}, DESTINATION_PATH: ${DESTINATION_PATH}, CONFIG_NAME: ${CONFIG_NAME}"
+            local CONFIG_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}-$(basename "$SOURCE_PATH" | tr '.' '-')"
 
-            if [ ! -f "${PHOENIX_BASE_DIR}/${SOURCE_PATH}" ]; then
-                log_fatal "Source config file not found: ${PHOENIX_BASE_DIR}/${SOURCE_PATH} for stack '${STACK_NAME}'."
+            local full_source_path="${PHOENIX_BASE_DIR}/stacks/${STACK_NAME}/${SOURCE_PATH}"
+            if [ ! -f "$full_source_path" ]; then
+                log_fatal "Source config file not found: ${full_source_path} for stack '${STACK_NAME}'."
             fi
-            local FILE_CONTENT=$(cat "${PHOENIX_BASE_DIR}/${SOURCE_PATH}")
+            local FILE_CONTENT=$(cat "$full_source_path")
 
-            # Check if config already exists
             local configs_response
             configs_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}")
             local EXISTING_CONFIG_ID=$(echo "$configs_response" | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
             if [ -n "$EXISTING_CONFIG_ID" ]; then
-                log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating to ensure content is fresh."
-                if ! retry_api_call --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"; then
-                    log_warn "Failed to delete old Portainer Config '${CONFIG_NAME}'. Proceeding, but this might cause issues."
-                fi
+                log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating..."
+                retry_api_call --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"
             fi
 
             log_info "Creating Portainer Config '${CONFIG_NAME}'..."
@@ -661,60 +746,49 @@ sync_stack() {
             CONFIG_RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
               -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
             local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
-            log_info "DEBUG: Portainer Config creation response: ${CONFIG_RESPONSE}"
             
             if [ -z "$NEW_CONFIG_ID" ]; then
                 log_fatal "Failed to create Portainer Config '${CONFIG_NAME}'. Response: ${CONFIG_RESPONSE}"
             fi
-            log_info "Portainer Config '${CONFIG_NAME}' created with ID: ${NEW_CONFIG_ID}"
             temp_config_ids=$(echo "$temp_config_ids" | jq --arg id "$NEW_CONFIG_ID" --arg dest "$DESTINATION_PATH" '. + [{configId: $id, fileName: $dest}]')
         done
         CONFIG_IDS_JSON="$temp_config_ids"
-        log_info "DEBUG: Processed CONFIG_IDS_JSON: ${CONFIG_IDS_JSON}"
     fi
 
-    local STACK_EXISTS_ID
+    local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}"
     local stacks_response
     stacks_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
-    STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "${STACK_NAME}-${ENVIRONMENT_NAME}" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
-
-    local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}" # Unique stack name in Portainer
+    local STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "$STACK_DEPLOY_NAME" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
     if [ -n "$STACK_EXISTS_ID" ]; then
-        log_info "Stack '${STACK_DEPLOY_NAME}' already exists on environment ID '${ENDPOINT_ID}'. Updating..."
+        log_info "Stack '${STACK_DEPLOY_NAME}' already exists. Updating..."
         local JSON_PAYLOAD=$(jq -n \
             --arg path "${agent_stack_path}" \
             --argjson env "$ENV_VARS_JSON" \
             --argjson configs "$CONFIG_IDS_JSON" \
             '{StackFilePath: $path, Env: $env, Configs: $configs, Prune: true}')
-        log_info "DEBUG: PUT JSON_PAYLOAD: ${JSON_PAYLOAD}"
         local RESPONSE
         RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
-        log_info "DEBUG: PUT API RESPONSE: ${RESPONSE}"
-        if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
-          log_success "Stack '${STACK_DEPLOY_NAME}' updated successfully."
-        else
+        if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to update stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
         fi
+        log_success "Stack '${STACK_DEPLOY_NAME}' updated successfully."
     else
-        log_info "Stack '${STACK_DEPLOY_NAME}' does not exist on environment ID '${ENDPOINT_ID}'. Deploying..."
+        log_info "Stack '${STACK_DEPLOY_NAME}' does not exist. Deploying..."
         local JSON_PAYLOAD=$(jq -n \
             --arg name "${STACK_DEPLOY_NAME}" \
             --arg path "${agent_stack_path}" \
             --argjson env "$ENV_VARS_JSON" \
             --argjson configs "$CONFIG_IDS_JSON" \
             '{Name: $name, ComposeFilePathInContainer: $path, Env: $env, Configs: $configs}')
-        log_info "DEBUG: POST JSON_PAYLOAD: ${JSON_PAYLOAD}"
         local RESPONSE
         RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
-        log_info "DEBUG: POST API RESPONSE: ${RESPONSE}"
-        if echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
-          log_success "Stack '${STACK_DEPLOY_NAME}' deployed successfully."
-        else
+        if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to deploy stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
         fi
+        log_success "Stack '${STACK_DEPLOY_NAME}' deployed successfully."
     fi
 }
 
@@ -788,18 +862,30 @@ sync_portainer_endpoints() {
 #   $@ - The command-line arguments passed to the script.
 # =====================================================================================
 main_portainer_orchestrator() {
-    local action="$1"
-    shift
-
+    local action=""
+    local args=()
     local config_file_override=""
+    local reset_portainer=false
+
+    # First, parse all flags
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             --config)
                 config_file_override="$2"
                 shift 2
                 ;;
+            --reset-portainer)
+                reset_portainer=true
+                shift
+                ;;
             *)
-                break
+                # Assume first non-flag is the action
+                if [ -z "$action" ]; then
+                    action="$1"
+                else
+                    args+=("$1")
+                fi
+                shift
                 ;;
         esac
     done
@@ -811,9 +897,9 @@ main_portainer_orchestrator() {
 
     case "$action" in
         sync)
-            local target="$1"
+            local target="${args[0]}"
             if [ "$target" == "all" ]; then
-                sync_all
+                sync_all "$reset_portainer"
             elif [ "$1" == "stack" ]; then
                 local stack_name_from_cli="$2"
                 local to_keyword="$3"

@@ -1,0 +1,71 @@
+{
+    "description": "The main Thinkheads.AI web application.",
+    "environments": {
+        "production": {
+            "variables": [
+                {
+                    "name": "DATABASE_USER",
+                    "value": "prod_user"
+                },
+                {
+                    "name": "DATABASE_PASS",
+                    "value": "PROD_SECRET_PASSWORD"
+                },
+                {
+                    "name": "API_PORT",
+                    "value": "8000"
+                }
+            ],
+            "files": [
+                {
+                    "source": "persistent-storage/thinkheads_ai/configs/prod.env",
+                    "destination_in_container": "/app/.env"
+                }
+            ]
+        },
+        "testing": {
+            "variables": [
+                {
+                    "name": "DATABASE_USER",
+                    "value": "test_user"
+                },
+                {
+                    "name": "DATABASE_PASS",
+                    "value": "TEST_SECRET_PASSWORD"
+                },
+                {
+                    "name": "API_PORT",
+                    "value": "8001"
+                }
+            ],
+            "files": [
+                {
+                    "source": "persistent-storage/thinkheads_ai/configs/test.env",
+                    "destination_in_container": "/app/.env"
+                }
+            ]
+        },
+        "development": {
+            "variables": [
+                {
+                    "name": "DATABASE_USER",
+                    "value": "dev_user"
+                },
+                {
+                    "name": "DATABASE_PASS",
+                    "value": "DEV_SECRET_PASSWORD"
+                },
+                {
+                    "name": "API_PORT",
+                    "value": "8002"
+                }
+            ],
+            "files": [
+                {
+                    "source": "persistent-storage/thinkheads_ai/configs/dev.env",
+                    "destination_in_container": "/app/.env"
+                }
+            ]
+        }
+    }
+}

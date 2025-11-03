@@ -13,6 +13,6 @@
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key",
         "owner": "nobody:nogroup",
         "permissions": "600",
-        "post_renewal_command": "qm guest exec 1001 -- docker restart portainer_server"
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c \"docker --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem restart portainer_server\""
     }
 ]

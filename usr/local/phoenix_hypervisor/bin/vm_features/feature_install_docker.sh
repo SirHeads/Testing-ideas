@@ -155,11 +155,14 @@ cat <<EOF > /etc/docker/daemon.json
 }
 EOF
 
- # 6. Enable and Start Docker Service
-log_info "Step 6: Enabling and starting Docker service (systemctl enable docker && systemctl start docker)..."
-if ! systemctl enable docker || ! systemctl start docker; then
-    log_fatal "Failed to enable or start Docker service."
-fi
+ # 6. Correct systemd service file and start Docker
+ log_info "Step 6: Correcting systemd service file and starting Docker..."
+ # Remove the -H fd:// argument to ensure daemon.json is used
+ sed -i 's/ -H fd:\/\///' /usr/lib/systemd/system/docker.service
+ systemctl daemon-reload
+ if ! systemctl enable docker || ! systemctl restart docker; then
+     log_fatal "Failed to enable or restart Docker service."
+ fi
 log_info "Docker service enabled and started successfully."
 
 # 7. Add User to Docker Group

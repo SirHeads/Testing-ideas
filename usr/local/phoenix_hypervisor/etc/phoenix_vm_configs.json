@@ -71,30 +71,11 @@
                 }
             ],
             "docker_stacks": [
-                {
-                    "name": "portainer_service",
-                    "environment": "production"
-                }
+                "portainer_service"
             ],
             "firewall": {
                 "enabled": true,
                 "rules": [
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.12",
-                        "proto": "tcp",
-                        "port": "9443",
-                        "comment": "Allow Traefik to access Portainer"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.13",
-                        "proto": "tcp",
-                        "port": "9443",
-                        "comment": "Allow Proxmox host to access Portainer API"
-                    },
                     {
                         "type": "out",
                         "action": "ACCEPT",
@@ -102,14 +83,6 @@
                         "proto": "tcp",
                         "port": "443",
                         "comment": "Allow VM to access the Nginx gateway"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.13",
-                        "proto": "tcp",
-                        "port": "9000",
-                        "comment": "Allow Proxmox host to access Portainer for initial setup"
                     },
                     {
                         "type": "out",
@@ -174,14 +147,8 @@
                 }
             ],
             "docker_stacks": [
-                {
-                    "name": "qdrant_service",
-                    "environment": "production"
-                },
-                {
-                    "name": "thinkheads_ai_app",
-                    "environment": "development"
-                }
+                "qdrant_service",
+                "thinkheads_ai_app"
             ],
             "dns_records": [],
             "firewall": {

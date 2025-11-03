@@ -881,6 +881,32 @@ run_portainer_script() {
 }
 
 # =====================================================================================
+# Function: gather_and_push_certificates
+# Description: Gathers necessary TLS certificates from various locations on the host
+#              and pushes them into the container's temporary execution directory.
+# Arguments:
+#   $1 - The CTID of the container.
+#   $2 - The path to the temporary directory inside the container.
+# =====================================================================================
+gather_and_push_certificates() {
+    local CTID="$1"
+    local temp_dir_in_container="$2"
+
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Gathering and pushing certificates for NGINX container..."
+        local nginx_cert_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt"
+        local nginx_key_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key"
+        local portainer_cert_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt"
+        local portainer_key_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key"
+
+        pct push "$CTID" "$nginx_cert_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.crt" || log_fatal "Failed to copy NGINX cert"
+        pct push "$CTID" "$nginx_key_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.key" || log_fatal "Failed to copy NGINX key"
+        pct push "$CTID" "$portainer_cert_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.crt" || log_fatal "Failed to copy Portainer cert"
+        pct push "$CTID" "$portainer_key_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.key" || log_fatal "Failed to copy Portainer key"
+    fi
+}
+
+# =====================================================================================
 # Function: run_application_script
 # Description: Executes a final application-specific script for the LXC container if one is
 #              defined in its JSON configuration. This allows for application-level setup
@@ -978,18 +1004,12 @@ run_application_script() {
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
             # --- BEGIN PUSH ROOT CA TO NGINX CONTAINER ---
             log_info "Pushing Root CA certificate to Nginx container (CTID 101)..."
-            local temp_root_ca_on_host="/tmp/root_ca_for_101.crt"
-            local root_ca_in_103="/root/.step/certs/root_ca.crt"
+            local root_ca_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
             local root_ca_dest_in_101="/tmp/root_ca.crt"
 
-            if ! pct pull 103 "$root_ca_in_103" "$temp_root_ca_on_host"; then
-                log_fatal "Failed to pull Root CA from CTID 103 to host."
-            fi
-
-            if ! pct push 101 "$temp_root_ca_on_host" "$root_ca_dest_in_101"; then
+            if ! pct push 101 "$root_ca_on_host" "$root_ca_dest_in_101"; then
                 log_fatal "Failed to push Root CA from host to CTID 101."
             fi
-            rm "$temp_root_ca_on_host"
             log_info "Root CA successfully pushed to CTID 101."
             # --- END PUSH ROOT CA TO NGINX CONTAINER ---
 
@@ -1075,6 +1095,20 @@ run_application_script() {
     log_info "Copying hypervisor config to $CTID:$hypervisor_config_dest_path..."
     if ! pct push "$CTID" "$hypervisor_config_file" "$hypervisor_config_dest_path"; then
         log_fatal "Failed to copy hypervisor config file to container $CTID."
+    fi
+
+    # --- Copy Certificates ---
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Copying certificates to NGINX container..."
+        local nginx_cert_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt"
+        local nginx_key_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key"
+        local portainer_cert_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt"
+        local portainer_key_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key"
+
+        pct push "$CTID" "$nginx_cert_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.crt" || log_fatal "Failed to copy NGINX cert"
+        pct push "$CTID" "$nginx_key_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.key" || log_fatal "Failed to copy NGINX key"
+        pct push "$CTID" "$portainer_cert_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.crt" || log_fatal "Failed to copy Portainer cert"
+        pct push "$CTID" "$portainer_key_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.key" || log_fatal "Failed to copy Portainer key"
     fi
 
     # 4. Make the application script executable

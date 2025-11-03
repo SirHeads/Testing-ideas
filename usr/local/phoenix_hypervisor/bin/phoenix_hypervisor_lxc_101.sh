@@ -68,22 +68,14 @@ ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
 # Traefik will handle all certificate management.
 ensure_ca_trust
 
-# --- Certificate Generation ---
-echo "Ensuring SSL certificate for Nginx exists..."
-CERT_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.crt"
-KEY_PATH="/etc/nginx/ssl/nginx.internal.thinkheads.ai.key"
-
-if [ -f "$CERT_PATH" ] && [ -f "$KEY_PATH" ]; then
-    echo "Nginx SSL certificate already exists. Skipping generation."
-else
-    echo "Generating self-signed SSL certificate for Nginx..."
-    mkdir -p /etc/nginx/ssl
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$KEY_PATH" \
-        -out "$CERT_PATH" \
-        -subj "/CN=nginx.internal.thinkheads.ai"
-    echo "Self-signed certificate generated."
-fi
+# --- Certificate Deployment ---
+echo "Deploying SSL certificates for Nginx..."
+mkdir -p /etc/nginx/ssl
+cp "${temp_dir}/nginx.internal.thinkheads.ai.crt" "/etc/nginx/ssl/nginx.internal.thinkheads.ai.crt"
+cp "${temp_dir}/nginx.internal.thinkheads.ai.key" "/etc/nginx/ssl/nginx.internal.thinkheads.ai.key"
+cp "${temp_dir}/portainer.internal.thinkheads.ai.crt" "/etc/nginx/ssl/portainer.internal.thinkheads.ai.crt"
+cp "${temp_dir}/portainer.internal.thinkheads.ai.key" "/etc/nginx/ssl/portainer.internal.thinkheads.ai.key"
+echo "SSL certificates deployed."
 
 # --- Service Management and Validation ---
 echo "Testing Nginx configuration..."
