@@ -56,9 +56,9 @@ CTID=""
 # =====================================================================================
 parse_arguments() {
     # Ensure that the script is called with the Container ID (CTID) as the first argument.
-    if [ "$#" -ne 1 ]; then
+    if [ "$#" -lt 1 ]; then
         log_error "Usage: $0 <CTID>"
-        log_error "This script requires the LXC Container ID as an argument to perform the base OS setup."
+        log_error "This script requires at least the LXC Container ID as an argument."
         exit_script 2
     fi
     # Assign the provided argument to the global CTID variable for use throughout the script.
@@ -103,8 +103,8 @@ perform_base_os_setup() {
 
     if [ ${#packages_to_install[@]} -gt 0 ]; then
         log_info "Missing packages: ${packages_to_install[*]}. Installing..."
-        pct_exec "$CTID" apt-get update
-        pct_exec "$CTID" apt-get install -y "${packages_to_install[@]}"
+        pct_exec "$CTID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get update"
+        pct_exec "$CTID" -- bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y ${packages_to_install[*]}"
     else
         log_info "All essential packages are already installed."
     fi

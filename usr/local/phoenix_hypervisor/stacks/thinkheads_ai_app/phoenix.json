@@ -1,0 +1,16 @@
+{
+    "description": "The main Thinkheads.AI web application.",
+    "environments": {
+        "production": {
+            "firewall_rules": [
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "8000",
+                    "comment": "Allow access to Thinkheads.AI App"
+                }
+            ]
+        }
+    }
+}

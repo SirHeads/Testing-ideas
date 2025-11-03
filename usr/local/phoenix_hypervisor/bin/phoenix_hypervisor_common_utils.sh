@@ -52,7 +52,7 @@ log_debug() {
     # Check if debug mode is enabled
     if [ "$PHOENIX_DEBUG" == "true" ]; then
         # Log the debug message with timestamp and script name
-        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
     fi
 }
 
@@ -69,7 +69,7 @@ log_debug() {
 # =====================================================================================
 log_info() {
     # Log the informational message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -85,7 +85,7 @@ log_info() {
 # =====================================================================================
 log_success() {
     # Log the success message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -101,7 +101,7 @@ log_success() {
 # =====================================================================================
 log_warn() {
 	# Log the warning message with timestamp and script name to stderr
-	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -117,7 +117,7 @@ log_warn() {
 # =====================================================================================
 log_error() {
     # Log the error message with timestamp and script name to stderr
-    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
+    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "${BASH_SOURCE[-1]}"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
 }
 
 # =====================================================================================
@@ -133,7 +133,7 @@ log_error() {
 # =====================================================================================
 log_fatal() {
     # Log the fatal message with timestamp and script name to stderr
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "${BASH_SOURCE[-1]}"): $*" | tee -a "$MAIN_LOG_FILE" >&2
     # Exit the script due to a fatal error
     exit 1
 }
@@ -181,17 +181,21 @@ export VM_CONFIG_SCHEMA_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_confi
 export MAIN_LOG_FILE="/var/log/phoenix_hypervisor.log"
 export PHOENIX_DEBUG="true" # Set to "true" to enable debug logging and 'set -x' in feature scripts
 
-# --- Dynamic LXC_CONFIG_FILE Path ---
+# --- Dynamic Configuration File Paths ---
 # This logic allows the script to be used both on the host and inside a container's temporary execution environment.
-# It dynamically sets the path to the LXC configuration file based on the script's execution context.
+# It dynamically sets the paths for all configuration files based on the script's execution context.
 SCRIPT_DIR_FOR_CONFIG=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 
 if [[ "$SCRIPT_DIR_FOR_CONFIG" == "/tmp/phoenix_run" ]]; then
     # We are running inside the container's temporary execution environment.
+    export HYPERVISOR_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_hypervisor_config.json"
     export LXC_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_lxc_configs.json"
+    export VM_CONFIG_FILE="${SCRIPT_DIR_FOR_CONFIG}/phoenix_vm_configs.json"
 else
-    # We are running on the host. Use the standard absolute path.
+    # We are running on the host. Use the standard absolute paths.
+    export HYPERVISOR_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json"
     export LXC_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json"
+    export VM_CONFIG_FILE="/usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json"
 fi
 
 # --- Environment Setup ---
@@ -200,192 +204,6 @@ export LC_ALL="en_US.UTF-8"
 export PATH="/usr/local/bin:$PATH" # Ensure /usr/local/bin is in PATH for globally installed npm packages like ajv-cli
 
 
-# --- Logging Functions ---
-# =====================================================================================
-# Function: log_debug
-# Description: Logs a debug message to stdout and the main log file. This function is only
-#              active when the `PHOENIX_DEBUG` environment variable is set to "true".
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_debug() {
-    # Check if debug mode is enabled
-    if [ "$PHOENIX_DEBUG" == "true" ]; then
-        # Log the debug message with timestamp and script name
-        echo -e "${COLOR_BLUE}$(date '+%Y-%m-%d %H:%M:%S') [DEBUG] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-    fi
-}
-
-# =====================================================================================
-# Function: log_info
-# Description: Logs an informational message to stdout and the main log file. This is the
-#              standard logging function for general-purpose messages.
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_info() {
-    # Log the informational message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [INFO] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-# =====================================================================================
-# Function: log_success
-# Description: Logs a success message to stdout and the main log file. This is used to
-#              indicate that a significant operation has completed successfully.
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_success() {
-    # Log the success message with timestamp and script name
-    echo -e "${COLOR_GREEN}$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-# =====================================================================================
-# Function: log_warn
-# Description: Logs a warning message to stderr and the main log file. This is used for
-#              non-fatal issues that should be brought to the user's attention.
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_warn() {
-	# Log the warning message with timestamp and script name to stderr
-	echo -e "${COLOR_YELLOW}$(date '+%Y-%m-%d %H:%M:%S') [WARN] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-# =====================================================================================
-# Function: log_error
-# Description: Logs an error message to stderr and the main log file. This is used for
-#              recoverable errors that do not require the script to exit.
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_error() {
-    # Log the error message with timestamp and script name to stderr
-    echo -e "${COLOR_RED}$(date '+%Y-%m-%d %H:%M:%S') [ERROR] $(basename "$0"): $*${COLOR_RESET}" | tee -a "$MAIN_LOG_FILE" >&2
-}
-
-# =====================================================================================
-# Function: log_fatal
-# Description: Logs a fatal error message to stderr and the main log file, and then exits
-#              the script with a status code of 1. This is used for unrecoverable errors.
-#
-# Arguments:
-#   $@ - The message to log.
-#
-# Returns:
-#   Exits the script with status 1.
-# =====================================================================================
-log_fatal() {
-    # Log the fatal message with timestamp and script name to stderr
-    echo "$(date '+%Y-%m-%d %H:%M:%S') [FATAL] $(basename "$0"): $*" | tee -a "$MAIN_LOG_FILE" >&2
-    # Exit the script due to a fatal error
-    exit 1
-}
-
-# =====================================================================================
-# Function: setup_logging
-# Description: Ensures that the log directory exists and that the log file is available for
-#              writing. This function is called at the beginning of the main orchestrator script.
-#
-# Arguments:
-#   $1 - The full path to the log file.
-#
-# Returns:
-#   None. The function will exit with a fatal error if the log directory or file cannot be created.
-# =====================================================================================
-setup_logging() {
-    local log_file="$1"
-    local log_dir
-    log_dir=$(dirname "$log_file")
-
-    if [ ! -d "$log_dir" ]; then
-        # Create the log directory if it doesn't exist
-        mkdir -p "$log_dir" || log_fatal "Failed to create log directory: $log_dir"
-    fi
-    # Touch the log file to ensure it exists
-    touch "$log_file" || log_fatal "Failed to create log file: $log_file"
-}
- 
-# =====================================================================================
-# Function: update_etc_hosts
-# Description: Adds or updates an entry in /etc/hosts for a given hostname and IP address.
-#              This function is idempotent, ensuring the correct entry exists and
-#              removing any old entries for the same hostname.
-#
-# Arguments:
-#   $1 - The IP address to map.
-#   $2 - The hostname to map.
-#
-# Returns:
-#   None. Exits with a fatal error if /etc/hosts cannot be updated.
-# =====================================================================================
-update_etc_hosts() {
-    local ip_address="$1"
-    local hostname="$2"
-    local hosts_file="/etc/hosts"
-
-    log_info "Ensuring /etc/hosts entry for ${hostname} (${ip_address})..."
-
-    # Remove any existing entries for the hostname
-    if grep -q "\s${hostname}$" "$hosts_file"; then
-        log_info "Removing old /etc/hosts entry for ${hostname}."
-        sed -i "/\s${hostname}$/d" "$hosts_file" || log_fatal "Failed to remove old entry from ${hosts_file}."
-    fi
-
-    # Add the new entry
-    echo "${ip_address} ${hostname}" >> "$hosts_file" || log_fatal "Failed to add new entry to ${hosts_file}."
-    log_success "/etc/hosts updated: ${ip_address} ${hostname}"
-}
-
-# =====================================================================================
-# Function: log_plain_output
-# Description: Logs multi-line output from a variable or command while preserving its
-#              original formatting. This function is designed to be used with pipes.
-#
-# Arguments:
-#   None. Reads from stdin.
-#
-# Returns:
-#   None.
-# =====================================================================================
-log_plain_output() {
-    # This function is designed to be used with pipes for multi-line output.
-    # Example: echo "Line 1\nLine 2" | log_plain_output
-    while IFS= read -r line; do
-        echo "    | $line" | tee -a "$MAIN_LOG_FILE"
-    done
-}
- 
- # --- Exit Function ---
- exit_script() {
-    local exit_code=$1
-    if [ "$exit_code" -eq 0 ]; then
-        log_info "Script completed successfully."
-    else
-        log_error "Script failed with exit code $exit_code."
-    fi
-    exit "$exit_code"
-}
 
 # =====================================================================================
 # Function: pct_exec
@@ -667,7 +485,7 @@ run_pct_command() {
     log_info "Executing: pct ${pct_args[*]}"
 
     # If DRY_RUN mode is enabled, log the command without executing it
-    if [ "$DRY_RUN" = true ]; then
+    if [ "$PHOENIX_DRY_RUN" = "true" ]; then
         log_info "DRY-RUN: Would execute 'pct ${pct_args[*]}'"
         return 0
     fi
@@ -1741,4 +1559,190 @@ kill_apt_processes() {
     pkill -f "apt" || true
     pkill -f "dpkg" || true
     log_info "Forced termination of apt/dpkg processes complete."
+}
+# =====================================================================================
+# Function: validate_certificate_chain
+# Description: Validates the TLS certificate chain for a given host and port.
+#              It checks if the certificate is valid, not expired, and matches the
+#              hostname.
+#
+# Arguments:
+#   $1 - The hostname to check.
+#   $2 - The port to connect to.
+#   $3 - The path to the CA certificate file for verification.
+#
+# Returns:
+#   0 on success, 1 on failure.
+# =====================================================================================
+validate_certificate_chain() {
+    local HOSTNAME="$1"
+    local PORT="$2"
+    local CA_CERT_PATH="$3"
+
+    log_info "--- Starting Certificate Validation for ${HOSTNAME}:${PORT} ---"
+
+    if ! command -v openssl &> /dev/null; then
+        log_error "openssl command not found. Please install openssl."
+        return 1
+    fi
+
+    if [ ! -f "$CA_CERT_PATH" ]; then
+        log_error "CA certificate file not found at: ${CA_CERT_PATH}."
+        return 1
+    fi
+
+    # Use openssl to connect and get the certificate details
+    local OPENSSL_OUTPUT
+    OPENSSL_OUTPUT=$(echo | openssl s_client -connect "${HOSTNAME}:${PORT}" -servername "${HOSTNAME}" -CAfile "${CA_CERT_PATH}" 2>&1)
+    local OPENSSL_EXIT_CODE=$?
+
+    # Check 1: OpenSSL connection and verification
+    if [ $OPENSSL_EXIT_CODE -ne 0 ]; then
+        log_error "Certificate validation failed. OpenSSL connection error (Code: ${OPENSSL_EXIT_CODE})."
+        log_error "Output:\n${OPENSSL_OUTPUT}"
+        return 1
+    fi
+
+    if ! echo "${OPENSSL_OUTPUT}" | grep -q "Verify return code: 0 (ok)"; then
+        log_error "Certificate chain verification failed for ${HOSTNAME}."
+        log_error "Output:\n${OPENSSL_OUTPUT}"
+        return 1
+    fi
+    log_success "Certificate chain is valid and trusted."
+
+    # Check 2: Certificate Expiry
+    if ! echo "${OPENSSL_OUTPUT}" | openssl x509 -noout -checkend 0 >/dev/null 2>&1; then
+        log_error "Certificate for ${HOSTNAME} has expired or is not yet valid."
+        return 1
+    fi
+    log_success "Certificate is not expired."
+
+    # Check 3: Subject Alternative Name (SAN)
+    local sans
+    sans=$(echo "${OPENSSL_OUTPUT}" | openssl x509 -noout -text | grep "DNS:" | sed 's/DNS://g' | tr -d ' ')
+    log_info "Certificate SANs found: ${sans}"
+    log_info "Verifying hostname against SANs: ${HOSTNAME}"
+
+    local san_match=false
+    for san in $(echo "$sans" | tr ',' '\n'); do
+        # Handle wildcard matching
+        if [[ "$san" == "*."* ]]; then
+            local wildcard_domain="${san#*.}"
+            if [[ "$HOSTNAME" == *"$wildcard_domain" ]]; then
+                san_match=true
+                break
+            fi
+        # Handle exact matching
+        elif [ "$san" == "$HOSTNAME" ]; then
+            san_match=true
+            break
+        fi
+    done
+
+    if [ "$san_match" = false ]; then
+        log_error "Hostname '${HOSTNAME}' not found in certificate's Subject Alternative Name (SAN)."
+        return 1
+    fi
+    log_success "Hostname '${HOSTNAME}' is present in the certificate SAN."
+
+    log_info "--- Certificate Validation Passed for ${HOSTNAME}:${PORT} ---"
+    return 0
+}
+# =====================================================================================
+# Function: retry_api_call
+# Description: A robust wrapper for curl that retries API calls on failure and
+#              provides detailed logging for debugging.
+#
+# Arguments:
+#   $@ - The full curl command to execute.
+#
+# Returns:
+#   Outputs the body of the successful API response.
+#   Returns 1 if the command fails after all retries.
+# =====================================================================================
+retry_api_call() {
+    local MAX_RETRIES=3
+    local RETRY_DELAY=5
+    local attempt=1
+    local curl_cmd=("$@")
+
+    # Mask sensitive data for logging
+    local logged_cmd
+    logged_cmd=$(echo "${curl_cmd[@]}" | sed -e 's/--password-file \S* /--password-file [REDACTED] /g' \
+                                             -e 's/"password": "[^"]*"/"password": "[REDACTED]"/g' \
+                                             -e 's/Authorization: Bearer \S*/Authorization: Bearer [REDACTED]/g')
+
+    while [ "$attempt" -le "$MAX_RETRIES" ]; do
+        log_info "Executing API call (attempt ${attempt}/${MAX_RETRIES}): ${logged_cmd}"
+        
+        local response
+        local http_status
+        local body
+        
+        # Use a unique delimiter that is unlikely to appear in the response body
+        local delimiter="::PHOENIX_API_DELIMITER::"
+        
+        # Execute curl and capture stdout, separating body and status code
+        response=$(curl -s -w "${delimiter}%{http_code}" "${curl_cmd[@]}")
+        
+        # Correctly separate the body and the status code
+        http_status="${response##*${delimiter}}"
+        body="${response%${delimiter}*}"
+
+        # Validate that http_status is a number
+        if ! [[ "$http_status" =~ ^[0-9]+$ ]]; then
+            log_warn "Failed to parse HTTP status code. Full response: ${response}"
+            http_status="0" # Set a default error code
+        fi
+
+        if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
+            log_success "API call successful (HTTP Status: ${http_status})."
+            echo "$body" # Only output the body on success
+            return 0
+        fi
+
+        log_warn "API call failed on attempt ${attempt} (HTTP Status: ${http_status})."
+        log_warn "Response Body:\n${body}"
+
+        if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+            log_info "Retrying in ${RETRY_DELAY} seconds..."
+            sleep "$RETRY_DELAY"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    log_error "API call failed after ${MAX_RETRIES} attempts."
+    # On final failure, echo the last response body to aid debugging
+    echo "$body"
+    return 1
+}
+
+# =====================================================================================
+# Function: generate_rule_string
+# Description: Generates a firewall rule string from a JSON object.
+# Arguments:
+#   $1 - A JSON object representing a firewall rule.
+# Returns:
+#   A formatted firewall rule string.
+# =====================================================================================
+generate_rule_string() {
+    local rule_json="$1"
+    local type=$(echo "$rule_json" | jq -r '.type // ""')
+    local action=$(echo "$rule_json" | jq -r '.action // ""')
+    local proto=$(echo "$rule_json" | jq -r '.proto // ""')
+    local source=$(echo "$rule_json" | jq -r '.source // ""')
+    local dest=$(echo "$rule_json" | jq -r '.dest // ""')
+    local port=$(echo "$rule_json" | jq -r '.port // ""')
+    local iface=$(echo "$rule_json" | jq -r '.iface // ""')
+    local comment=$(echo "$rule_json" | jq -r '.comment // ""')
+
+    local rule_string="${type^^} ${action}"
+    [ -n "$iface" ] && rule_string+=" iface ${iface}"
+    [ -n "$proto" ] && rule_string+=" -p ${proto}"
+    [ -n "$source" ] && rule_string+=" -source ${source}"
+    [ -n "$dest" ] && rule_string+=" -dest ${dest}"
+    [ -n "$port" ] && rule_string+=" -dport ${port}"
+    [ -n "$comment" ] && rule_string+=" # ${comment}"
+    
+    echo "$rule_string"
 }

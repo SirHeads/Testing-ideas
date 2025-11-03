@@ -7,13 +7,46 @@
             "environments": {
                 "production": {
                     "variables": [],
-                    "files": []
+                    "files": [],
+                    "services": {
+                        "qdrant": {
+                            "traefik_labels": [
+                                "traefik.enable=true",
+                                "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)",
+                                "traefik.http.routers.qdrant.entrypoints=websecure",
+                                "traefik.http.routers.qdrant.tls=true",
+                                "traefik.http.routers.qdrant.tls.certresolver=internal-resolver",
+                                "traefik.http.services.qdrant.loadbalancer.server.port=6333"
+                            ]
+                        }
+                    }
+                }
+            }
+        },
+        "portainer_service": {
+            "description": "Portainer management UI.",
+            "compose_file_path": "persistent-storage/portainer/docker-compose.yml",
+            "environments": {
+                "production": {
+                    "variables": [],
+                    "files": [],
+                    "services": {
+                        "portainer": {
+                            "traefik_labels": [
+                                "traefik.enable=true",
+                                "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)",
+                                "traefik.http.routers.portainer.entrypoints=web",
+                                "traefik.http.services.portainer.loadbalancer.server.port=9000",
+                                "traefik.http.services.portainer.loadbalancer.server.scheme=http"
+                            ]
+                        }
+                    }
                 }
             }
         },
         "thinkheads_ai_app": {
             "description": "The main Thinkheads.AI web application.",
-            "compose_file_path": "persistent-storage/thinkheads_ai/docker-compose.yml",
+            "compose_file_path": "stacks/thinkheads_ai_app/docker-compose.yml",
             "environments": {
                 "production": {
                     "variables": [

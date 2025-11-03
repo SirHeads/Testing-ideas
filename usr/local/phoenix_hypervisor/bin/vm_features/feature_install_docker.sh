@@ -107,17 +107,62 @@ log_info "Docker Engine installed successfully."
 
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
-INTERNAL_DNS_SERVER="10.0.0.1" # Use the network gateway for DNS
+INTERNAL_DNS_SERVER="10.0.0.1"
+CA_URL="https://10.0.0.10:9000"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/certs/provisioner_password.txt"
+ROOT_CA_CERT_FILE="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
+DOCKER_TLS_DIR="/etc/docker/tls"
+DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
+DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
+DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
 
-log_info "Setting Docker DNS to '$INTERNAL_DNS_SERVER'."
-mkdir -p /etc/docker
-echo "{\"dns\": [\"$INTERNAL_DNS_SERVER\"]}" > /etc/docker/daemon.json
+# Bootstrap Step CLI
+log_info "Waiting for DNS resolution of ca.internal.thinkheads.ai..."
+while ! getent hosts ca.internal.thinkheads.ai > /dev/null; do
+    log_info "DNS not ready yet. Retrying in 5 seconds..."
+    sleep 5
+done
+log_info "DNS resolution successful. Proceeding with Step CLI bootstrap..."
 
-# 6. Enable and Start Docker Service
-log_info "Step 6: Enabling and starting Docker service (systemctl enable docker && systemctl start docker)..."
-if ! systemctl enable docker || ! systemctl start docker; then
-    log_fatal "Failed to enable or start Docker service."
+log_info "Bootstrapping Step CLI to trust the internal CA..."
+if [ ! -f "$ROOT_CA_CERT_FILE" ]; then
+    log_fatal "Root CA certificate not found at $ROOT_CA_CERT_FILE. The 'trusted_ca' feature must run first."
 fi
+/usr/bin/step ca bootstrap --ca-url "$CA_URL" --fingerprint "$(/usr/bin/step certificate fingerprint "$ROOT_CA_CERT_FILE")" --force
+
+# Generate Docker Client Certificate
+log_info "Generating TLS certificate for the Docker daemon..."
+mkdir -p "$DOCKER_TLS_DIR"
+fqdn=$(hostname -f)
+/usr/bin/step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
+cp "/etc/step-ca/certs/root_ca.crt" "$DOCKER_CA_FILE"
+
+# Securely remove the temporary files
+log_info "Securely removing temporary CA files..."
+# No longer need to remove files from /tmp, as we are using the mounted directory
+
+# Configure Docker Daemon for mTLS
+log_info "Configuring Docker daemon for mTLS..."
+mkdir -p /etc/docker
+cat <<EOF > /etc/docker/daemon.json
+{
+  "dns": ["$INTERNAL_DNS_SERVER"],
+  "tls": true,
+  "tlscert": "$DOCKER_CERT_FILE",
+  "tlskey": "$DOCKER_KEY_FILE",
+  "tlscacert": "$DOCKER_CA_FILE",
+  "hosts": ["tcp://0.0.0.0:2376", "unix:///var/run/docker.sock"]
+}
+EOF
+
+ # 6. Correct systemd service file and start Docker
+ log_info "Step 6: Correcting systemd service file and starting Docker..."
+ # Remove the -H fd:// argument to ensure daemon.json is used
+ sed -i 's/ -H fd:\/\///' /usr/lib/systemd/system/docker.service
+ systemctl daemon-reload
+ if ! systemctl enable docker || ! systemctl restart docker; then
+     log_fatal "Failed to enable or restart Docker service."
+ fi
 log_info "Docker service enabled and started successfully."
 
 # 7. Add User to Docker Group
@@ -136,63 +181,7 @@ log_info "User '$USERNAME' added to the docker group successfully."
 # Step 8 is now obsolete as docker-compose-plugin is installed with the main packages.
 log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 
-# Step 9: Trust the Internal Step-CA
-log_info "Step 9: Configuring Docker to trust the internal Step-CA..."
-CA_CERT_SOURCE_PATH="$(dirname "$0")/phoenix_ca.crt"
-CA_CERT_DEST_DIR="/etc/docker/certs.d/ca.internal.thinkheads.ai"
-CA_CERT_DEST_PATH="${CA_CERT_DEST_DIR}/ca.crt"
-
-if [ -f "$CA_CERT_SOURCE_PATH" ]; then
-    log_info "Internal CA certificate found. Installing it for Docker..."
-    mkdir -p "$CA_CERT_DEST_DIR"
-    cp "$CA_CERT_SOURCE_PATH" "$CA_CERT_DEST_PATH"
-    
-    # Also add to system-wide trust store for good measure
-    cp "$CA_CERT_SOURCE_PATH" /usr/local/share/ca-certificates/phoenix_ca.crt
-    update-ca-certificates
-    
-    log_info "Restarting Docker to apply CA certificate..."
-    if ! systemctl restart docker; then
-        log_fatal "Failed to restart Docker after adding CA certificate."
-    fi
-    log_info "Docker restarted successfully."
-else
-    log_warn "Internal CA certificate not found at $CA_CERT_SOURCE_PATH. Docker will not be able to pull images from or communicate with internal services over TLS."
-fi
-
-# Step 10: Generate Portainer Server Certificate
-log_info "Step 10: Generating Portainer server certificate..."
-if ! command -v step &> /dev/null; then
-    log_info "step-cli not found. Installing..."
-    curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg | gpg --dearmor -o /usr/share/keyrings/smallstep-repo-signing-key.gpg
-    echo "deb [signed-by=/usr/share/keyrings/smallstep-repo-signing-key.gpg] https://packages.smallstep.com/stable/debian debs main" > /etc/apt/sources.list.d/smallstep.list
-    apt-get update
-    apt-get install -y step-cli
-fi
-
-log_info "Bootstrapping step-cli with Step-CA..."
-CA_URL="https://ca.internal.thinkheads.ai:9000"
-CA_FINGERPRINT=$(step certificate fingerprint /usr/local/share/ca-certificates/phoenix_ca.crt)
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        log_info "Adding Step CA to /etc/hosts..."
-        echo "10.0.0.10 ca.internal.thinkheads.ai" >> /etc/hosts
-    fi
-step ca bootstrap --ca-url "${CA_URL}" --fingerprint "${CA_FINGERPRINT}"
-
-log_info "Generating certificate for portainer.phoenix.thinkheads.ai..."
-CERT_DIR="/etc/docker/certs.d/portainer"
-mkdir -p "$CERT_DIR"
-PROVISIONER_PASSWORD_FILE="$(dirname "$0")/provisioner_password.txt"
-if [ ! -f "$PROVISIONER_PASSWORD_FILE" ]; then
-    log_fatal "Provisioner password file not found at $PROVISIONER_PASSWORD_FILE. It should have been provisioned by the vm-manager.sh script."
-fi
-
-step ca certificate "portainer.phoenix.thinkheads.ai" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" \
-    --provisioner "admin@thinkheads.ai" \
-    --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" \
-    --force
-
-log_info "Portainer server certificate generated successfully."
-
+# Steps 9, 10, and 11 are now obsolete.
+log_info "Step 9, 10, and 11 are now handled directly by this script for robust mTLS configuration."
 
 log_info "--- Docker Installation Complete ---"

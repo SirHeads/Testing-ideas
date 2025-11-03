@@ -22,113 +22,53 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-CA_URL="https://ca.internal.thinkheads.ai:9000"
-CA_IP="10.0.0.10" # IP of LXC 103 (Step CA)
-CA_FINGERPRINT=""
-MAX_RETRIES=10
-RETRY_DELAY=10
+CA_URL="https://10.0.0.10:9000"
+
+CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+ROOT_CA_CERT="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
+TRAEFIK_CERT_DIR="/etc/traefik/certs"
+TRAEFIK_CERT_FILE="${TRAEFIK_CERT_DIR}/traefik.internal.thinkheads.ai.crt"
+TRAEFIK_KEY_FILE="${TRAEFIK_CERT_DIR}/traefik.internal.thinkheads.ai.key"
 
 # =====================================================================================
-# Function: install_step_cli
-# Description: Installs the Smallstep CLI tool if it's not already present.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if installation fails.
+# Function: wait_for_ca
+# Description: Waits for the Step CA to be ready by checking for a file.
 # =====================================================================================
-install_step_cli() {
-    if ! command -v step &> /dev/null; then
-        log_info "step-cli not found in LXC $CTID. Installing..."
-        log_info "Installing step-cli via Smallstep APT repository..."
-        # Add Smallstep GPG key
-        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || log_fatal "Failed to download Smallstep GPG key."
-        # Add Smallstep APT repository
-        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || log_fatal "Failed to add Smallstep APT repository."
-        # Update package lists and install step-cli
-        apt-get update && apt-get install -y step-cli || log_fatal "Failed to install step-cli from APT repository."
-        hash -r # Clear the command hash table
-        # Re-check if step-cli is now available after installation
-        if ! command -v step &> /dev/null; then
-            log_fatal "Failed to install step-cli in LXC $CTID, or it's not in PATH after installation."
-        fi
-        log_info "step-cli installed successfully in LXC $CTID."
-    else
-        log_info "step-cli is already installed in LXC $CTID."
-    fi
+wait_for_ca() {
+   log_info "Waiting for Step CA to become ready..."
+   while [ ! -f "${CA_READY_FILE}" ]; do
+       log_info "CA not ready yet. Waiting 5 seconds..."
+       sleep 5
+   done
+   log_success "Step CA is ready."
 }
 
 # =====================================================================================
-# Function: bootstrap_step_ca
-# Description: Bootstraps the step-cli with the Step CA's root certificate and fingerprint.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if bootstrapping fails.
+# Function: bootstrap_step_cli
+# Description: Bootstraps the step CLI to trust the internal CA.
 # =====================================================================================
-bootstrap_step_ca() {
-    log_info "Waiting for Step CA (LXC 103 at $CA_IP) to be reachable..."
-    local attempt=1
-    while ! ping -c 1 "$CA_IP" > /dev/null 2>&1 && [ "$attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Attempt $attempt/$MAX_RETRIES: Ping to Step CA ($CA_IP) failed. Retrying in $RETRY_DELAY seconds..."
-        sleep "$RETRY_DELAY"
-        attempt=$((attempt + 1))
-    done
-    if [ "$attempt" -gt "$MAX_RETRIES" ]; then
-        log_fatal "Step CA ($CA_IP) is not reachable after $MAX_RETRIES attempts. Cannot bootstrap step-cli."
-    fi
-    log_info "Step CA ($CA_IP) is reachable."
+bootstrap_step_cli() {
+   log_info "Bootstrapping Step CLI..."
+   # Use the direct IP address for the initial bootstrap to bypass DNS resolution issues.
+   if ! step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
+       log_fatal "Failed to bootstrap Step CLI."
+   fi
+   log_success "Step CLI bootstrapped successfully."
+}
 
-    # Add CA hostname to /etc/hosts for internal resolution
-    log_info "Adding 'ca.internal.thinkheads.ai' to /etc/hosts..."
-    if ! grep -q "ca.internal.thinkheads.ai" /etc/hosts; then
-        echo "${CA_IP} ca.internal.thinkheads.ai" >> /etc/hosts || log_fatal "Failed to add CA entry to /etc/hosts."
-    fi
-    log_info "CA entry added to /etc/hosts."
-
-
-    # Retrieve CA fingerprint from the mounted root certificate
-    local ROOT_CA_CERT_PATH="/ssl/phoenix_ca.crt" # Assuming phoenix_ca.crt is mounted here
-    log_info "Checking for root CA certificate at $ROOT_CA_CERT_PATH..."
-    local cert_attempt=1
-    while [ ! -f "$ROOT_CA_CERT_PATH" ] && [ "$cert_attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Attempt $cert_attempt/$MAX_RETRIES: Root CA certificate not found at $ROOT_CA_CERT_PATH. Retrying in $RETRY_DELAY seconds..."
-        sleep "$RETRY_DELAY"
-        cert_attempt=$((cert_attempt + 1))
-    done
-    if [ ! -f "$ROOT_CA_CERT_PATH" ]; then
-        log_fatal "Root CA certificate not found at $ROOT_CA_CERT_PATH after $MAX_RETRIES attempts. Cannot retrieve fingerprint."
-    fi
-    log_info "Root CA certificate found. Retrieving fingerprint..."
-    CA_FINGERPRINT=$(step certificate fingerprint "$ROOT_CA_CERT_PATH" 2>/dev/null)
-    if [ -z "$CA_FINGERPRINT" ]; then
-        log_fatal "Failed to retrieve fingerprint from $ROOT_CA_CERT_PATH."
-    fi
-    log_info "Retrieved CA Fingerprint: $CA_FINGERPRINT"
-
-    # Add the locally mounted root CA certificate to the trust store
-    log_info "Adding locally mounted root CA certificate to trust store..."
-    if ! STEPDEBUG=1 step certificate install "${ROOT_CA_CERT_PATH}"; then
-        log_fatal "Failed to install locally mounted root CA certificate into trust store."
-    fi
-    log_info "Locally mounted root CA certificate added to trust store successfully."
-
-    # Update the system's CA trust store
-    log_info "Updating system CA trust store..."
-    update-ca-certificates || log_fatal "Failed to update system CA trust store."
-    log_info "System CA trust store updated successfully."
-
-    # Bootstrap the step CLI with the CA's URL and fingerprint
-    log_info "Bootstrapping step CLI with CA information..."
-    log_info "Testing connectivity to Step CA at $CA_URL..."
-    if ! curl -vk --cacert "$ROOT_CA_CERT_PATH" "$CA_URL/health" > /dev/null 2>&1; then
-        log_fatal "Failed to connect to Step CA at $CA_URL. Please check network connectivity and CA service status."
-    fi
-    log_info "Successfully connected to Step CA."
-
-    if ! STEPDEBUG=1 step ca bootstrap --ca-url "$CA_URL" --fingerprint "$CA_FINGERPRINT"; then
-        log_fatal "Failed to bootstrap step CLI with CA information."
-    fi
-    log_info "step CLI bootstrapped successfully."
+# =====================================================================================
+# Function: request_traefik_certificate
+# Description: Requests a TLS certificate for Traefik from the Step CA.
+# =====================================================================================
+request_traefik_certificate() {
+   log_info "Requesting Traefik dashboard certificate..."
+   mkdir -p "${TRAEFIK_CERT_DIR}"
+   
+   if ! step ca certificate traefik.internal.thinkheads.ai "${TRAEFIK_CERT_FILE}" "${TRAEFIK_KEY_FILE}" --provisioner "admin@thinkheads.ai" --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" --force; then
+       log_fatal "Failed to obtain Traefik certificate."
+   fi
+   log_success "Traefik certificate obtained successfully."
 }
 
 # =====================================================================================
@@ -162,38 +102,7 @@ configure_traefik() {
      touch /etc/traefik/acme.json
      chmod 600 /etc/traefik/acme.json
  
-     # Create dynamic configuration for the dashboard
-    cat <<'EOF' > /etc/traefik/dynamic/dashboard.yml
-http:
-  middlewares:
-    https-redirect:
-      redirectScheme:
-        scheme: https
-        permanent: true
-
-  routers:
-    web-redirect:
-      rule: "HostRegexp(`{host:.+}`)"
-      entryPoints:
-        - web
-      middlewares:
-        - https-redirect
-      service: "noop@internal"
-
-    dashboard:
-      rule: "Host(`traefik.internal.thinkheads.ai`)"
-      service: "api@internal"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: myresolver
-
-    dashboard-insecure:
-      rule: "Host(`localhost`) && PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
-      service: "api@internal"
-      entryPoints:
-        - traefik
-EOF
+    # Dynamic configuration is now handled by the sync_all command at the host level.
 
     # Dynamic configuration is now handled by the sync_all command at the host level.
     log_info "Traefik static configuration complete."
@@ -212,14 +121,6 @@ setup_traefik_service() {
 
     if ! systemctl restart traefik; then
         log_fatal "Failed to restart traefik service in container $CTID."
-    fi
-    
-    log_info "Traefik service started. Waiting 5 seconds for initial ACME challenge to complete..."
-    sleep 5
-
-    log_info "Restarting Traefik service to ensure it loads the new ACME certificate..."
-    if ! systemctl restart traefik; then
-        log_warn "Failed to perform the final restart of Traefik. The service might be using a fallback certificate."
     fi
 
     log_info "Traefik service setup complete."
@@ -240,8 +141,9 @@ main() {
 
     log_info "Starting Traefik application script for CTID $CTID."
 
-    install_step_cli
-    bootstrap_step_ca
+    wait_for_ca
+    bootstrap_step_cli
+    request_traefik_certificate
     configure_traefik
     setup_traefik_service
 

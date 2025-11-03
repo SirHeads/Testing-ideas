@@ -1,60 +1,55 @@
 #!/bin/bash
 #
 # File: check_portainer_api.sh
-# Description: This script performs a health check on the Portainer API to ensure it is responsive.
+# Description: This health check script verifies the full network and certificate chain
+#              to the Portainer API endpoint by performing an authenticated API call.
 #
-# Inputs:
-#   None. It reads all necessary configuration from the central phoenix_hypervisor_config.json.
-#
-# Version: 1.1.0
-# Author: Phoenix Hypervisor Team
-#
+# Version: 2.0.0
+# Author: Roo
 
-# --- Determine script's absolute directory ---
-SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+# --- SCRIPT INITIALIZATION ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
+source "$PHOENIX_BASE_DIR/bin/phoenix_hypervisor_common_utils.sh"
+# Source the portainer-manager to get access to the get_portainer_jwt function
+source "$PHOENIX_BASE_DIR/bin/managers/portainer-manager.sh"
 
-# --- Source common utilities ---
-source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
+# --- MAIN LOGIC ---
+main() {
+    log_info "--- Starting Portainer API Health Check (Authenticated) ---"
 
-# --- Script Variables ---
-HOSTNAME=$(get_global_config_value '.portainer_api.portainer_hostname')
-PORT="443" # Always check against the public-facing Nginx proxy port
-CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
-MAX_RETRIES=12
-RETRY_DELAY=10
+    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
+    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}:443"
+    local CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
 
-# --- Main Health Check Logic ---
-log_info "Performing health check on Portainer API at https://${HOSTNAME}:${PORT}..."
-
-# Wait for the CA certificate to exist
-log_info "Waiting for CA certificate to become available at ${CA_CERT_PATH}..."
-for ((i=1; i<=MAX_RETRIES; i++)); do
-    if [ -f "$CA_CERT_PATH" ]; then
-        log_info "CA certificate found."
-        break
+    # 1. Check if the CA certificate exists
+    if [ ! -f "$CA_CERT_PATH" ]; then
+        log_error "Health check failed: Root CA certificate not found at $CA_CERT_PATH."
+        return 1
     fi
-    log_warn "Attempt ${i}/${MAX_RETRIES}: CA certificate not found. Retrying in ${RETRY_DELAY} seconds..."
-    sleep "$RETRY_DELAY"
-done
 
-if [ ! -f "$CA_CERT_PATH" ]; then
-    log_fatal "CA certificate not found at ${CA_CERT_PATH} after ${MAX_RETRIES} attempts."
-fi
-
-for ((i=1; i<=MAX_RETRIES; i++)); do
-    log_info "Attempt ${i}/${MAX_RETRIES}: Checking Portainer API status..."
-    response=$(curl -s --cacert "$CA_CERT_PATH" "https://${HOSTNAME}:${PORT}/api/status" 2>&1)
-    exit_code=$?
-
-    if [ $exit_code -eq 0 ] && echo "$response" | jq -e '.Version' > /dev/null; then
-        log_success "Portainer API is responsive (found version field)."
-        exit 0
-    else
-        log_warn "Portainer API is not yet responsive. Curl exit code: $exit_code, Response: $response"
-        log_warn "Retrying in ${RETRY_DELAY} seconds..."
-        sleep "$RETRY_DELAY"
+    # 2. Attempt to get a JWT
+    log_info "Attempting to authenticate with Portainer to verify API health..."
+    local JWT
+    JWT=$(get_portainer_jwt)
+    if [ -z "$JWT" ]; then
+        log_error "Health check failed: Could not obtain Portainer JWT."
+        return 1
     fi
-done
+    log_success "Successfully obtained Portainer JWT."
 
-log_fatal "Portainer API health check failed after ${MAX_RETRIES} attempts."
+    # 3. Perform an authenticated API call
+    log_info "Performing authenticated API call to /api/endpoints..."
+    if ! curl -s --fail --cacert "$CA_CERT_PATH" \
+              --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.12" \
+              -H "Authorization: Bearer ${JWT}" \
+              "${PORTAINER_URL}/api/endpoints" > /dev/null; then
+        log_error "Health check failed: Authenticated API call to /api/endpoints failed."
+        return 1
+    fi
+
+    log_success "Portainer API is healthy and responding to authenticated requests."
+    return 0
+}
+
+main "$@"

@@ -32,26 +32,6 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
 source "${SCRIPT_DIR}/../phoenix_hypervisor_common_utils.sh"
 
 # --- Main Logic ---
-generate_rule_string() {
-    local rule_json="$1"
-    local type=$(echo "$rule_json" | jq -r '.type // ""')
-    local action=$(echo "$rule_json" | jq -r '.action // ""')
-    local proto=$(echo "$rule_json" | jq -r '.proto // ""')
-    local source=$(echo "$rule_json" | jq -r '.source // ""')
-    local dest=$(echo "$rule_json" | jq -r '.dest // ""')
-    local port=$(echo "$rule_json" | jq -r '.port // ""')
-    local comment=$(echo "$rule_json" | jq -r '.comment // ""')
-
-    local rule_string="${type^^} ${action}"
-    [ -n "$proto" ] && rule_string+=" -p ${proto}"
-    [ -n "$source" ] && rule_string+=" -source ${source}"
-    [ -n "$dest" ] && rule_string+=" -dest ${dest}"
-    [ -n "$port" ] && rule_string+=" -dport ${port}"
-    [ -n "$comment" ] && rule_string+=" # ${comment}"
-    
-    echo "$rule_string"
-}
-
 main() {
     local HYPERVISOR_CONFIG_FILE="$1"
     log_info "Configuring global firewall settings..."
@@ -103,54 +83,16 @@ EOF
 
     # 2. Add rules from LXC configs
     log_info "Aggregating LXC firewall rules..."
-    jq -c '.lxc_configs[].firewall.rules[]?' "$LXC_CONFIG_FILE" | while read -r rule; do
+    jq -c '.lxc_configs[] | select(.firewall.rules?) | .firewall.rules[]' "$LXC_CONFIG_FILE" | while read -r rule; do
         generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
     done
 
     # 3. Add rules from VM configs
     log_info "Aggregating VM firewall rules..."
-    jq -c '.vms[].firewall.rules[]?' "$VM_CONFIG_FILE" | while read -r rule; do
+    jq -c '.vms[] | select(.firewall.rules?) | .firewall.rules[]' "$VM_CONFIG_FILE" | while read -r rule; do
         generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
     done
 
-    # 4. Add rules from Docker Compose files via VM assignments
-    log_info "Aggregating Docker stack firewall rules..."
-    jq -c '.vms[] | select(.docker_stacks)?' "$VM_CONFIG_FILE" | while read -r vm; do
-        local vm_ip=$(echo "$vm" | jq -r '.network_config.ip' | cut -d'/' -f1)
-        echo "$vm" | jq -c '.docker_stacks[]?' | while read -r stack_ref; do
-            local stack_name=$(echo "$stack_ref" | jq -r '.name')
-            local compose_path=$(jq -r ".docker_stacks.\"$stack_name\".compose_file_path" "$STACKS_CONFIG_FILE")
-            local stack_env=$(echo "$stack_ref" | jq -r '.environment')
-            
-            if [ -f "${PHOENIX_BASE_DIR}/${compose_path}" ]; then
-                # Read the compose file content
-                local compose_content=$(cat "${PHOENIX_BASE_DIR}/${compose_path}")
-
-                # Find all variables like ${VAR_NAME} in the compose file
-                local vars_to_replace=$(echo "$compose_content" | grep -oP '\$\{\K[^}]+')
-
-                # Replace each variable with its value from the stacks config
-                for var in $vars_to_replace; do
-                    local var_value=$(jq -r ".docker_stacks.\"$stack_name\".environments.\"$stack_env\".variables[] | select(.name == \"$var\") | .value" "$STACKS_CONFIG_FILE")
-                    if [ -n "$var_value" ]; then
-                        compose_content=$(echo "$compose_content" | sed "s|\${${var}}|${var_value}|g")
-                    fi
-                done
-
-                # Use yq to parse the resolved docker-compose content for ports
-                echo "$compose_content" | yq -r '.services | to_entries[] | .value.ports[]?' | while read -r port_mapping; do
-                    local host_port=$(echo "$port_mapping" | cut -d':' -f1)
-                    local rule=$(jq -n \
-                        --arg dest "$vm_ip" \
-                        --arg port "$host_port" \
-                        '{type: "in", action: "ACCEPT", proto: "tcp", source: "10.0.0.12", dest: $dest, port: $port, comment: "Allow Traefik to access Docker stack '\'$stack_name\''"}')
-                    generate_rule_string "$rule" >> "$TMP_FW_CONFIG"
-                done
-            else
-                log_warn "Compose file not found for stack '$stack_name': ${PHOENIX_BASE_DIR}/${compose_path}"
-            fi
-        done
-    done
 
     # Replace the existing firewall configuration with the new one
     log_info "Applying new firewall configuration from temporary file..."

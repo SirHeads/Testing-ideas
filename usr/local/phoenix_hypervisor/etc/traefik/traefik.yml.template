@@ -10,12 +10,17 @@ ping:
 
 api:
   dashboard: true
+  insecure: true # Required for dashboard access via internal network
+
+http:
+  routers:
+    dashboard:
+      rule: "Host(`traefik.internal.thinkheads.ai`)"
+      service: "api@internal"
 
 entryPoints:
   web:
     address: ":80"
-  websecure:
-    address: ":443"
   traefik:
     address: ":8080"
 
@@ -24,12 +29,3 @@ providers:
     directory: /etc/traefik/dynamic
     filename: dynamic_conf.yml
     watch: true
-
-certificatesResolvers:
-  myresolver:
-    acme:
-      email: admin@thinkheads.ai
-      storage: /etc/traefik/acme.json
-      caServer: __CA_URL__/acme/acme/directory
-      keyType: EC384
-      tlsChallenge: {}

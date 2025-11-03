@@ -65,6 +65,26 @@
                                                     "destination_in_container"
                                                 ]
                                             }
+                                        },
+                                        "services": {
+                                            "type": "object",
+                                            "description": "Per-service configurations, such as Traefik labels.",
+                                            "patternProperties": {
+                                                "^[a-zA-Z0-9_-]+$": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "traefik_labels": {
+                                                            "type": "array",
+                                                            "description": "A list of Traefik labels for service discovery.",
+                                                            "items": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    "additionalProperties": false
+                                                }
+                                            },
+                                            "additionalProperties": false
                                         }
                                     },
                                     "additionalProperties": false

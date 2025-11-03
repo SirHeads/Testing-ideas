@@ -154,6 +154,13 @@ setup_hypervisor() {
     local config_file="$1"
     log_info "Starting hypervisor setup with config file: $config_file"
 
+    # --- DNS Resilience: Restore original resolv.conf if a backup exists ---
+    local resolv_conf_backup="/etc/resolv.conf.phoenix.bak"
+    if [ -f "$resolv_conf_backup" ]; then
+        log_info "Restoring original /etc/resolv.conf from backup..."
+        cp "$resolv_conf_backup" /etc/resolv.conf
+    fi
+
     # Validate that the configuration file exists and is readable.
     if [ -z "$config_file" ] || [ ! -f "$config_file" ]; then
         log_fatal "Hypervisor setup requires a valid configuration file."
@@ -182,6 +189,7 @@ setup_hypervisor() {
         "hypervisor_feature_provision_shared_resources.sh"
         "hypervisor_feature_setup_apparmor.sh"
         "hypervisor_feature_fix_apparmor_tunables.sh"
+        "hypervisor_feature_setup_auto_renewal.sh"
     )
 
 

@@ -2,11 +2,11 @@
 #
 # File: generate_traefik_config.sh
 # Description: This script dynamically generates the Traefik dynamic configuration file
-#              by reading the LXC and VM configuration files. It discovers all services
-#              that need to be exposed via Traefik and creates the necessary routers
+#              for a pure HTTP service mesh. It discovers all services from the LXC
+#              and VM configuration files and creates the necessary plain HTTP routers
 #              and services.
 #
-# Version: 2.0.0
+# Version: 4.0.0 (HTTP-Only Service Mesh)
 # Author: Roo
 
 # --- SCRIPT INITIALIZATION ---
@@ -17,25 +17,18 @@ source "$SCRIPT_DIR/phoenix_hypervisor_common_utils.sh"
 # --- CONFIGURATION ---
 LXC_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json"
 VM_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_vm_configs.json"
-HYPERVISOR_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_hypervisor_config.json"
 OUTPUT_FILE="${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml"
 INTERNAL_DOMAIN_NAME="internal.thinkheads.ai"
-EXTERNAL_DOMAIN_NAME=$(get_global_config_value '.domain_name')
 
 # --- MAIN LOGIC ---
 main() {
-    log_info "--- Starting Traefik Dynamic Configuration Generation ---"
+    log_info "--- Starting Traefik Dynamic Configuration Generation (v4 - HTTP-Only) ---"
 
     # --- AGGREGATE ALL GUESTS THAT NEED A TRAEFIK ROUTE ---
-    # This query is designed to be resilient. It safely checks for the existence of
-    # traefik_service definitions in both LXC and VM configs. If a guest doesn't
-    # have the definition, it's simply skipped, preventing errors when the system
-    # is in a partially created state.
     local traefik_services_json=$(jq -n \
         --slurpfile vms "$VM_CONFIG_FILE" \
         --slurpfile lxcs "$LXC_CONFIG_FILE" \
         --arg internal_domain "$INTERNAL_DOMAIN_NAME" \
-        --arg external_domain "$EXTERNAL_DOMAIN_NAME" \
         '
         [
             # Process VMs
@@ -44,10 +37,8 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
-                    "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)",
-                    "transport": ($service_def.name + "-transport"),
-                    "serverName": "\($service_def.name).\($internal_domain)"
+                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
+                    "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)"
                 }
             ),
             # Process LXCs
@@ -56,10 +47,17 @@ main() {
                 .traefik_service as $service_def |
                 {
                     "name": $service_def.name,
-                    "rule": "Host(`\($service_def.name).\($external_domain)`)",
+                    "rule": "Host(`\($service_def.name).\($internal_domain)`)",
                     "url": "http://\($lxc_config.network_config.ip | split("/")[0]):\($service_def.port)"
                 }
-            )
+            ),
+            # Add the Traefik dashboard itself
+            {
+                "name": "traefik-dashboard",
+                "rule": "Host(`traefik.\($internal_domain)`)",
+                "url": "http://127.0.0.1:8080",
+                "is_api": true
+            }
         ]
         '
     )
@@ -74,36 +72,33 @@ main() {
             .[] |
             "    \(.name)-router:\n" +
             "      rule: \"\(.rule)\"\n" +
-            "      service: \"\(.name)-service\"\n" +
+            "      service: \"\(if .is_api then "api@internal" else "\(.name)-service" end)\"\n" +
             "      entryPoints:\n" +
-            "        - websecure\n" +
-            "      tls:\n" +
-            "        certResolver: myresolver"
+            "        - web"
         '
-
+        
         echo ""
         echo "  services:"
         echo "$traefik_services_json" | jq -r '
-            .[] |
+            .[] | select(.is_api | not) |
             "    \(.name)-service:\n" +
             "      loadBalancer:\n" +
             "        servers:\n" +
             "          - url: \"\(.url)\"\n" +
-            (if .transport then "        serversTransport: \"\(.transport)\"\n" else "" end) +
-            "        passHostHeader: true"
-        '
-
-        echo ""
-        echo "  serversTransports:"
-        echo "$traefik_services_json" | jq -r '
-            .[] | select(.transport) |
-            "    \(.transport):\n" +
-            "      insecureSkipVerify: true\n" +
-            "      serverName: \"\(.serverName)\"\n" +
-            "      rootCAs:\n" +
-            "        - \"/ssl/phoenix_ca.crt\""
+            "        passHostHeader: true" +
+            (if (.url | startswith("https")) then "\n        serversTransport: \"internal-ca@file\"" else "" end)
         '
     } > "$OUTPUT_FILE"
+
+    # --- APPEND SERVERS TRANSPORT FOR INTERNAL CA ---
+    cat >> "$OUTPUT_FILE" <<EOF
+
+  serversTransports:
+    internal-ca:
+      insecureSkipVerify: false
+      rootCAs:
+        - /etc/step-ca/ssl/phoenix_root_ca.crt
+EOF
 
     log_success "Traefik dynamic configuration generated successfully at ${OUTPUT_FILE}"
     

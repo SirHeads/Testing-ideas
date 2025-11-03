@@ -136,10 +136,17 @@ configure_nodesource_repository() {
 update_and_upgrade_system() {
     log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
     echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
+    log_info "Verifying external connectivity..."
+    if ! ping -c 3 google.com; then
+        log_fatal "Failed to verify external connectivity. Please check the hypervisor's network settings and firewall."
+    fi
+
+    log_info "Forcing APT to use IPv4 for reliable package updates..."
+    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
     
     log_info "Updating and upgrading system (this may take a while)..."
     retry_command "apt-get update" || log_fatal "Failed to update package lists"
-    
     # Ensure jq is installed, as it's a critical dependency for the rest of the orchestration.
     if ! command -v jq &> /dev/null; then
         log_info "jq is not installed. Installing..."
@@ -159,8 +166,17 @@ update_and_upgrade_system() {
 #              and are dependencies for other features.
 # =====================================================================================
 install_core_utilities() {
-    log_info "Installing core utilities (s-tui, samba)..."
-    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools" || log_fatal "Failed to install core utilities"
+    log_info "Installing core utilities (s-tui, samba, yq, step-cli)..."
+    if ! command -v step &> /dev/null; then
+        log_info "step-cli not found. Installing..."
+        curl -fsSL https://packages.smallstep.com/keys/apt/repo-signing-key.gpg -o /etc/apt/trusted.gpg.d/smallstep.asc || log_fatal "Failed to download Smallstep GPG key."
+        echo 'deb [signed-by=/etc/apt/trusted.gpg.d/smallstep.asc] https://packages.smallstep.com/stable/debian debs main' | tee /etc/apt/sources.list.d/smallstep.list > /dev/null || log_fatal "Failed to add Smallstep APT repository."
+        retry_command "apt-get update" || log_fatal "Failed to update package lists for step-cli installation."
+        retry_command "apt-get install -y step-cli" || log_fatal "Failed to install step-cli."
+    else
+        log_info "step-cli is already installed."
+    fi
+    retry_command "apt-get install -y s-tui samba samba-common-bin smbclient libguestfs-tools yq" || log_fatal "Failed to install core utilities"
     log_info "Installed core utilities."
 }
 

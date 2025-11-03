@@ -33,75 +33,6 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 ca_password_file_on_host=""
 
 # =====================================================================================
-# Function: manage_ca_password_on_hypervisor
-# Description: Ensures a persistent CA password file exists on the hypervisor for CTID 103.
-#              If the file does not exist, a new strong password is generated and stored
-#              in a temporary location.
-# Arguments:
-#   $1 - The CTID of the container (expected to be 103).
-# Returns:
-#   The path to the temporary password file on the hypervisor. Exits with a fatal error
-#   if file operations fail.
-# =====================================================================================
-manage_ca_password_on_hypervisor() {
-    local CTID="$1"
-    log_info "Managing CA password for CTID $CTID on hypervisor..."
-
-    local final_ca_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
-    local final_ca_password_file="${final_ca_password_dir}/ca_password.txt"
-    ca_password_file_on_host="$final_ca_password_file" # Set global variable to the final path
-
-    log_debug "Final CA password file path: $final_ca_password_file"
-
-    # Ensure the destination directory exists on the hypervisor
-    mkdir -p "$final_ca_password_dir" || log_fatal "Failed to create destination directory for CA password: $final_ca_password_dir."
-
-    if [ -s "$final_ca_password_file" ]; then
-        log_info "CA password file already exists and is not empty at $final_ca_password_file. No action needed."
-    else
-        log_info "CA password file not found or is empty. Generating a new password..."
-        log_info "CA password file not found. Creating it with the specified password..."
-        echo "NewKick@$$2025" > "$final_ca_password_file" || log_fatal "Failed to write new CA password to $final_ca_password_file."
-        log_debug "Generated and wrote new password to $final_ca_password_file."
-
-        # Set permissions for the final file
-        chmod 644 "$final_ca_password_file" || log_fatal "Failed to set permissions for CA password file on hypervisor."
-        log_debug "Set permissions of $final_ca_password_file to 644."
-        log_success "New CA password generated and stored at $final_ca_password_file."
-    fi
-    echo "$final_ca_password_file" # Return the path to the final file
-}
-
-# =====================================================================================
-# Function: manage_provisioner_password_on_hypervisor
-# Description: Ensures a persistent provisioner password file exists on the hypervisor for CTID 103.
-#              If the file does not exist, a new strong password is generated and stored.
-# Arguments:
-#   $1 - The CTID of the container (expected to be 103).
-# Returns:
-#   The path to the provisioner password file on the hypervisor.
-# =====================================================================================
-manage_provisioner_password_on_hypervisor() {
-    local CTID="$1"
-    log_info "Managing provisioner password for CTID $CTID on hypervisor..."
-
-    local provisioner_password_dir="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
-    local provisioner_password_file="${provisioner_password_dir}/provisioner_password.txt"
-
-    mkdir -p "$provisioner_password_dir" || log_fatal "Failed to create destination directory for provisioner password: $provisioner_password_dir."
-
-    if [ -s "$provisioner_password_file" ]; then
-        log_info "Provisioner password file already exists and is not empty at $provisioner_password_file. No action needed."
-    else
-        log_info "Provisioner password file not found or is empty. Generating a new password..."
-        echo "NewProvisioner@$$2025" > "$provisioner_password_file" || log_fatal "Failed to write new provisioner password to $provisioner_password_file."
-        chmod 644 "$provisioner_password_file" || log_fatal "Failed to set permissions for provisioner password file on hypervisor."
-        log_success "New provisioner password generated and stored at $provisioner_password_file."
-    fi
-    echo "$provisioner_password_file"
-}
-
-# =====================================================================================
 # Function: validate_inputs
 # Description: Validates the essential inputs required for the script to operate, such as the
 #              presence of the LXC configuration file and the validity of the provided CTID.
@@ -353,9 +284,11 @@ apply_lxc_configurations() {
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
-    # Force nameserver to be the host, ensuring all guests use the centralized DNS
-    local nameservers="10.0.0.13"
-    run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    # Read nameserver from the config file
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+    if [ -n "$nameservers" ]; then
+        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    fi
  
     # --- Apply AppArmor Profile ---
     # This function handles the application of the AppArmor profile, which is a critical security feature.
@@ -438,6 +371,7 @@ apply_lxc_configurations() {
 
     log_info "Configurations applied successfully for CTID $CTID."
 }
+
 
 # =====================================================================================
 # Function: apply_lxc_firewall_rules
@@ -587,7 +521,7 @@ apply_zfs_volumes() {
     log_info "Applying ZFS volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_array "$CTID" ".zfs_volumes[]" || echo "")
+    volumes=$(jq_get_array "$CTID" "(.zfs_volumes // [])[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No ZFS volumes to apply for CTID $CTID."
         return 0
@@ -618,6 +552,34 @@ apply_zfs_volumes() {
 }
 
 # =====================================================================================
+# Function: apply_secure_permissions
+# Description: Applies secure permissions to the dedicated SSL volumes for containers
+#              that require them.
+# Arguments:
+#   $1 - The CTID of the container.
+# Returns:
+#   None.
+# =====================================================================================
+apply_secure_permissions() {
+    local CTID="$1"
+    log_info "Applying secure permissions for CTID: $CTID..."
+
+    case "$CTID" in
+        101|102|103)
+            local ssl_volume_path="/mnt/pve/quickOS/lxc-persistent-data/${CTID}/ssl"
+            if [ -d "$ssl_volume_path" ]; then
+                log_info "Setting secure permissions for SSL volume at $ssl_volume_path..."
+                chown -R root:root "$ssl_volume_path" || log_warn "Failed to set ownership on SSL volume for CTID ${CTID}."
+                chmod -R 700 "$ssl_volume_path" || log_warn "Failed to set permissions on SSL volume for CTID ${CTID}."
+            fi
+            ;;
+        *)
+            log_info "No secure permissions to apply for CTID $CTID."
+            ;;
+    esac
+}
+
+# =====================================================================================
 # Function: apply_dedicated_volumes
 # Description: Creates and attaches dedicated storage volumes to a container. This is similar
 #              to `apply_zfs_volumes` but is intended for more general-purpose storage.
@@ -633,7 +595,7 @@ apply_dedicated_volumes() {
     log_info "Applying dedicated volumes for CTID: $CTID..."
 
     local volumes
-    volumes=$(jq_get_array "$CTID" ".volumes[]" || echo "")
+    volumes=$(jq_get_array "$CTID" "(.volumes // [])[]" || echo "")
     if [ -z "$volumes" ]; then
         log_info "No dedicated volumes to apply for CTID $CTID."
         return 0
@@ -668,7 +630,7 @@ apply_mount_points() {
     log_info "Applying host path mount points for CTID: $CTID..."
 
     local mounts
-    mounts=$(jq_get_array "$CTID" ".mount_points[]" || echo "")
+    mounts=$(jq_get_array "$CTID" "(.mount_points // [])[]" || echo "")
     # Find the next available mount point index
     local volume_index=0
     while pct config "$CTID" | grep -q "mp${volume_index}:"; do
@@ -688,13 +650,38 @@ apply_mount_points() {
                 # --- BEGIN DIAGNOSTIC LOGGING ---
                 log_debug "Checking if host path '$host_path' exists."
                 if [ ! -e "$host_path" ]; then
-                    log_error "Host path '$host_path' does not exist. This will cause the container to fail on startup."
-                    # Optionally, you could make this a fatal error to stop the process immediately
-                    # log_fatal "Host path '$host_path' does not exist."
+                    # Check if the path looks like a file
+                    if [[ "$host_path" == *.* ]]; then
+                        # It's a file, so ensure the parent directory exists
+                        local parent_dir=$(dirname "$host_path")
+                        if [ ! -d "$parent_dir" ]; then
+                            log_warn "Parent directory '$parent_dir' for file mount does not exist. Creating it now."
+                            if ! mkdir -p "$parent_dir"; then
+                                log_fatal "Failed to create parent directory '$parent_dir'."
+                            fi
+                            log_success "Parent directory '$parent_dir' created successfully."
+                        fi
+                    else
+                        # It's a directory, create it
+                        log_warn "Host path '$host_path' does not exist. Creating it now."
+                        if ! mkdir -p "$host_path"; then
+                            log_fatal "Failed to create host path directory '$host_path'."
+                        fi
+                        log_success "Host path '$host_path' created successfully."
+                    fi
                 else
                     log_debug "Host path '$host_path' found."
                 fi
                 # --- END DIAGNOSTIC LOGGING ---
+
+                # NEW: Special handling for Nginx log directory permissions
+                if [[ "$host_path" == *"/101/logs" ]]; then
+                    log_info "Setting ownership of Nginx log directory on host..."
+                    if ! chown -R 33:33 "$host_path"; then
+                        log_fatal "Failed to set ownership of Nginx log directory '$host_path'."
+                    fi
+                    log_success "Ownership of Nginx log directory set to 33:33."
+                fi
 
                 log_info "Applying mount: ${host_path} -> ${container_path}"
                 run_pct_command set "$CTID" --"${mount_id}" "$mount_string" || log_fatal "Failed to apply mount."
@@ -709,7 +696,38 @@ apply_mount_points() {
         log_info "No host path mount points to apply for CTID $CTID."
     fi
 
+}
 
+# =====================================================================================
+# Function: apply_host_path_permissions
+# Description: Sets the correct ownership on host-side directories for bind mounts.
+# =====================================================================================
+apply_host_path_permissions() {
+    local CTID="$1"
+    log_info "Applying host path permissions for CTID: $CTID..."
+
+    local mounts
+    mounts=$(jq_get_array "$CTID" "(.mount_points // [])[]" || echo "")
+    if [ -z "$mounts" ]; then
+        log_info "No host path mount points to set permissions for CTID $CTID."
+        return 0
+    fi
+
+    for mount_config in $(echo "$mounts" | jq -c '.'); do
+        local host_path=$(echo "$mount_config" | jq -r '.host_path')
+        local owner_uid=$(echo "$mount_config" | jq -r '.owner_uid // ""')
+        local owner_gid=$(echo "$mount_config" | jq -r '.owner_gid // ""')
+
+        if [ -n "$owner_uid" ] && [ -n "$owner_gid" ]; then
+            local host_uid=$((100000 + owner_uid))
+            local host_gid=$((100000 + owner_gid))
+            log_info "Setting ownership of '$host_path' to $host_uid:$host_gid..."
+            if ! chown -R "$host_uid:$host_gid" "$host_path"; then
+                log_fatal "Failed to set ownership of '$host_path'."
+            fi
+            log_success "Ownership of '$host_path' set successfully."
+        fi
+    done
 }
 
 # =====================================================================================
@@ -815,7 +833,8 @@ apply_features() {
             log_fatal "Feature script not found at $feature_script_path."
         fi
 
-        if ! (set +e; "$feature_script_path" "$CTID"); then
+        local bootstrap_ca_url=$(jq_get_value "$CTID" ".bootstrap_ca_url" || echo "")
+        if ! (set +e; "$feature_script_path" "$CTID" "$bootstrap_ca_url"); then
             log_error "Feature script '$feature' failed for CTID $CTID."
             return 1
         fi
@@ -859,6 +878,32 @@ run_portainer_script() {
     fi
 
     log_info "Portainer feature script applied successfully for CTID $CTID."
+}
+
+# =====================================================================================
+# Function: gather_and_push_certificates
+# Description: Gathers necessary TLS certificates from various locations on the host
+#              and pushes them into the container's temporary execution directory.
+# Arguments:
+#   $1 - The CTID of the container.
+#   $2 - The path to the temporary directory inside the container.
+# =====================================================================================
+gather_and_push_certificates() {
+    local CTID="$1"
+    local temp_dir_in_container="$2"
+
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Gathering and pushing certificates for NGINX container..."
+        local nginx_cert_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt"
+        local nginx_key_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key"
+        local portainer_cert_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt"
+        local portainer_key_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key"
+
+        pct push "$CTID" "$nginx_cert_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.crt" || log_fatal "Failed to copy NGINX cert"
+        pct push "$CTID" "$nginx_key_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.key" || log_fatal "Failed to copy NGINX key"
+        pct push "$CTID" "$portainer_cert_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.crt" || log_fatal "Failed to copy Portainer cert"
+        pct push "$CTID" "$portainer_key_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.key" || log_fatal "Failed to copy Portainer key"
+    fi
 }
 
 # =====================================================================================
@@ -959,41 +1004,54 @@ run_application_script() {
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_101.sh" ]]; then
             # --- BEGIN PUSH ROOT CA TO NGINX CONTAINER ---
             log_info "Pushing Root CA certificate to Nginx container (CTID 101)..."
-            local temp_root_ca_on_host="/tmp/root_ca_for_101.crt"
-            local root_ca_in_103="/root/.step/certs/root_ca.crt"
+            local root_ca_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
             local root_ca_dest_in_101="/tmp/root_ca.crt"
 
-            if ! pct pull 103 "$root_ca_in_103" "$temp_root_ca_on_host"; then
-                log_fatal "Failed to pull Root CA from CTID 103 to host."
-            fi
-
-            if ! pct push 101 "$temp_root_ca_on_host" "$root_ca_dest_in_101"; then
+            if ! pct push 101 "$root_ca_on_host" "$root_ca_dest_in_101"; then
                 log_fatal "Failed to push Root CA from host to CTID 101."
             fi
-            rm "$temp_root_ca_on_host"
             log_info "Root CA successfully pushed to CTID 101."
             # --- END PUSH ROOT CA TO NGINX CONTAINER ---
 
             local nginx_config_path="${PHOENIX_BASE_DIR}/etc/nginx"
             local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
 
-            # Create a tarball of the nginx configs on the host
-            log_info "Creating tarball of Nginx configs at ${temp_tarball}"
-            if ! tar -czf "${temp_tarball}" -C "${nginx_config_path}" \
-                sites-available/gateway \
-                scripts \
-                snippets \
-                nginx.conf; then
-                log_fatal "Failed to create Nginx config tarball."
+            # --- REMEDIATION: Generate dynamic config on the host before packaging ---
+            log_info "Generating dynamic Nginx gateway configuration on the host..."
+            local nginx_generator_script="${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"
+            if [ ! -f "$nginx_generator_script" ]; then
+                log_fatal "Nginx config generator script not found at $nginx_generator_script."
             fi
+            if ! "$nginx_generator_script"; then
+                log_fatal "Failed to generate dynamic Nginx configuration on the host."
+            fi
+            log_info "Dynamic Nginx configuration generated successfully."
+            # --- END REMEDIATION ---
 
-            # Push the single tarball to the container
-            if ! pct push "$CTID" "$temp_tarball" "${temp_dir_in_container}/nginx_configs.tar.gz"; then
-                log_fatal "Failed to push Nginx config tarball to container $CTID."
-            fi
+            # --- NEW LOGIC: Push individual Nginx config files ---
+            log_info "Pushing individual Nginx configuration files to container..."
             
-            # Clean up the temporary tarball on the host
-            rm -f "$temp_tarball"
+            # Define source paths on the host
+            local nginx_conf_src="${nginx_config_path}/nginx.conf"
+            local gateway_conf_src="${nginx_config_path}/sites-available/gateway"
+            local stream_conf_src="${nginx_config_path}/stream.d/stream-gateway.conf"
+
+            # Define destination paths in the container
+            local nginx_conf_dest="${temp_dir_in_container}/nginx.conf"
+            local gateway_conf_dest="${temp_dir_in_container}/sites-available/gateway"
+            local stream_conf_dest="${temp_dir_in_container}/stream.d/stream-gateway.conf"
+
+            # Create necessary subdirectories in the container's temp directory
+            pct exec "$CTID" -- mkdir -p "${temp_dir_in_container}/sites-available"
+            pct exec "$CTID" -- mkdir -p "${temp_dir_in_container}/stream.d"
+
+            # Push the files
+            pct push "$CTID" "$nginx_conf_src" "$nginx_conf_dest" || log_fatal "Failed to push nginx.conf"
+            pct push "$CTID" "$gateway_conf_src" "$gateway_conf_dest" || log_fatal "Failed to push gateway config"
+            pct push "$CTID" "$stream_conf_src" "$stream_conf_dest" || log_fatal "Failed to push stream gateway config"
+            
+            log_info "All Nginx configuration files pushed successfully."
+            # --- END NEW LOGIC ---
         fi
 
         if [[ "$app_script_name" == "phoenix_hypervisor_lxc_102.sh" ]]; then
@@ -1037,6 +1095,20 @@ run_application_script() {
     log_info "Copying hypervisor config to $CTID:$hypervisor_config_dest_path..."
     if ! pct push "$CTID" "$hypervisor_config_file" "$hypervisor_config_dest_path"; then
         log_fatal "Failed to copy hypervisor config file to container $CTID."
+    fi
+
+    # --- Copy Certificates ---
+    if [ "$CTID" -eq 101 ]; then
+        log_info "Copying certificates to NGINX container..."
+        local nginx_cert_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt"
+        local nginx_key_path="/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key"
+        local portainer_cert_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt"
+        local portainer_key_path="/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key"
+
+        pct push "$CTID" "$nginx_cert_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.crt" || log_fatal "Failed to copy NGINX cert"
+        pct push "$CTID" "$nginx_key_path" "${temp_dir_in_container}/nginx.internal.thinkheads.ai.key" || log_fatal "Failed to copy NGINX key"
+        pct push "$CTID" "$portainer_cert_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.crt" || log_fatal "Failed to copy Portainer cert"
+        pct push "$CTID" "$portainer_key_path" "${temp_dir_in_container}/portainer.internal.thinkheads.ai.key" || log_fatal "Failed to copy Portainer key"
     fi
 
     # 4. Make the application script executable
@@ -1087,35 +1159,28 @@ run_health_check() {
         fi
     fi
 
-    # --- Generic Health Check ---
-    local health_check_command=$(jq_get_value "$CTID" ".health_check.command" || echo "")
+    # --- Declarative Health Checks ---
+    local health_checks_json
+    health_checks_json=$(jq_get_value "$CTID" ".health_checks" || echo "")
 
-    if [ -z "$health_check_command" ]; then
-        log_info "No generic health check to run for CTID $CTID."
+    if [ -z "$health_checks_json" ] || [ "$health_checks_json" == "null" ] || [ "$health_checks_json" == "[]" ]; then
+        log_info "No declarative health checks to run for CTID $CTID."
         return 0
     fi
 
-    log_info "Executing generic health check command inside container: $health_check_command"
-    local attempts=0
-    local max_attempts=$(jq_get_value "$CTID" ".health_check.retries" || echo "3")
-    local interval=$(jq_get_value "$CTID" ".health_check.interval" || echo "5")
+    echo "$health_checks_json" | jq -c '.[]' | while read -r check_config; do
+        local check_name=$(echo "$check_config" | jq -r '.name')
+        local check_script=$(echo "$check_config" | jq -r '.script')
+        local check_args=$(echo "$check_config" | jq -r '.args // ""')
+        local health_check_command="${PHOENIX_BASE_DIR}/bin/health_checks/${check_script} ${check_args}"
 
-    while [ "$attempts" -lt "$max_attempts" ]; do
-        if pct exec "$CTID" -- $health_check_command; then
-            log_info "Health check passed successfully for CTID $CTID."
-            return 0
-        else
-            attempts=$((attempts + 1))
-            log_error "WARNING: Health check command '$health_check_command' failed for CTID $CTID (Attempt $attempts/$max_attempts)."
-            if [ "$attempts" -lt "$max_attempts" ]; then
-                log_info "Retrying in $interval seconds..."
-                sleep "$interval"
-            fi
+        log_info "Running health check: $check_name"
+        if ! eval "$health_check_command"; then
+            log_fatal "Health check '$check_name' failed for CTID $CTID."
         fi
     done
-
-    log_fatal "Health check failed for CTID $CTID after $max_attempts attempts."
 }
+
 
 # =====================================================================================
 # Function: run_post_deployment_validation
@@ -1365,10 +1430,8 @@ main_lxc_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for CTID $ctid..."
-            if [ "$ctid" -eq 101 ] || [ "$ctid" -eq 103 ]; then
-                manage_ca_password_on_hypervisor "103"
-                manage_provisioner_password_on_hypervisor "103"
-            fi
+
+
 
             if ensure_container_defined "$ctid"; then
                 # Ensure the container is stopped before applying configurations that require a restart
@@ -1377,52 +1440,23 @@ main_lxc_orchestrator() {
                 apply_lxc_configurations "$ctid"
                 apply_lxc_firewall_rules "$ctid"
                 apply_zfs_volumes "$ctid"
+                apply_secure_permissions "$ctid"
                 apply_dedicated_volumes "$ctid"
                 ensure_container_disk_size "$ctid"
                 
                 apply_mount_points "$ctid"
+                apply_host_path_permissions "$ctid"
                 # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
 
                 # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
                 if [ "$ctid" -eq 103 ]; then
-                    log_info "Handling CA password file for Step CA container (CTID 103)..."
-                    log_info "Handling CA password file for Step CA container (CTID 103)..."
-                    local final_ca_password_file
-                    final_ca_password_file=$(manage_ca_password_on_hypervisor "$ctid") # Get the path to the final file
-
-                    local container_ca_password_path="/etc/step-ca/ssl/ca_password.txt"
-
-                    # Read the password from the host file and write it directly into the container
-                    local ca_password_content
-                    ca_password_content=$(cat "$final_ca_password_file")
-                    log_info "Writing CA password directly to container '$ctid:$container_ca_password_path'..."
-                    if ! pct exec "$ctid" -- bash -c "echo '$ca_password_content' > $container_ca_password_path"; then
-                        log_fatal "Failed to write CA password to container $ctid."
+                    log_info "Setting final permissions for shared SSL directory on host..."
+                    local shared_ssl_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
+                    if ! chmod -R 777 "$shared_ssl_dir"; then
+                        log_fatal "Failed to set permissions on shared SSL directory on host."
                     fi
-                    log_success "CA password written to container successfully."
-
-                    # Set appropriate permissions inside the container
-                    log_info "Setting permissions for CA password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 600 "$container_ca_password_path"; then
-                        log_fatal "Failed to set permissions for CA password file inside container $ctid."
-                    fi
-                    log_success "Permissions set for CA password file inside container."
-
-                    # Also push the provisioner password file
-                    local provisioner_password_file_on_host="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
-                    local container_provisioner_password_path="/etc/step-ca/ssl/provisioner_password.txt"
-                    local provisioner_password_content
-                    provisioner_password_content=$(cat "$provisioner_password_file_on_host")
-                    log_info "Writing provisioner password directly to Step CA container..."
-                    if ! pct exec "$ctid" -- bash -c "echo '$provisioner_password_content' > $container_provisioner_password_path"; then
-                        log_fatal "Failed to write provisioner password to container $ctid."
-                    fi
-                    log_info "Setting permissions for provisioner password file inside container $ctid..."
-                    if ! pct exec "$ctid" -- chmod 600 "$container_provisioner_password_path"; then
-                        log_fatal "Failed to set permissions for provisioner password file inside container $ctid."
-                    fi
-                    log_success "Provisioner password file pushed and configured in Step CA container."
+                    log_success "Host-side password management and permissions set for CTID 103."
                 fi
                 # --- END NEW HANDLING ---
 
@@ -1437,6 +1471,16 @@ main_lxc_orchestrator() {
                 
                 run_application_script "$ctid"
                 
+                # Restart dependent containers to pick up changes from this container's application script
+                local dependents
+                dependents=$(jq -r --arg ctid "$ctid" '.lxc_configs | to_entries[] | select(.value.dependencies[]? == ($ctid | tonumber)) | .key' "$LXC_CONFIG_FILE")
+                if [ -n "$dependents" ]; then
+                    for dependent_ctid in $dependents; do
+                        log_info "Restarting dependent container $dependent_ctid to apply changes from $ctid..."
+                        run_pct_command restart "$dependent_ctid" || log_warn "Failed to restart dependent container $dependent_ctid."
+                    done
+                fi
+                
                 run_health_check "$ctid"
                 create_template_snapshot "$ctid"
 
@@ -1444,31 +1488,15 @@ main_lxc_orchestrator() {
                     create_final_form_snapshot "$ctid"
                 fi
 
-                # --- Special Handling for Step CA (CTID 103) to Export Root Certificate ---
-                if [ "$ctid" -eq 103 ]; then
-                    log_info "Step CA container (CTID 103) created. Exporting root CA certificate to hypervisor shared storage..."
-                    local lxc_persistent_data_base_path="/mnt/pve/quickOS/lxc-persistent-data"
-                    local ca_output_dir="${lxc_persistent_data_base_path}/${ctid}/ssl"
-                    
-                    # Ensure the destination directory exists on the hypervisor
-                    mkdir -p "$ca_output_dir" || log_fatal "Failed to create destination directory for CA artifacts: $ca_output_dir."
-
-                    local ca_root_cert_source_path="/root/.step/certs/root_ca.crt"
-                    local ca_root_cert_dest_path="${ca_output_dir}/phoenix_ca.crt"
-                    if ! pct pull "$ctid" "$ca_root_cert_source_path" "$ca_root_cert_dest_path"; then
-                        log_fatal "Failed to pull root CA certificate from CTID 103 to $ca_root_cert_dest_path."
-                    fi
-                    log_success "Root CA certificate exported successfully to $ca_root_cert_dest_path."
-
-                    # Set correct permissions for the shared SSL directory to ensure readability by all containers
-                    log_info "Setting read permissions on shared SSL directory..."
-                    if ! chmod -R 644 "$ca_output_dir"; then
-                        log_fatal "Failed to set permissions on shared SSL directory."
-                    fi
-                    log_success "Permissions on shared SSL directory set successfully."
-                fi
-
                 log_info "'create' workflow completed for CTID $ctid."
+            fi
+
+            # --- Idempotency Fix for NGINX Container ---
+            # Always run the application script for CTID 101 to ensure its
+            # configuration (especially CA trust) is always up-to-date.
+            if [ "$ctid" -eq 101 ]; then
+                log_info "Ensuring NGINX container (101) is correctly configured..."
+                run_application_script "$ctid"
             fi
             ;;
         start)

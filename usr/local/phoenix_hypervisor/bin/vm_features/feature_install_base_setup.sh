@@ -20,7 +20,8 @@ fi
 
 log_info "Starting base setup feature installation..."
 
-# nfs-common is now installed as part of the template creation.
+# nfs-common is installed as part of the template creation via virt-customize.
+# This script handles the mounting of the persistent storage volume.
 
 # Mount Persistent Storage
 CONTEXT_FILE="$(dirname "$0")/vm_context.json"
@@ -28,30 +29,7 @@ if [ ! -f "$CONTEXT_FILE" ]; then
     log_fatal "VM context file not found at $CONTEXT_FILE."
 fi
 
-log_info "Step 2: Reading volume information from $CONTEXT_FILE..."
-NFS_SERVER=$(jq -r '.volumes[] | select(.type == "nfs") | .server' "$CONTEXT_FILE")
-NFS_PATH=$(jq -r '.volumes[] | select(.type == "nfs") | .path' "$CONTEXT_FILE")
-MOUNT_POINT=$(jq -r '.volumes[] | select(.type == "nfs") | .mount_point' "$CONTEXT_FILE")
-
-if [ -z "$NFS_SERVER" ] || [ -z "$NFS_PATH" ] || [ -z "$MOUNT_POINT" ]; then
-    log_warn "Step 2: Incomplete or missing NFS volume information in context file. Skipping mount."
-else
-    log_info "Step 2: Creating mount point directory: $MOUNT_POINT"
-    mkdir -p "$MOUNT_POINT"
-
-    fstab_entry="${NFS_SERVER}:${NFS_PATH} ${MOUNT_POINT} nfs defaults,auto,nofail 0 0"
-    log_info "Step 2: Ensuring fstab entry is present: ${fstab_entry}"
-    if ! grep -qxF "$fstab_entry" /etc/fstab; then
-        echo "$fstab_entry" >> /etc/fstab
-    fi
-
-    log_info "Step 2: Attempting to mount all filesystems..."
-    if ! mount -a || ! mount | grep -q "$MOUNT_POINT"; then
-        log_fatal "Step 2: Failed to mount NFS share at ${MOUNT_POINT}. Check NFS server and network configuration."
-    fi
-    log_info "Step 2: NFS share mounted successfully."
-fi
-
+log_info "Step 2: NFS mounts are now handled by the vm-manager. Skipping redundant setup."
 log_info "Base setup feature installation completed."
 
 # --- Disable IPv6 ---

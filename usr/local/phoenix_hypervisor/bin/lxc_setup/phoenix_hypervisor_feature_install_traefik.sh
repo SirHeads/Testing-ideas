@@ -58,6 +58,11 @@ install_traefik_binary() {
         log_fatal "Failed to extract Traefik binary in container $CTID."
     fi
 
+    log_info "Removing default configuration files from extracted tarball..."
+    if ! pct exec "$CTID" -- /bin/rm -f "${TEMP_DIR}/traefik.yml" "${TEMP_DIR}/dashboard.yml"; then
+        log_warn "Could not remove default configuration files. They may not exist in this version."
+    fi
+
     log_info "Installing Traefik binary to ${TRAEFIK_INSTALL_DIR}..."
     if ! pct exec "$CTID" -- /usr/bin/install -m 755 "${TEMP_DIR}/traefik" "${TRAEFIK_INSTALL_DIR}/traefik"; then
         log_fatal "Failed to install Traefik binary to ${TRAEFIK_INSTALL_DIR} in container $CTID."
@@ -104,6 +109,86 @@ setup_traefik_directories() {
     fi
 
     log_success "Traefik directories and permissions set up successfully."
+}
+
+# =====================================================================================
+# Function: setup_traefik_tls
+# Description: Generates a client certificate for Traefik and places it along with the CA
+#              certificate in the appropriate directory for mTLS with the Docker Proxy.
+# =====================================================================================
+setup_traefik_tls() {
+    log_info "Setting up TLS for Traefik Docker provider..."
+    local CERT_DIR="/etc/traefik/certs"
+    local FQDN="traefik.internal.thinkheads.ai"
+    local INTERNAL_FQDN="traefik.internal.thinkheads.ai"
+    local BOOTSTRAP_CA_URL="$2"
+    local FINAL_CA_URL="https://ca.internal.thinkheads.ai:9000"
+    local ROOT_CA_CERT_SHARED="/etc/step-ca/ssl/phoenix_root_ca.crt"
+    local PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+
+    pct exec "$CTID" -- mkdir -p "$CERT_DIR"
+
+    # Bootstrap the step CLI within the Traefik container
+    log_info "Bootstrapping Step CLI inside Traefik container..."
+    local ca_url_to_use="${BOOTSTRAP_CA_URL:-$FINAL_CA_URL}"
+    pct exec "$CTID" -- /bin/bash -c "step ca bootstrap --ca-url \"${ca_url_to_use}\" --fingerprint \"\$(step certificate fingerprint ${ROOT_CA_CERT_SHARED})\" --force"
+
+    # Generate Client Certificate inside the Traefik container
+    log_info "Generating client certificate for ${FQDN} inside Traefik container..."
+    pct exec "$CTID" -- step ca certificate "${FQDN}" "${CERT_DIR}/cert.pem" "${CERT_DIR}/key.pem" --san "${INTERNAL_FQDN}" \
+        --provisioner admin@thinkheads.ai \
+        --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" --force
+
+    # Transfer the root CA certificate using a robust pull/push method
+    log_info "Transferring root CA to ${CERT_DIR}/ca.pem..."
+    local HOST_TEMP_CA="/tmp/traefik_ca_${CTID}.pem"
+    pct pull "$CTID" "${ROOT_CA_CERT_SHARED}" "$HOST_TEMP_CA"
+    pct push "$CTID" "$HOST_TEMP_CA" "${CERT_DIR}/ca.pem"
+    rm -f "$HOST_TEMP_CA"
+
+    log_success "TLS certificates for Traefik Docker provider installed successfully."
+}
+
+# =====================================================================================
+# Function: push_static_config
+# Description: Generates the static traefik.yml from a template and pushes it to the container.
+# =====================================================================================
+push_static_config() {
+    log_info "Generating and pushing static Traefik configuration..."
+
+    local template_file="${PHOENIX_BASE_DIR}/../etc/traefik/traefik.yml.template"
+    if [ ! -f "$template_file" ]; then
+        log_fatal "Traefik configuration template not found at ${template_file}."
+    fi
+
+    # Get the Step-CA IP address from the LXC config file
+    local lxc_config_file="${PHOENIX_BASE_DIR}/../etc/phoenix_lxc_configs.json"
+    local step_ca_ip=$(jq -r '.lxc_configs."103".network_config.ip | split("/")[0]' "$lxc_config_file")
+    if [ -z "$step_ca_ip" ] || [ "$step_ca_ip" == "null" ]; then
+        log_fatal "Could not determine Step-CA IP address from LXC configuration."
+    fi
+    local ca_url="https://ca.internal.thinkheads.ai:9000"
+
+    # Create a temporary file for the processed config
+    local temp_config_file
+    temp_config_file=$(mktemp)
+
+    # Replace placeholder in the template with the actual CA URL
+    sed "s|__CA_URL__|${ca_url}|g" "$template_file" > "$temp_config_file"
+
+    log_info "Pushing generated traefik.yml to ${TRAEFIK_CONFIG_DIR}/traefik.yml in container $CTID..."
+    if ! pct push "$CTID" "$temp_config_file" "${TRAEFIK_CONFIG_DIR}/traefik.yml"; then
+        rm "$temp_config_file"
+        log_fatal "Failed to push traefik.yml to container $CTID."
+    fi
+
+    # Set correct permissions on the config file inside the container
+    if ! pct exec "$CTID" -- chmod 644 "${TRAEFIK_CONFIG_DIR}/traefik.yml"; then
+        log_warn "Failed to set permissions on traefik.yml in container $CTID."
+    fi
+
+    rm "$temp_config_file" # Clean up the temporary file
+    log_success "Static Traefik configuration pushed successfully."
 }
 
 # =====================================================================================
@@ -174,6 +259,8 @@ main() {
 
     install_traefik_binary
     setup_traefik_directories
+    setup_traefik_tls "$@"
+    push_static_config
     create_systemd_service
 
     log_info "Traefik feature installation completed for CTID $CTID."

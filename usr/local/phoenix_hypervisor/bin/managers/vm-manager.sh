@@ -11,7 +11,6 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
 # --- Load external configurations ---
-STACKS_CONFIG_FILE="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 
 # =====================================================================================
 # Function: run_qm_command
@@ -69,7 +68,7 @@ run_qm_command() {
             # We must check the exitcode from within the JSON payload.
             if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
                 log_error "Guest command exited with non-zero status: $guest_exitcode"
-                return "$guest_exitcode"
+                exit_code="$guest_exitcode"
             fi
         fi
     else
@@ -170,13 +169,20 @@ orchestrate_vm() {
         log_info "Step 6: Waiting for cloud-init to complete before proceeding in VM template $VMID..."
         local retries=3
         local success=false
+        local final_cloud_init_exit_code=1 # Default to a failure code
         for ((i=1; i<=retries; i++)); do
             local output
             local exit_code=0
             output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
             
-            if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
-                log_info "Cloud-init has finished (Exit Code: $exit_code)."
+            if [ "$exit_code" -eq 0 ]; then
+                log_info "Cloud-init has finished successfully."
+                final_cloud_init_exit_code=0
+                success=true
+                break
+            elif [ "$exit_code" -eq 2 ]; then
+                log_warn "Cloud-init finished with non-fatal errors (Exit Code: 2). Assuming a reboot is required."
+                final_cloud_init_exit_code=2
                 success=true
                 break
             else
@@ -184,21 +190,59 @@ orchestrate_vm() {
                 sleep 15
             fi
         done
+
         if [ "$success" = false ]; then
             log_fatal "Failed to wait for cloud-init completion in template VM $VMID after $retries attempts."
         fi
-        log_info "Step 6: Cloud-init completed in VM template $VMID."
+        log_info "Step 6: Cloud-init first pass completed in VM template $VMID."
+
+        if [ "$final_cloud_init_exit_code" -eq 2 ]; then
+            log_info "Step 6a: Rebooting VM template $VMID to finalize kernel upgrades..."
+            run_qm_command reboot "$VMID"
+            wait_for_guest_agent "$VMID"
+            log_info "Step 6a: VM has been rebooted and guest agent is responsive."
+
+            log_info "Step 6b: Performing second-pass verification of cloud-init status..."
+            local second_pass_success=false
+            for ((j=1; j<=retries; j++)); do
+                local second_pass_exit_code=0
+                run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || second_pass_exit_code=$?
+                
+                if [ "$second_pass_exit_code" -eq 0 ]; then
+                    log_info "Second-pass cloud-init verification successful."
+                    second_pass_success=true
+                    break
+                else
+                    log_warn "Second-pass cloud-init verification failed with exit code $second_pass_exit_code (attempt $j/$retries). Retrying in 15 seconds..."
+                    sleep 15
+                fi
+            done
+
+            if [ "$second_pass_success" = false ]; then
+                log_fatal "Cloud-init did not report a clean status after reboot. Template creation failed."
+            fi
+            log_info "Step 6b: Cloud-init second-pass verification completed."
+        fi
 
         log_info "Step 7: Applying features to VM template $VMID..."
         apply_vm_features "$VMID"
         log_info "Step 8: Features applied to VM template $VMID."
 
-        log_info "Step 9: Cleaning cloud-init state for VM template $VMID..."
-        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean"
+        log_info "Step 9: Aggressively cleaning cloud-init state for VM template $VMID..."
+        
+        # --- Definitive Fix: Correct Order of Operations for Cleanup ---
+        # All other cleanup tasks must be performed *before* the final, destructive
+        # 'cloud-init clean' command, which can shut down the guest agent.
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -rf /var/lib/cloud/instance"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "touch /etc/machine-id"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "systemctl stop cloud-init"
-        log_info "Step 9: Cloud-init state cleaned for VM template $VMID."
+
+        # This is the VERY LAST command to be run inside the guest.
+        log_info "Step 9a: Performing final cloud-init clean..."
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init clean --logs"
+
+        log_info "Step 9: Cloud-init state aggressively cleaned for VM template $VMID."
 
         log_info "Step 10: Stopping VM template $VMID..."
         stop_vm "$VMID"
@@ -237,17 +281,21 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
+
         log_info "Step 7: Applying firewall rules for VM $VMID..."
         apply_vm_firewall_rules "$VMID"
         log_info "Step 7: Completed."
-
         log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
 
-        log_info "Step 9: Applying features to VM $VMID..."
-        apply_vm_features "$VMID"
+        log_info "Step 9: Preparing CA staging area for VM $VMID..."
+        prepare_vm_ca_staging_area "$VMID"
         log_info "Step 9: Completed."
+
+        log_info "Step 10: Applying features to VM $VMID..."
+        apply_vm_features "$VMID"
+        log_info "Step 10: Completed."
 
 
         log_info "Step 10: Managing post-feature snapshots for VM $VMID..."
@@ -315,10 +363,6 @@ create_vm_from_image() {
     local template_image="$2"
     log_info "Creating VM $VMID from image ${template_image}..."
 
-    if ! command -v virt-customize &> /dev/null; then
-        log_fatal "The 'virt-customize' command is not found. Please run the hypervisor setup to install it."
-    fi
-
     local storage_pool
     storage_pool=$(get_vm_config_value ".vm_defaults.storage_pool")
     if [ -z "$storage_pool" ]; then
@@ -330,59 +374,66 @@ create_vm_from_image() {
         log_fatal "Missing 'vm_defaults.network_bridge' in $VM_CONFIG_FILE."
     fi
     
-    log_debug "HYPERVISOR_CONFIG_FILE is set to: $HYPERVISOR_CONFIG_FILE"
-    log_debug "VM_CONFIG_FILE is set to: $VM_CONFIG_FILE"
-    log_debug "Attempting to read .vm_defaults.ubuntu_release"
     local ubuntu_release
     ubuntu_release=$(get_global_config_value ".vm_defaults.ubuntu_release")
     local image_url="https://cloud-images.ubuntu.com/${ubuntu_release}/current/${template_image}"
     local download_path="/tmp/${template_image}"
 
-    if [ ! -f "$download_path" ]; then
-        log_info "Downloading Ubuntu cloud image from $image_url..."
-        if ! wget -O "$download_path" "$image_url"; then
-            log_fatal "Failed to download cloud image."
-        fi
-    else
-        log_info "Cloud image already downloaded."
+    log_info "Forcing fresh download of Ubuntu cloud image from $image_url..."
+    if ! wget --progress=bar:force -O "$download_path" "$image_url"; then
+        log_fatal "Failed to download cloud image."
     fi
 
-    log_info "Installing essential packages (qemu-guest-agent, nfs-common) into the cloud image..."
+    # --- Install Dependencies ---
+    # `libguestfs-tools` is required for `virt-customize`.
+    if ! dpkg -l | grep -q "libguestfs-tools"; then
+        log_info "Installing libguestfs-tools..."
+        apt-get update
+        apt-get install -y libguestfs-tools
+    fi
+
+    # --- Customize Image ---
+    # This is a critical step. `virt-customize` allows us to modify the image offline
+    # before it's ever booted. We inject the `qemu-guest-agent`, which is essential
+    # for the Proxmox host to communicate reliably with the guest VM.
+    log_info "Installing qemu-guest-agent and nfs-common into the cloud image..."
     if ! virt-customize -a "$download_path" --install qemu-guest-agent,nfs-common --run-command 'systemctl enable qemu-guest-agent'; then
-        log_fatal "Failed to customize cloud image with essential packages."
+        log_fatal "Failed to customize cloud image."
     fi
 
-    log_info "Creating base VM..."
+    log_info "Radically simplified VM creation starting..."
     local vm_name
     vm_name=$(jq_get_vm_value "$VMID" ".name")
-    run_qm_command create "$VMID" --name "$vm_name" --memory 2048 --net0 "virtio,bridge=${network_bridge}" --agent 1
-
-    log_info "Importing disk to storage pool '$storage_pool'..."
-    run_qm_command importdisk "$VMID" "$download_path" "$storage_pool"
-
-    log_info "Configuring VM hardware..."
-    run_qm_command set "$VMID" --scsihw virtio-scsi-pci --scsi0 "${storage_pool}:vm-${VMID}-disk-0"
-    run_qm_command set "$VMID" --boot c --bootdisk scsi0
-    run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
-
-    # Apply nameserver from config if it exists
+    local username
+    username=$(jq_get_vm_value "$VMID" ".user_config.username")
     local nameserver
-    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
-    if [ -n "$nameserver" ]; then
-        log_info "Applying DNS config: DNS=${nameserver}"
-        run_qm_command set "$VMID" --nameserver "$nameserver"
-    fi
-
-    # --- FIX: Add DHCP ipconfig to prevent Cloud-Init errors ---
-    log_info "Applying DHCP network config to template to prevent init errors..."
-    run_qm_command set "$VMID" --ipconfig0 "ip=dhcp"
-
+    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver")
     local searchdomain
-    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || echo "phoenix.local")
-    if [ -n "$searchdomain" ]; then
-        log_info "Applying DNS config: Search=${searchdomain}"
-        run_qm_command set "$VMID" --searchdomain "$searchdomain"
-    fi
+    searchdomain=$(jq_get_vm_value "$VMID" ".network_config.searchdomain" || get_global_config_value ".domain_name")
+
+    # --- The One Command to Rule Them All ---
+    # This single, atomic command creates the VM with all necessary settings from the start.
+    log_info "Creating VM $VMID with a single, atomic command..."
+    run_qm_command create "$VMID" \
+        --name "$vm_name" \
+        --memory 2048 \
+        --net0 "virtio,bridge=${network_bridge}" \
+        --serial0 socket \
+        --agent 1 \
+        --scsihw virtio-scsi-pci \
+        --ciuser "$username" \
+        --searchdomain "$searchdomain" \
+        --ipconfig0 "ip=dhcp"
+
+    log_info "Importing disk and attaching as boot device..."
+    run_qm_command importdisk "$VMID" "$download_path" "$storage_pool"
+    run_qm_command set "$VMID" --scsi0 "${storage_pool}:vm-${VMID}-disk-0"
+    run_qm_command set "$VMID" --boot c --bootdisk scsi0
+    log_info "Resizing template disk to 32G..."
+    run_qm_command resize "$VMID" scsi0 32G
+
+    log_info "Creating final cloud-init drive..."
+    run_qm_command set "$VMID" --ide2 "${storage_pool}:cloudinit"
 
     rm -f "$download_path"
 }
@@ -414,70 +465,6 @@ clone_vm() {
 
     log_info "Enabling QEMU guest agent for VM $VMID..."
     run_qm_command set "$VMID" --agent 1
-
-    # Apply initial network configurations
-    local ip
-    ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
-    local gw
-    gw=$(jq_get_vm_value "$VMID" ".network_config.gw" || echo "")
-    local nameserver
-    nameserver=$(jq_get_vm_value "$VMID" ".network_config.nameserver" || echo "")
-    local storage_pool
-    storage_pool=$(jq_get_vm_value "$VMID" ".storage_pool" || get_vm_config_value ".vm_defaults.storage_pool")
-
-    if [ -z "$ip" ] || [ -z "$gw" ]; then
-        log_fatal "VM configuration for $VMID has an incomplete network_config. Both 'ip' and 'gw' must be specified."
-    fi
-    log_info "Applying initial network config via cloud-init: IP=${ip}, Gateway=${gw}, DNS=${nameserver}"
-
-    # Generate a temporary network config file
-    local temp_net_config=$(mktemp)
-    cat <<EOF > "$temp_net_config"
-network:
-  version: 2
-  ethernets:
-    eth0:
-      dhcp4: no
-      addresses:
-        - ${ip}
-      gateway4: ${gw}
-      nameservers:
-        addresses: [${nameserver}]
-EOF
-    
-    # Ensure the snippets directory exists
-    mkdir -p /var/lib/vz/snippets
-    # Move the generated config to the Proxmox snippets directory
-    mv "$temp_net_config" "/var/lib/vz/snippets/network-config-${VMID}.yml"
-
-    # Attach the custom network config to the VM's cloud-init drive
-    run_qm_command set "$VMID" --cicustom "vendor=local:snippets/network-config-${VMID}.yml"
-    
-    # Regenerate the cloud-init drive to apply the custom config
-    run_qm_command cloudinit update "$VMID"
-    
-    # Apply initial user configurations
-    local username
-    username=$(jq_get_vm_value "$VMID" ".user_config.username" || echo "")
-    if [ -z "$username" ] || [ "$username" == "null" ]; then
-        log_warn "VM configuration for $VMID has a 'user_config' section but is missing a 'username'. Skipping user configuration."
-    else
-        log_info "Applying initial user config: Username=${username}"
-        run_qm_command set "$VMID" --ciuser "$username"
-    fi
-
-    log_info "Resizing disk for VM $VMID..."
-    run_qm_command resize "$VMID" scsi0 +10G || log_warn "Failed to resize disk for VM $VMID."
-
-    log_info "Fixing GPT on resized disk for VM $VMID from the host..."
-    local storage_pool_name="quickOS/vm-disks" # As defined in the ZFS dataset config
-    local disk_device="/dev/zvol/${storage_pool_name}/vm-${VMID}-disk-0"
-    
-    if [ -e "$disk_device" ]; then
-        sgdisk -e "$disk_device"
-    else
-        log_fatal "Disk device not found at $disk_device. Cannot fix GPT."
-    fi
 }
 
 # =====================================================================================
@@ -520,6 +507,7 @@ apply_core_configurations() {
     fi
 
     if [ -n "$boot_order" ]; then
+        # Ensure the boot order is correct for scsi devices, which are standard for our templates
         run_qm_command set "$VMID" --boot "order=scsi0;net0" --startup "order=${boot_order},up=${boot_delay}"
     fi
 }
@@ -562,14 +550,24 @@ apply_network_configurations() {
     log_info "Applying DNS config: DNS=${nameserver}"
     run_qm_command set "$VMID" --nameserver "$nameserver"
 
+    # --- THE DEFINITIVE FIX ---
+    # After all network and user settings have been applied with `qm set`,
+    # we must explicitly regenerate the cloud-init ISO to include these changes.
+    log_info "Regenerating cloud-init drive for VM $VMID to apply all pending changes..."
+    run_qm_command cloudinit update "$VMID"
+
     start_vm "$VMID"
     wait_for_guest_agent "$VMID"
     run_qm_command guest exec "$VMID" -- systemctl restart systemd-networkd
+
+    log_info "Forcing DNS resolution to use the hypervisor's DNS server..."
+    # run_qm_command guest exec "$VMID" -- /bin/bash -c "echo 'nameserver 10.0.0.13' > /etc/resolv.conf"
 }
 
 # =====================================================================================
 # Function: apply_volumes
-# Description: Applies volume configurations to a VM.
+# Description: Applies all NFS volume configurations to a VM by iterating through
+#              the volumes defined in its configuration.
 # Arguments:
 #   $1 - The VMID of the VM to configure.
 # =====================================================================================
@@ -577,60 +575,95 @@ apply_volumes() {
     local VMID="$1"
     log_info "Applying volume configurations to VM $VMID..."
 
-    local server
-    server=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .server" || echo "")
-    local path
-    path=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .path" || echo "")
-    local mount_point
-    mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" || echo "")
+    # Get all NFS volumes as a JSON array of objects
+    local volumes_json
+    volumes_json=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\")")
 
-    if [ -z "$server" ] || [ -z "$path" ] || [ -z "$mount_point" ]; then
+    if [ -z "$volumes_json" ]; then
         log_info "No NFS volumes defined for VM $VMID. Skipping volume configuration."
         return 0
     fi
 
-    log_info "Ensuring NFS source directory exists on hypervisor..."
-    # The 'path' from JSON is the absolute path on the hypervisor
-    local hypervisor_nfs_path="$path"
-    if [ ! -d "$hypervisor_nfs_path" ]; then
-        log_info "Creating NFS source directory: $hypervisor_nfs_path"
-        mkdir -p "$hypervisor_nfs_path"
-        chmod 777 "$hypervisor_nfs_path"
-    fi
+    # Wait for cloud-init to complete before attempting any mounts
+    wait_for_cloud_init "$VMID"
 
-    log_info "Waiting for cloud-init to complete in VM $VMID before mounting volumes..."
+    # Iterate over each volume object
+    echo "$volumes_json" | jq -c '.' | while read -r volume; do
+        local server=$(echo "$volume" | jq -r '.server')
+        local path=$(echo "$volume" | jq -r '.path')
+        local mount_point=$(echo "$volume" | jq -r '.mount_point')
+
+        log_info "Processing NFS volume: ${server}:${path} -> ${mount_point}"
+
+        log_info "Ensuring NFS source directory exists on hypervisor..."
+        if [ ! -d "$path" ]; then
+            log_info "Creating NFS source directory: $path"
+            mkdir -p "$path"
+            chmod 777 "$path"
+        fi
+
+        log_info "Configuring NFS mount inside VM..."
+        run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$mount_point"
+        local fstab_entry="${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0"
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "grep -qxF '${fstab_entry}' /etc/fstab || echo '${fstab_entry}' >> /etc/fstab"
+        
+        if ! run_qm_command guest exec "$VMID" -- /bin/mount -a; then
+            log_warn "Initial 'mount -a' failed. This can happen. Verifying mount status before declaring failure."
+        fi
+        
+        if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "mount | grep -q '${mount_point}'"; then
+            log_fatal "Failed to mount NFS share ${server}:${path} at ${mount_point} in VM $VMID."
+        fi
+        log_success "Successfully mounted ${server}:${path} at ${mount_point}."
+    done
+}
+
+# =====================================================================================
+# Function: wait_for_cloud_init
+# Description: A helper function to wait for cloud-init to complete, including handling
+#              reboots if necessary.
+# Arguments:
+#   $1 - The VMID of the VM.
+# =====================================================================================
+wait_for_cloud_init() {
+    local VMID="$1"
+    log_info "Waiting for cloud-init to complete in VM $VMID..."
     local retries=3
     local success=false
-    for ((i=1; i<=retries; i++)); do
-        local output
-        local exit_code=0
-        output=$(run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait") || exit_code=$?
+    local final_cloud_init_exit_code=1
 
-        if [ "$exit_code" -eq 0 ] || [ "$exit_code" -eq 2 ]; then
-            log_info "Cloud-init has finished (Exit Code: $exit_code)."
+    for ((i=1; i<=retries; i++)); do
+        local exit_code=0
+        run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait" || exit_code=$?
+
+        if [ "$exit_code" -eq 0 ]; then
+            log_info "Cloud-init has finished successfully."
+            final_cloud_init_exit_code=0
+            success=true
+            break
+        elif [ "$exit_code" -eq 2 ]; then
+            log_warn "Cloud-init finished with non-fatal errors. Assuming a reboot is required."
+            final_cloud_init_exit_code=2
             success=true
             break
         else
-            log_warn "Waiting for cloud-init failed with unexpected exit code $exit_code (attempt $i/$retries). Retrying in 15 seconds..."
+            log_warn "Waiting for cloud-init failed (attempt $i/$retries). Retrying..."
             sleep 15
         fi
     done
+
     if [ "$success" = false ]; then
-        log_fatal "Failed to wait for cloud-init completion in VM $VMID after $retries attempts."
+        log_fatal "Failed to wait for cloud-init completion in VM $VMID."
     fi
 
-    log_info "Configuring NFS mount for VM $VMID: ${server}:${path} -> ${mount_point}"
-    # nfs-common is now installed via virt-customize, so this is no longer needed.
-    run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$mount_point"
-    run_qm_command guest exec "$VMID" -- /bin/bash -c "grep -qxF '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' /etc/fstab || echo '${server}:${path} ${mount_point} nfs defaults,auto,nofail 0 0' >> /etc/fstab"
-    
-    if ! run_qm_command guest exec "$VMID" -- /bin/mount -a; then
-        log_warn "Initial 'mount -a' failed. This can happen. Verifying mount status before declaring failure."
-    fi
-    
-    # Robust mount verification
-    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "mount | grep -q '${mount_point}'"; then
-        log_fatal "Failed to mount NFS share ${server}:${path} at ${mount_point} in VM $VMID. Please check NFS server logs and network connectivity."
+    if [ "$final_cloud_init_exit_code" -eq 2 ]; then
+        log_info "Rebooting VM $VMID to clear transient cloud-init error..."
+        run_qm_command reboot "$VMID"
+        wait_for_guest_agent "$VMID"
+        log_info "VM rebooted. Re-verifying cloud-init status..."
+        if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "cloud-init status --wait"; then
+            log_fatal "Cloud-init did not report a clean status after reboot."
+        fi
     fi
 }
 
@@ -705,6 +738,9 @@ apply_vm_features() {
     log_info "Preparing script directory at $hypervisor_scripts_dir..."
     rm -rf "$hypervisor_scripts_dir"
     mkdir -p "$hypervisor_scripts_dir"
+ 
+    # The flawed Docker volume creation logic has been removed from this script.
+    # This responsibility is now correctly handled by portainer-manager.sh.
 
     for feature in $features; do
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
@@ -719,7 +755,6 @@ apply_vm_features() {
         # --- Definitive Fix: Copy all required configs ---
         log_info "Copying core configuration files to VM's persistent storage..."
         cp "$VM_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_vm_configs.json"
-        cp "$STACKS_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_stacks_config.json"
         cp "$HYPERVISOR_CONFIG_FILE" "${hypervisor_scripts_dir}/phoenix_hypervisor_config.json"
 
         # --- Verification Step ---
@@ -732,29 +767,15 @@ apply_vm_features() {
         log_info "Copying Portainer docker-compose.yml to VM's persistent storage..."
         local portainer_compose_dest_dir="${persistent_volume_path}/portainer"
         mkdir -p "$portainer_compose_dest_dir"
-        cp "${PHOENIX_BASE_DIR}/persistent-storage/portainer/docker-compose.yml" "$portainer_compose_dest_dir/"
+        cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "$portainer_compose_dest_dir/"
 
         # --- Definitive Fix: Copy Portainer config.json ---
         log_info "Copying Portainer config.json to VM's persistent storage..."
         cp "${PHOENIX_BASE_DIR}/etc/portainer/config.json" "${hypervisor_scripts_dir}/portainer_config.json"
 
-        # --- Definitive Fix: Copy Step-CA root certificate ---
-        log_info "Copying Step-CA root certificate to VM's persistent storage..."
-        local ca_cert_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
-        if [ -f "$ca_cert_source_path" ]; then
-            cp "$ca_cert_source_path" "${hypervisor_scripts_dir}/phoenix_ca.crt"
-        else
-            log_warn "Step-CA root certificate not found at $ca_cert_source_path. Docker feature might fail if it needs to trust internal services."
-        fi
-
-        # --- Definitive Fix: Copy Step-CA provisioner password file ---
-        log_info "Copying Step-CA provisioner password file to VM's persistent storage..."
-        local provisioner_password_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
-        if [ -f "$provisioner_password_source_path" ]; then
-            cp "$provisioner_password_source_path" "${hypervisor_scripts_dir}/provisioner_password.txt"
-        else
-            log_warn "Step-CA provisioner password file not found at $provisioner_password_source_path. Certificate generation for Portainer will fail."
-        fi
+        # --- Definitive Fix: Copy HAProxy config ---
+        log_info "Copying HAProxy config to VM's persistent storage..."
+        cp "${PHOENIX_BASE_DIR}/etc/haproxy/haproxy.cfg" "${hypervisor_scripts_dir}/haproxy.cfg"
 
         local persistent_mount_point
         persistent_mount_point=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\") | .mount_point" | head -n 1)
@@ -774,11 +795,20 @@ apply_vm_features() {
         # Ensure previous exit code file is removed
         run_qm_command guest exec "$VMID" -- /bin/bash -c "rm -f $exit_code_file_in_vm"
 
-        # Execute the script in the background, redirecting output to log file and capturing exit code
-        local exec_command="nohup /bin/bash -c '$vm_script_path $VMID > $log_file_in_vm 2>&1; echo \$? > $exit_code_file_in_vm' &"
+        # Read the fingerprint from the shared location
+        local fingerprint_file="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint"
+        local ca_fingerprint=""
+        if [ -f "$fingerprint_file" ]; then
+            ca_fingerprint=$(cat "$fingerprint_file")
+        else
+            log_warn "CA fingerprint file not found at $fingerprint_file. Bootstrap may fail."
+        fi
+
+        # Execute the script in the background, passing the fingerprint as an environment variable
+        local exec_command="nohup /bin/bash -c 'export STEP_CA_FINGERPRINT=\"${ca_fingerprint}\"; $vm_script_path $VMID > $log_file_in_vm 2>&1; echo \$? > $exit_code_file_in_vm' &"
         run_qm_command guest exec "$VMID" -- /bin/bash -c "$exec_command"
 
-        log_info "Feature script '$feature' started. Streaming logs from $log_file_in_vm..."
+        log_info "Feature script '$feature' started with dynamic fingerprint. Streaming logs from $log_file_in_vm..."
 
         local timeout=1800 # 30 minutes timeout
         local start_time=$SECONDS
@@ -863,6 +893,59 @@ manage_snapshots() {
 }
 
 # =====================================================================================
+# Function: wait_for_step_ca_service
+# Description: Waits for the Step-CA service inside LXC 103 to become active.
+# =====================================================================================
+wait_for_step_ca_service() {
+    log_info "Waiting for Step-CA service in LXC 103 to become active..."
+    local timeout=300 # 5 minutes
+    local start_time=$SECONDS
+    while (( SECONDS - start_time < timeout )); do
+        if pct exec 103 -- systemctl is-active --quiet step-ca; then
+            log_success "Step-CA service is active in LXC 103. Proceeding."
+            return 0
+        fi
+        sleep 5
+    done
+    log_fatal "Timeout reached while waiting for Step-CA service in LXC 103."
+}
+
+# =====================================================================================
+# Function: prepare_vm_ca_staging_area
+# Description: Creates a dedicated staging area for the VM's CA files and copies
+#              the necessary artifacts into it. This allows the VM to securely mount
+#              the directory via NFS.
+# Arguments:
+#   $1 - The VMID of the target VM.
+# =====================================================================================
+prepare_vm_ca_staging_area() {
+    local VMID="$1"
+    log_info "Preparing CA file staging area for VM ${VMID}..."
+
+    wait_for_step_ca_service
+
+    local source_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
+    local dest_dir="/quickOS/vm-persistent-data/${VMID}/.step-ca"
+
+    log_info "Creating and preparing staging directory: ${dest_dir}"
+    mkdir -p "${dest_dir}"
+    rm -f "${dest_dir}"/* # Clean out old files
+
+    log_info "Copying CA files to staging area..."
+    cp "${source_dir}/certs/root_ca.crt" "${dest_dir}/root_ca.crt"
+    cp "${source_dir}/provisioner_password.txt" "${dest_dir}/provisioner_password.txt"
+    cp "${source_dir}/root_ca.fingerprint" "${dest_dir}/root_ca.fingerprint"
+
+    log_info "Setting world-readable permissions on staged CA files..."
+    chmod 644 "${dest_dir}/root_ca.crt"
+    chmod 644 "${dest_dir}/provisioner_password.txt"
+    chmod 644 "${dest_dir}/root_ca.fingerprint"
+
+    log_success "CA staging area for VM ${VMID} is ready."
+}
+
+
+# =====================================================================================
 # Function: apply_vm_firewall_rules
 # Description: Applies firewall rules to a VM based on its declarative configuration.
 # Arguments:
@@ -882,30 +965,17 @@ apply_vm_firewall_rules() {
     fi
 
     if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall by writing 'firewall: 0' to $conf_file"
-        if grep -q "^firewall:" "$conf_file"; then
-            log_info "Found existing firewall line in $conf_file. Modifying it."
-            sed -i "s/^firewall:.*/firewall: 0/" "$conf_file"
-        else
-            log_info "No existing firewall line in $conf_file. Appending it."
-            echo "firewall: 0" >> "$conf_file"
-        fi
-        log_info "Contents of $conf_file after modification:"
-        cat "$conf_file"
+        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall..."
+        run_qm_command set "$VMID" --firewall 0
         return 0
     fi
 
-    # Enable the firewall for the VM itself by editing the config file
-    log_info "Enabling firewall flag for VM $VMID by writing 'firewall: 1' to $conf_file..."
-    if grep -q "^firewall:" "$conf_file"; then
-        log_info "Found existing firewall line in $conf_file. Modifying it."
-        sed -i "s/^firewall:.*/firewall: 1/" "$conf_file"
-    else
-        log_info "No existing firewall line in $conf_file. Appending it."
-        echo "firewall: 1" >> "$conf_file"
-    fi
-    log_info "Contents of $conf_file after modification:"
-    cat "$conf_file"
+    # Enable the firewall for the VM itself using the correct qm command
+    # The '--firewall' flag is not a valid option for `qm set`. The correct procedure
+    # is to enable the firewall on the network interface directly, which is handled below.
+    # This line is being removed to prevent fatal errors.
+    # log_info "Enabling firewall for VM $VMID..."
+    # run_qm_command set "$VMID" --firewall 1
 
     # Enable firewall on the net0 interface
     log_info "Enabling firewall on net0 interface for VM $VMID..."
@@ -917,9 +987,83 @@ apply_vm_firewall_rules() {
         log_info "Firewall is already enabled on net0 for VM $VMID."
     fi
 
-    log_info "VM $VMID is now configured for host-level firewall management. All rules will be applied globally by the hypervisor."
-}
+    log_info "VM $VMID is now configured for host-level firewall management. Applying specific rules..."
 
+    local firewall_rules_json
+    firewall_rules_json=$(jq_get_vm_value "$VMID" ".firewall.rules")
+    local vm_fw_file="/etc/pve/firewall/${VMID}.fw"
+
+    # Create the firewall config file with default options
+    echo "[OPTIONS]" > "$vm_fw_file"
+    echo "enable: 1" >> "$vm_fw_file"
+    echo "" >> "$vm_fw_file"
+    echo "[RULES]" >> "$vm_fw_file"
+
+    # Append rules from JSON config
+    echo "$firewall_rules_json" | jq -c '.[]' | while read -r rule; do
+        local type=$(echo "$rule" | jq -r '.type')
+        local action=$(echo "$rule" | jq -r '.action')
+        local proto=$(echo "$rule" | jq -r '.proto // ""')
+        local port=$(echo "$rule" | jq -r '.port // ""')
+        local source=$(echo "$rule" | jq -r '.source // ""')
+        local dest=$(echo "$rule" | jq -r '.dest // ""')
+        local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+        local rule_line="${type^^} ${action^^}"
+        [ -n "$proto" ] && rule_line+=" -p $proto"
+        [ -n "$port" ] && rule_line+=" -dport $port"
+        [ -n "$source" ] && rule_line+=" -source $source"
+        [ -n "$dest" ] && rule_line+=" -dest $dest"
+        [ -n "$comment" ] && rule_line+=" # $comment"
+        
+        echo "$rule_line" >> "$vm_fw_file"
+        log_info "  - Added rule: $rule_line"
+    done
+
+    # Add rules from Docker stacks based on the new convention-based structure
+    log_info "Aggregating Docker stack firewall rules for VM $VMID..."
+    jq_get_vm_value "$VMID" ".docker_stacks[]?" | while read -r stack_name; do
+        local stack_name=$(echo "$stack_name" | tr -d '"') # Sanitize stack name
+        local manifest_path="${PHOENIX_BASE_DIR}/stacks/${stack_name}/phoenix.json"
+        
+        if [ ! -f "$manifest_path" ]; then
+            log_warn "Manifest file not found for stack '$stack_name' at: $manifest_path. Skipping firewall rule aggregation for this stack."
+            continue
+        fi
+
+        # Assuming 'production' environment for now. This can be parameterized later if needed.
+        local stack_firewall_rules=$(jq -r '.environments.production.firewall_rules // "[]"' "$manifest_path")
+
+        if [ -z "$stack_firewall_rules" ] || [ "$stack_firewall_rules" == "[]" ]; then
+            log_info "No firewall rules defined in the manifest for stack '$stack_name'. Skipping."
+            continue
+        fi
+
+        echo "$stack_firewall_rules" | jq -c '.[]' | while read -r rule; do
+            local type=$(echo "$rule" | jq -r '.type')
+            local action=$(echo "$rule" | jq -r '.action')
+            local proto=$(echo "$rule" | jq -r '.proto // ""')
+            local port=$(echo "$rule" | jq -r '.port // ""')
+            local source=$(echo "$rule" | jq -r '.source // ""')
+            local dest=$(echo "$rule" | jq -r '.dest // ""')
+            local comment=$(echo "$rule" | jq -r '.comment // ""')
+
+            local rule_line="${type^^} ${action^^}"
+            [ -n "$proto" ] && rule_line+=" -p $proto"
+            [ -n "$port" ] && rule_line+=" -dport $port"
+            [ -n "$source" ] && rule_line+=" -source $source"
+            [ -n "$dest" ] && rule_line+=" -dest $dest"
+            [ -n "$comment" ] && rule_line+=" # $comment"
+            
+            echo "$rule_line" >> "$vm_fw_file"
+            log_info "  - Added rule from stack '$stack_name': $rule_line"
+        done
+    done
+
+    log_info "Firewall rules for VM $VMID have been written to $vm_fw_file."
+    log_info "Reloading Proxmox firewall to apply changes..."
+    pve-firewall restart
+}
 # =====================================================================================
 # Function: main_vm_orchestrator
 # Description: The main entry point for the VM manager script. It parses the

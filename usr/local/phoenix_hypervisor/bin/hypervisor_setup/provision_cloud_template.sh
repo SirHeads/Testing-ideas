@@ -100,8 +100,8 @@ main() {
     # This is a critical step. `virt-customize` allows us to modify the image offline
     # before it's ever booted. We inject the `qemu-guest-agent`, which is essential
     # for the Proxmox host to communicate reliably with the guest VM.
-    log_info "Installing qemu-guest-agent into the cloud image..."
-    if ! virt-customize -a "$DOWNLOAD_PATH" --install qemu-guest-agent --run-command 'systemctl enable qemu-guest-agent'; then
+    log_info "Installing qemu-guest-agent and nfs-common into the cloud image..."
+    if ! virt-customize -a "$DOWNLOAD_PATH" --install qemu-guest-agent,nfs-common --run-command 'systemctl enable qemu-guest-agent'; then
         log_fatal "Failed to customize cloud image."
     fi
 

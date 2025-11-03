@@ -102,7 +102,7 @@ setup_portainer() {
                 -v /var/run/docker.sock:/var/run/docker.sock \
                 -v portainer_data:/data \
                 -v /certs:/certs:ro \
-                portainer/portainer-ce:latest --ssl --sslcert /certs/portainer.phoenix.thinkheads.ai.crt --sslkey /certs/portainer.phoenix.thinkheads.ai.key
+                portainer/portainer-ce:latest --ssl --sslcert /certs/portainer.internal.thinkheads.ai.crt --sslkey /certs/portainer.internal.thinkheads.ai.key
 
             # Verify that the container started successfully.
             verify_docker_container_running "$CTID" "${container_name}"

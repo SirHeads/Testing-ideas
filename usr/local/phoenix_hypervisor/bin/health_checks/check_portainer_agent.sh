@@ -1,8 +1,10 @@
 #!/bin/bash
 #
 # File: check_portainer_agent.sh
-# Description: This health check script verifies that the Portainer agent container
-#              is running correctly in VM 1002.
+# Description: This health check script verifies that a Portainer agent is running
+#              and network-accessible.
+#
+# Usage: ./check_portainer_agent.sh <VMID>
 #
 # Returns:
 #   0 on success, 1 on failure.
@@ -16,8 +18,12 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 # --- Main Health Check Logic ---
 main() {
     log_info "--- Starting Portainer Agent Health Check ---"
-    local AGENT_VMID="1002"
-    local CONTAINER_NAME="portainer_agent"
+    local AGENT_VMID="$1"
+
+    if [ -z "$AGENT_VMID" ]; then
+        log_error "Usage: $0 <VMID>"
+        return 1
+    fi
 
     # Check 1: Verify that the VM is running
     log_info "Checking if Portainer Agent VM (${AGENT_VMID}) is running..."
@@ -27,18 +33,36 @@ main() {
     fi
     log_success "Portainer Agent VM ${AGENT_VMID} is running."
 
-    # Check 2: Verify that the Portainer agent container is running inside the VM
-    log_info "Checking if container '${CONTAINER_NAME}' is running in VM ${AGENT_VMID}..."
-    local exit_code=$(qm guest exec "$AGENT_VMID" -- /bin/bash -c "docker ps --filter 'name=${CONTAINER_NAME}' --filter 'status=running' | grep -q '${CONTAINER_NAME}'" | jq -r '.exitcode')
+    # Check 2: Get Agent IP and Port from config
+    log_info "Retrieving agent network configuration for VM ${AGENT_VMID}..."
+    local AGENT_IP=$(jq -r ".vms[] | select(.vmid == ${AGENT_VMID}) | .network_config.ip" "$VM_CONFIG_FILE" | cut -d'/' -f1)
+    local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
 
-    if [ "$exit_code" -ne 0 ]; then
-        log_error "Portainer agent container '${CONTAINER_NAME}' is not running in VM ${AGENT_VMID}."
-        log_info "Debug Information:"
-        log_info "  - Ensure the 'docker' feature has been successfully applied to VM ${AGENT_VMID}."
-        log_info "  - Check the Docker container logs: qm guest exec ${AGENT_VMID} -- docker logs ${CONTAINER_NAME}"
+    if [ -z "$AGENT_IP" ] || [ "$AGENT_IP" == "null" ]; then
+        log_error "Could not determine IP address for VM ${AGENT_VMID} from configuration."
         return 1
     fi
-    log_success "Portainer agent container '${CONTAINER_NAME}' is running in VM ${AGENT_VMID}."
+    log_info "Agent is expected at: ${AGENT_IP}:${AGENT_PORT}"
+
+    # Check 3: Perform a network-level health check from the hypervisor
+    log_info "Pinging agent's /ping endpoint from the hypervisor..."
+    local PING_URL="https://{AGENT_IP}:${AGENT_PORT}/ping"
+    
+    # We use --insecure because the certificate is for the agent's hostname, not its IP address.
+    # This check is purely for network reachability and service health.
+    local http_status=$(curl -s -o /dev/null -w "%{http_code}" --insecure "https://${AGENT_IP}:${AGENT_PORT}/ping")
+
+    if [ "$http_status" -ne 204 ]; then
+        log_error "Portainer agent on VM ${AGENT_VMID} is not healthy or reachable from the hypervisor."
+        log_error "  - Endpoint URL: https://${AGENT_IP}:${AGENT_PORT}/ping"
+        log_error "  - Received HTTP Status: ${http_status} (Expected: 204)"
+        log_info "Debug Information:"
+        log_info "  - Verify the 'docker' feature installed correctly on VM ${AGENT_VMID}."
+        log_info "  - Check the Portainer agent container logs: qm guest exec ${AGENT_VMID} -- docker logs portainer_agent"
+        log_info "  - Check firewall rules on the hypervisor and within the VM."
+        return 1
+    fi
+    log_success "Portainer agent is running and network-accessible."
 
     log_info "--- Portainer Agent Health Check Passed ---"
     return 0

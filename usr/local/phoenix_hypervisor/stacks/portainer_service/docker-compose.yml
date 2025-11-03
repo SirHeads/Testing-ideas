@@ -1,0 +1,27 @@
+services:
+  portainer:
+    image: portainer/portainer-ce:latest
+    command: -H unix:///var/run/docker.sock
+    container_name: portainer_server
+    init: true
+    dns:
+      - 10.0.0.13
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data_nfs:/data
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    restart: always
+    networks:
+      - portainer_network
+
+
+
+networks:
+  portainer_network:
+    driver: bridge
+
+volumes:
+  portainer_data_nfs:
+    external: true

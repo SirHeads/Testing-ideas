@@ -119,8 +119,51 @@ main() {
 
     install_step_cli
     install_step_ca
+    create_systemd_service
 
     log_info "Step CA feature installation completed for CTID $CTID."
+}
+
+# =====================================================================================
+# Function: create_systemd_service
+# Description: Creates and enables a systemd service for Step CA.
+# =====================================================================================
+create_systemd_service() {
+    log_info "Creating systemd service for Step CA..."
+
+    local service_file_content="[Unit]
+Description=Step CA Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/run-step-ca.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target"
+
+    # Copy the run script to the container
+    run_pct_push "$CTID" "${PHOENIX_BASE_DIR}/bin/run-step-ca.sh" "/usr/local/bin/run-step-ca.sh"
+    pct exec "$CTID" -- chmod +x "/usr/local/bin/run-step-ca.sh"
+
+    # Create a temporary file on the host
+    local temp_service_file
+    temp_service_file=$(mktemp)
+    echo "$service_file_content" > "$temp_service_file"
+
+    # Push the service file to the container
+    pct push "$CTID" "$temp_service_file" /etc/systemd/system/step-ca.service
+    rm "$temp_service_file"
+
+    # Reload systemd, enable and start the service
+    pct exec "$CTID" -- systemctl daemon-reload
+    pct exec "$CTID" -- systemctl enable step-ca
+    pct exec "$CTID" -- systemctl start step-ca
+
+    log_success "Step CA systemd service created and enabled successfully."
 }
 
 # --- SCRIPT EXECUTION ---

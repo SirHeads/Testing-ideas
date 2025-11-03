@@ -34,8 +34,9 @@
             "boot_delay": 2,
             "features": [
                 "base_setup",
-                "docker",
-                "trusted_ca"
+                "trusted_ca",
+                "step_cli",
+                "docker"
             ],
             "portainer_role": "primary",
             "dependencies": [
@@ -46,7 +47,7 @@
                 "port": 9443
             },
             "network_config": {
-                "ip": "10.0.0.101/24",
+                "ip": "10.0.0.111/24",
                 "gw": "10.0.0.1",
                 "nameserver": "10.0.0.13"
             },
@@ -60,26 +61,36 @@
                     "path": "/quickOS/vm-persistent-data/1001",
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
+                },
+                {
+                    "type": "nfs",
+                    "name": "vm-step-ca-certs",
+                    "path": "/quickOS/vm-persistent-data/1001/.step-ca",
+                    "mount_point": "/etc/step-ca/certs",
+                    "server": "10.0.0.13"
                 }
+            ],
+            "docker_stacks": [
+                "portainer_service"
             ],
             "firewall": {
                 "enabled": true,
                 "rules": [
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
-                        "source": "10.0.0.12",
+                        "dest": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "9443",
-                        "comment": "Allow Traefik to access Portainer"
+                        "port": "443",
+                        "comment": "Allow VM to access the Nginx gateway"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.102",
                         "proto": "tcp",
-                        "port": "9443",
-                        "comment": "Allow Proxmox host to access Portainer API"
+                        "port": "9001",
+                        "comment": "Allow Portainer server to access agent"
                     }
                 ]
             }
@@ -96,15 +107,21 @@
             "boot_delay": 2,
             "features": [
                 "base_setup",
-                "docker",
-                "trusted_ca"
+                "trusted_ca",
+                "step_cli",
+                "docker"
             ],
             "portainer_role": "agent",
-            "portainer_environment_name": "portainer-agent",
+            "portainer_environment_name": "dr-phoenix",
+            "portainer_agent_hostname": "portainer-agent.internal.thinkheads.ai",
             "trigger_sync_on_completion": true,
             "dependencies": [
                 "1001"
             ],
+            "traefik_service": {
+                "name": "portainer-agent",
+                "port": 9001
+            },
             "network_config": {
                 "ip": "10.0.0.102/24",
                 "gw": "10.0.0.1",
@@ -120,34 +137,54 @@
                     "path": "/quickOS/vm-persistent-data/1002",
                     "mount_point": "/persistent-storage",
                     "server": "10.0.0.13"
+                },
+                {
+                    "type": "nfs",
+                    "name": "vm-step-ca-certs",
+                    "path": "/quickOS/vm-persistent-data/1002/.step-ca",
+                    "mount_point": "/etc/step-ca/certs",
+                    "server": "10.0.0.13"
                 }
             ],
             "docker_stacks": [
-                {
-                    "name": "qdrant_service",
-                    "environment": "production"
-                },
-                {
-                    "name": "thinkheads_ai_app",
-                    "environment": "development"
-                }
+                "qdrant_service",
+                "thinkheads_ai_app"
             ],
-            "dns_records": [
-                {
-                    "hostname": "drphoenix.phoenix.thinkheads.ai",
-                    "ip": "10.0.0.102"
-                }
-            ],
+            "dns_records": [],
             "firewall": {
                 "enabled": true,
                 "rules": [
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.101",
+                        "source": "10.0.0.111",
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Proxmox host to access agent for health checks"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Proxmox host to access agent for health checks"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Traefik to access Portainer Agent for ACME challenge"
                     },
                     {
                         "type": "in",

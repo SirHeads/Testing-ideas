@@ -24,4 +24,4 @@ network:
       addresses: [__IPV4_ADDRESS__]
       gateway4: __IPV4_GATEWAY__
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4] # Google's public DNS servers are used as a default.
+        addresses: []
