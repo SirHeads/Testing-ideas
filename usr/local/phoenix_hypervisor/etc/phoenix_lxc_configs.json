@@ -490,8 +490,8 @@
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "8443",
-                        "comment": "Allow Nginx to proxy HTTPS to Traefik"
+                        "port": "80",
+                        "comment": "Allow Nginx to proxy to Traefik"
                     },
                     {
                         "type": "out",
@@ -724,10 +724,10 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.12",
+                        "dest": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "80,443",
-                        "comment": "Allow Step-CA to perform ACME challenges with Traefik"
+                        "port": "80",
+                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
                     },
                     {
                         "type": "in",
@@ -807,8 +807,8 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "80,443,8443",
-                        "comment": "Allow Nginx (10.0.0.153) to proxy web and ACME traffic"
+                        "port": "80",
+                        "comment": "Allow Nginx (10.0.0.153) to proxy web traffic"
                     },
                     {
                         "type": "in",

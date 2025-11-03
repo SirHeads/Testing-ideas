@@ -86,12 +86,12 @@ EOF
         --argjson lxc_config "$(cat "$LXC_CONFIG_FILE")" \
         --argjson vm_config "$(cat "$VM_CONFIG_FILE")" \
         '
-        ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Traefik-Internal") | .value.network_config.ip | split("/")[0]) as $traefik_ip |
+        ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Nginx-Phoenix") | .value.network_config.ip | split("/")[0]) as $gateway_ip |
         [
             # 1. Process Discovered Docker Stacks for Traefik-routed services
             ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | {
                 "hostname": .hostname,
-                "ip": $traefik_ip
+                "ip": $gateway_ip
             }),
             # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
             ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | {
@@ -100,7 +100,7 @@ EOF
             }),
             ($vm_config.vms[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": $traefik_ip
+                "ip": $gateway_ip
             }),
             # 3. Add records for all guests (LXC and VM) that need to be addressed by their own name
             ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
@@ -117,9 +117,9 @@ EOF
                 "ip": (.network_config.ip | split("/")[0])
             }),
             # 5. Add static records
-            { "hostname": "portainer.internal.thinkheads.ai", "ip": $traefik_ip },
-            { "hostname": "portainer-agent.internal.thinkheads.ai", "ip": $traefik_ip },
-            { "hostname": "traefik.internal.thinkheads.ai", "ip": $traefik_ip }
+            { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
+            { "hostname": "portainer-agent.internal.thinkheads.ai", "ip": $gateway_ip },
+            { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip }
         ] | unique_by(.hostname)
         '
     )

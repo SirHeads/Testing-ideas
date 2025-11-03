@@ -6,6 +6,7 @@ pct exec 102 -- curl https://ca.internal.thinkheads.ai:9000
  &&
  pct exec 101 -- tail -n 50 /var/log/nginx/access.log
  &&
+ cat /usr/local/phoenix_hypervisor/etc/nginx/sites-available/gateway
  systemctl status dnsmasq --no-pager && journalctl -u dnsmasq -n 50 --no-pager
  && 
  pct exec 102 -- cat /etc/traefik/dynamic/dynamic_conf.yml

@@ -102,38 +102,7 @@ configure_traefik() {
      touch /etc/traefik/acme.json
      chmod 600 /etc/traefik/acme.json
  
-     # Create dynamic configuration for the dashboard
-    cat <<'EOF' > /etc/traefik/dynamic/dashboard.yml
-http:
-  middlewares:
-    https-redirect:
-      redirectScheme:
-        scheme: https
-        permanent: true
-
-  routers:
-    web-redirect:
-      rule: "HostRegexp(`{host:.+}`)"
-      entryPoints:
-        - web
-      middlewares:
-        - https-redirect
-      service: "noop@internal"
-
-    dashboard:
-      rule: "Host(`traefik.internal.thinkheads.ai`)"
-      service: "api@internal"
-      entryPoints:
-        - websecure
-      tls:
-        certResolver: internal-resolver
-
-    dashboard-insecure:
-      rule: "Host(`localhost`) && PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
-      service: "api@internal"
-      entryPoints:
-        - traefik
-EOF
+    # Dynamic configuration is now handled by the sync_all command at the host level.
 
     # Dynamic configuration is now handled by the sync_all command at the host level.
     log_info "Traefik static configuration complete."

@@ -17,19 +17,10 @@ http:
     dashboard:
       rule: "Host(`traefik.internal.thinkheads.ai`)"
       service: "api@internal"
-      tls:
-        certResolver: internal-resolver
 
 entryPoints:
   web:
     address: ":80"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: ":8443"
   traefik:
     address: ":8080"
 
@@ -38,21 +29,3 @@ providers:
     directory: /etc/traefik/dynamic
     filename: dynamic_conf.yml
     watch: true
-
-certificatesResolvers:
-  external-resolver:
-    acme:
-      email: admin@thinkheads.ai
-      storage: /etc/traefik/acme.json
-      caServer: __CA_URL__/acme/acme/directory
-      keyType: EC384
-      httpChallenge:
-        entryPoint: web
-  internal-resolver:
-    acme:
-      email: admin@thinkheads.ai
-      storage: /etc/traefik/acme.json
-      caServer: __CA_URL__/acme/acme/directory
-      keyType: EC384
-      httpChallenge:
-        entryPoint: web

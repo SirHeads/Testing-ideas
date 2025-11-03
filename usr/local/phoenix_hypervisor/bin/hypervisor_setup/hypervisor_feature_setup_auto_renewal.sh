@@ -18,23 +18,26 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 log_info "--- Setting up automated certificate renewal cron job ---"
 
 CRON_JOB_COMMAND="/usr/local/phoenix_hypervisor/bin/managers/certificate-renewal-manager.sh"
-CRON_JOB_SCHEDULE="0 */12 * * *"
-CRON_JOB_LINE="${CRON_JOB_SCHEDULE} ${CRON_JOB_COMMAND}"
+CRON_JOB_SCHEDULE="0 * * * *"
+CRON_FILE_PATH="/etc/cron.d/phoenix-cert-renewal"
+CRON_JOB_LINE="${CRON_JOB_SCHEDULE} root ${CRON_JOB_COMMAND}"
 
-# Get current crontab content, or an empty string if it doesn't exist
-CURRENT_CRON=$(crontab -l 2>/dev/null || true)
+log_info "Ensuring cron job is correctly configured in ${CRON_FILE_PATH}..."
 
-if echo "${CURRENT_CRON}" | grep -Fq "${CRON_JOB_COMMAND}"; then
-    log_info "Automated certificate renewal cron job is already configured. No changes needed."
+# Create the cron job file with the correct content
+echo "${CRON_JOB_LINE}" > "${CRON_FILE_PATH}"
+
+if [ $? -eq 0 ]; then
+    log_success "Successfully created/updated the certificate renewal cron job file."
+    # Set appropriate permissions
+    chmod 0644 "${CRON_FILE_PATH}"
 else
-    log_info "Adding automated certificate renewal cron job..."
-    # Add the new job to the existing cron jobs (or create a new crontab if none exists)
-    (echo "${CURRENT_CRON}"; echo "${CRON_JOB_LINE}") | crontab -
-    if [ $? -eq 0 ]; then
-        log_success "Successfully added the certificate renewal cron job."
-    else
-        log_fatal "Failed to add the certificate renewal cron job."
-    fi
+    log_fatal "Failed to create/update the certificate renewal cron job file."
 fi
+
+# Also, clean up the user's crontab to remove any old, incorrect entries
+log_info "Cleaning up old cron entries from user's crontab..."
+(crontab -l 2>/dev/null | grep -vF "${CRON_JOB_COMMAND}") | crontab -
+log_info "Cleanup of user's crontab complete."
 
 log_info "--- Automated certificate renewal setup complete ---"

@@ -1,98 +1,85 @@
 #!/bin/bash
 #
 # File: phoenix_hypervisor_lxc_101.sh
-# Description: Self-contained setup for Nginx API Gateway in LXC 101. Copies configs from /tmp/phoenix_run/, generates certs if needed, and starts the service with NJS module support.
+# Description: Self-contained setup for Nginx API Gateway in LXC 101. This script
+#              handles the initial installation and basic configuration of Nginx.
+#              The final site configuration and certificate deployment are handled
+#              by the 'phoenix sync all' command to resolve timing issues.
 #
-# Arguments:
-#   $1 - The CTID of the container (expected to be 101).
-#
-# Dependencies:
-#   - phoenix_hypervisor_common_utils.sh: For logging and utility functions.
-#   - step-cli and step-ca binaries (installed by feature_install_step_ca.sh).
-#
-# Version: 1.0.0
-# Author: Phoenix Hypervisor Team
+# Version: 2.0.0 (Remediated)
+# Author: Roo
 
 set -e
 
 # --- SCRIPT INITIALIZATION ---
+# Use a temporary source for utils as this runs during container creation.
 source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
-# --- Function to ensure Nginx certificates are trusted ---
-ensure_ca_trust() {
-    # This function is now deprecated. The `trusted_ca` feature script
-    # is responsible for installing the root CA certificate into the
-    # system's trust store. This ensures a single source of truth and
-    # avoids redundant or conflicting logic.
-    echo "CA trust is now managed by the 'trusted_ca' feature. Skipping redundant setup."
-}
 # --- User and Group Management ---
-echo "Ensuring current user is in the www-data group..."
+log_info "Ensuring current user is in the www-data group..."
 usermod -aG www-data $(whoami)
 
 # --- Package Installation ---
-echo "Updating package lists and installing Nginx..."
+log_info "Updating package lists and installing Nginx..."
 apt-get update
-
-# Install Nginx and the NJS module with robust error handling
 if ! apt-get install -y nginx-full; then
-    echo "FATAL: Failed to install nginx-full." >&2
-    exit 1
+    log_fatal "Failed to install nginx-full."
 fi
-echo "Nginx installed successfully."
+log_success "Nginx installed successfully."
 
-# --- CONFIGURATION DEPLOYMENT ---
+# --- CONFIGURATION DEPLOYMENT (INITIAL SETUP ONLY) ---
 temp_dir="/tmp/phoenix_run"
 
 # --- Define Directories ---
 SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
 SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
+SSL_DIR="/etc/nginx/ssl"
+ACME_WEBROOT="/var/www/html"
 
 # --- Clean and Create Directories ---
-echo "Cleaning up and creating Nginx directory structure..."
+log_info "Cleaning up and creating Nginx directory structure..."
 rm -rf $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR /etc/nginx/stream.d /etc/nginx/conf.d/*
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR /var/cache/nginx
-chown -R www-data:www-data /var/cache/nginx
+mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SSL_DIR $ACME_WEBROOT /var/cache/nginx
+chown -R www-data:www-data /var/cache/nginx $ACME_WEBROOT
 
-# --- Copy Core Configuration Files ---
-echo "Copying core Nginx configuration files..."
-cp "${temp_dir}/nginx.conf" "/etc/nginx/nginx.conf" || { echo "Master nginx.conf missing in ${temp_dir}." >&2; exit 1; }
-cp "${temp_dir}/sites-available/gateway" "$SITES_AVAILABLE_DIR/gateway" || { echo "Generated gateway config file missing in ${temp_dir}." >&2; exit 1; }
+# --- Copy Core Nginx Configuration ---
+log_info "Copying core Nginx configuration file..."
+cp "${temp_dir}/nginx.conf" "/etc/nginx/nginx.conf" || log_fatal "Master nginx.conf missing in ${temp_dir}."
 
-# --- Link Enabled Site ---
-echo "Enabling the main gateway site..."
-ln -sf "$SITES_AVAILABLE_DIR/gateway" "$SITES_ENABLED_DIR/gateway"
+# --- Create a Default/Placeholder Site ---
+# This ensures that Nginx can start successfully before certificates are available.
+# The 'phoenix sync all' command will overwrite this with the real gateway config.
+log_info "Creating a placeholder default site to ensure Nginx starts..."
+cat > "$SITES_AVAILABLE_DIR/default" <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
 
-# --- Certificate Trust and Generation ---
-# This is no longer needed as Nginx is now a TCP proxy and does not terminate TLS.
-# Traefik will handle all certificate management.
-ensure_ca_trust
+    server_name _;
 
-# --- Certificate Deployment ---
-echo "Deploying SSL certificates for Nginx..."
-mkdir -p /etc/nginx/ssl
-cp "${temp_dir}/nginx.internal.thinkheads.ai.crt" "/etc/nginx/ssl/nginx.internal.thinkheads.ai.crt"
-cp "${temp_dir}/nginx.internal.thinkheads.ai.key" "/etc/nginx/ssl/nginx.internal.thinkheads.ai.key"
-cp "${temp_dir}/portainer.internal.thinkheads.ai.crt" "/etc/nginx/ssl/portainer.internal.thinkheads.ai.crt"
-cp "${temp_dir}/portainer.internal.thinkheads.ai.key" "/etc/nginx/ssl/portainer.internal.thinkheads.ai.key"
-echo "SSL certificates deployed."
+    location / {
+        return 200 'Nginx is running. Gateway configuration pending.';
+        add_header Content-Type text/plain;
+    }
+}
+EOF
+ln -sf "$SITES_AVAILABLE_DIR/default" "$SITES_ENABLED_DIR/default"
 
 # --- Service Management and Validation ---
-echo "Testing Nginx configuration..."
-nginx -t
+log_info "Testing Nginx configuration with placeholder site..."
+if ! nginx -t; then
+    log_fatal "Nginx configuration test failed even with a placeholder site. Check nginx.conf."
+fi
 
-echo "Enabling and restarting Nginx service..."
+log_info "Enabling and restarting Nginx service..."
 systemctl enable nginx
 systemctl restart nginx
 
-echo "Performing health check on Nginx service..."
+log_info "Performing health check on Nginx service..."
 if ! systemctl is-active --quiet nginx; then
-    echo "Nginx service health check failed. The service is not running." >&2
-    exit 1
+    log_fatal "Nginx service health check failed. The service is not running."
 fi
 
-echo "Nginx API Gateway has been configured successfully in LXC 101."
-
-# DNS update is now handled by lxc-manager.sh
+log_success "Nginx has been installed and started successfully in LXC 101. Final configuration will be applied by 'phoenix sync all'."
 
 exit 0

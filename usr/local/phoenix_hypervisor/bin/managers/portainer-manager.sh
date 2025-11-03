@@ -126,22 +126,15 @@ retry_api_call() {
 # =====================================================================================
 get_portainer_jwt() {
     log_info "Attempting to authenticate with Portainer API..."
-    local GATEWAY_HOSTNAME="nginx.internal.thinkheads.ai"
     local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
-    local PORTAINER_PORT="443"
-    local GATEWAY_URL="https://${GATEWAY_HOSTNAME}"
+    local GATEWAY_URL="https://${PORTAINER_HOSTNAME}"
     local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
     local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
 
-    log_debug "HYPERVISOR_CONFIG_FILE: ${HYPERVISOR_CONFIG_FILE}"
-    log_debug "Raw admin_user from config: $(jq -r '.portainer_api.admin_user' "$HYPERVISOR_CONFIG_FILE")"
-    log_debug "Raw admin_password from config: $(jq -r '.portainer_api.admin_password' "$HYPERVISOR_CONFIG_FILE")"
-
     log_debug "Gateway URL: ${GATEWAY_URL}"
-    log_debug "Target Host: ${PORTAINER_HOSTNAME}"
     log_debug "Portainer Username: ${USERNAME}"
-    log_debug "Portainer Password (first 3 chars): ${PASSWORD:0:3}..." # Mask password for security
+    log_debug "Portainer Password (first 3 chars): ${PASSWORD:0:3}..."
 
     if [ ! -f "$CA_CERT_PATH" ]; then
         log_fatal "CA certificate file not found at: ${CA_CERT_PATH}. Cannot authenticate with Portainer API."
@@ -152,22 +145,18 @@ get_portainer_jwt() {
     AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
 
     local JWT_RESPONSE
-    local nginx_ip=$(jq -r '.lxc_configs."101".network_config.ip | split("/")[0]' "${PHOENIX_BASE_DIR}/etc/phoenix_lxc_configs.json")
-    
     JWT_RESPONSE=$(retry_api_call -X POST \
         -H "Content-Type: application/json" \
-        -H "Host: ${PORTAINER_HOSTNAME}" \
         --cacert "$CA_CERT_PATH" \
-        --resolve "${GATEWAY_HOSTNAME}:${PORTAINER_PORT}:${nginx_ip}" \
         -d "$AUTH_PAYLOAD" \
-        "https://${PORTAINER_HOSTNAME}/api/auth")
+        "${GATEWAY_URL}/api/auth")
 
     if [ -n "$JWT_RESPONSE" ]; then
         JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
     fi
 
     if [ -z "$JWT" ]; then
-      log_fatal "Failed to authenticate with Portainer API after ${MAX_RETRIES} attempts."
+      log_fatal "Failed to authenticate with Portainer API after multiple attempts."
     fi
     log_success "Successfully authenticated with Portainer API."
     echo "$JWT"
@@ -245,21 +234,33 @@ deploy_portainer_instances() {
                 # --- BEGIN: Idempotent Docker Volume Creation ---
                 log_info "Ensuring Portainer NFS Docker volume exists on VM ${VMID}..."
                 local nfs_server_ip=$(get_global_config_value '.network.nfs_server')
-                local volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/portainer/data portainer_data_nfs"
                 
-                log_info "Checking for existing Docker volume 'portainer_data_nfs' inside VM ${VMID}..."
-                # This command now correctly checks the exit code from the guest.
+                # --- Idempotent Docker Volume Creation for Portainer ---
+                local portainer_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/portainer/data portainer_data_nfs"
                 if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect portainer_data_nfs > /dev/null 2>&1"; then
-                    log_info "Docker volume 'portainer_data_nfs' already exists. No action needed."
+                    log_info "Docker volume 'portainer_data_nfs' already exists."
                 else
-                    log_info "Portainer Docker volume not found. Creating it now..."
-                    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "$volume_create_command"; then
-                        log_fatal "Failed to create the Portainer Docker volume on VM ${VMID}."
-                    else
-                        log_success "Successfully created Portainer Docker volume 'portainer_data_nfs'."
-                    fi
+                    log_info "Creating Portainer Docker volume..."
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$portainer_volume_create_command" || log_fatal "Failed to create Portainer Docker volume."
                 fi
-                # --- END: Idempotent Docker Volume Creation ---
+
+                # --- Idempotent Docker Volume Creation for Qdrant ---
+                local qdrant_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/qdrant/storage qdrant_data_nfs"
+                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect qdrant_data_nfs > /dev/null 2>&1"; then
+                    log_info "Docker volume 'qdrant_data_nfs' already exists."
+                else
+                    log_info "Creating Qdrant Docker volume..."
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$qdrant_volume_create_command" || log_fatal "Failed to create Qdrant Docker volume."
+                fi
+
+                # --- Idempotent Docker Volume Creation for ThinkHeads AI App ---
+                local thinkheads_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/thinkheads_ai/app thinkheads_ai_app_data_nfs"
+                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect thinkheads_ai_app_data_nfs > /dev/null 2>&1"; then
+                    log_info "Docker volume 'thinkheads_ai_app_data_nfs' already exists."
+                else
+                    log_info "Creating ThinkHeads AI App Docker volume..."
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$thinkheads_volume_create_command" || log_fatal "Failed to create ThinkHeads AI App Docker volume."
+                fi
 
                 # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
                 local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
@@ -838,7 +839,7 @@ sync_portainer_endpoints() {
                 --arg name "$AGENT_NAME" \
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
-                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": true }' | \
+                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": false }' | \
                 retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
                     -H "Authorization: Bearer ${JWT}" \
                     -H "Content-Type: application/json" \
