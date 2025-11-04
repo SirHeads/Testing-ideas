@@ -1,0 +1,46 @@
+graph TD
+    subgraph Hypervisor [Proxmox Host]
+        A[Firewall]
+        B[DNS Server]
+        C[Step CLI]
+        D[Certificate Manager]
+    end
+
+    subgraph LXC_103 [LXC 103 - Step CA]
+        E[Step CA Service]
+    end
+
+    subgraph LXC_101 [LXC 101 - Nginx Gateway]
+        F[Nginx]
+    end
+
+    subgraph LXC_102 [LXC 102 - Traefik]
+        G[Traefik]
+    end
+
+    subgraph VM_1001 [VM 1001 - Portainer Server]
+        H[Docker] --> I[Portainer Server Container]
+    end
+
+    subgraph VM_1002 [VM 1002 - App Host]
+        J[Docker] --> K[Portainer Agent Container]
+        J --> L[Application Stacks]
+    end
+
+    User -- phoenix sync all --> D
+    D -- Requests Certs --> E
+    D -- Places Certs --> F
+    D -- Places Certs --> I
+    D -- Places Certs --> G
+
+    Internet -- HTTPS:443 --> A
+    A --> F
+    F -- HTTP:80 --> G
+    G -- Routes to --> I
+    G -- Routes to --> K
+    G -- Routes to --> L
+
+    B -- Resolves *.internal.thinkheads.ai --> F
+
+    I -- Manages --> K
+    I -- Manages --> L

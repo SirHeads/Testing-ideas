@@ -31,6 +31,8 @@ CERT_VALIDITY="24h" # 24 hours
 # =====================================================================================
 check_renewal_needed() {
     local cert_path="$1"
+    shift
+    local required_sans=("$@")
 
     if [ ! -f "$cert_path" ]; then
         log_info "Certificate not found at '${cert_path}'. Renewal is required."
@@ -40,6 +42,21 @@ check_renewal_needed() {
     if ! openssl x509 -in "$cert_path" -checkend "$RENEWAL_THRESHOLD_SECONDS" > /dev/null 2>&1; then
         log_info "Certificate at '${cert_path}' is expiring within the threshold. Renewal is required."
         return 0
+    fi
+
+    # Check SANs if required SANs are provided
+    if [ ${#required_sans[@]} -gt 0 ]; then
+        local existing_sans
+        existing_sans=$(openssl x509 -in "$cert_path" -noout -text | grep "DNS:" | sed 's/DNS://g' | tr -d ' ' | tr ',' '\n' | sort)
+        local required_sans_sorted
+        required_sans_sorted=$(printf "%s\n" "${required_sans[@]}" | sort)
+
+        if [ "$existing_sans" != "$required_sans_sorted" ]; then
+            log_info "Certificate SANs do not match manifest. Renewal is required."
+            log_debug "Existing SANs: $existing_sans"
+            log_debug "Required SANs: $required_sans_sorted"
+            return 0
+        fi
     fi
 
     log_info "Certificate at '${cert_path}' is valid and does not need renewal."
@@ -64,6 +81,8 @@ renew_certificate() {
     local key_path="$3"
     local owner="$4"
     local permissions="$5"
+    shift 5
+    local sans=("$@")
 
     log_info "Attempting to renew certificate for '${common_name}'..."
 
@@ -76,18 +95,46 @@ renew_certificate() {
         return 1
     fi
 
+    local san_flags=""
+    # If the sans array is empty or contains only an empty string, default to the common_name.
+    if [ ${#sans[@]} -eq 0 ] || { [ "${#sans[@]}" -eq 1 ] && [ -z "${sans[0]}" ]; }; then
+        sans=("$common_name")
+    fi
+
+    for san in "${sans[@]}"; do
+        # Ensure we don't add an empty --san flag from a malformed array.
+        if [ -n "$san" ]; then
+            san_flags+=" --san ${san}"
+        fi
+    done
+
     local step_command="step ca certificate \"${common_name}\" \"${cert_path}\" \"${key_path}\" \
         --provisioner admin@thinkheads.ai \
         --provisioner-password-file \"${provisioner_password_file}\" \
-        --not-after ${CERT_VALIDITY} --force"
+        --not-after ${CERT_VALIDITY} --force ${san_flags}"
 
     if ! eval "$step_command"; then
         log_error "Failed to generate new certificate for '${common_name}'."
         return 1
     fi
 
+    # Set directory permissions first
+    local cert_dir
+    cert_dir=$(dirname "$cert_path")
+    if [ "$common_name" == "nginx.internal.thinkheads.ai" ]; then
+        log_info "Setting special directory permissions for Nginx..."
+        chmod 755 "$cert_dir" || log_warn "Failed to set directory permissions for Nginx."
+    fi
+
     chown "$owner" "$cert_path" "$key_path" || log_warn "Failed to set ownership for new certificate files."
-    chmod "$permissions" "$cert_path" "$key_path" || log_warn "Failed to set permissions for new certificate files."
+    
+    # Special handling for Nginx key permissions
+    if [ "$common_name" == "nginx.internal.thinkheads.ai" ]; then
+        chmod 644 "$key_path" || log_warn "Failed to set permissions for Nginx private key."
+        chmod 644 "$cert_path" || log_warn "Failed to set permissions for Nginx public cert."
+    else
+        chmod "$permissions" "$cert_path" "$key_path" || log_warn "Failed to set permissions for new certificate files."
+    fi
 
     log_success "Successfully renewed certificate for '${common_name}'."
     return 0
@@ -98,6 +145,12 @@ renew_certificate() {
 # Description: Main entry point for the script.
 # =====================================================================================
 main() {
+    local force_renewal=false
+    if [[ "$1" == "--force" ]]; then
+        force_renewal=true
+        log_info "Forcing renewal of all certificates."
+    fi
+
     log_info "--- Starting Certificate Renewal Manager ---"
 
     # Ensure the Step CLI is bootstrapped before trying to use it
@@ -114,12 +167,26 @@ main() {
         local owner=$(echo "$cert_config" | jq -r '.owner')
         local permissions=$(echo "$cert_config" | jq -r '.permissions')
         local post_renewal_command=$(echo "$cert_config" | jq -r '.post_renewal_command')
+        
+        # Read SANs from the manifest
+        local sans_array
+        readarray -t sans_array < <(echo "$cert_config" | jq -r '.sans[]? // ""')
 
         log_info "Processing certificate for: ${common_name}"
 
-        if check_renewal_needed "$cert_path"; then
-            if renew_certificate "$common_name" "$cert_path" "$key_path" "$owner" "$permissions"; then
+        if [ "$force_renewal" = true ] || check_renewal_needed "$cert_path" "${sans_array[@]}"; then
+            if renew_certificate "$common_name" "$cert_path" "$key_path" "$owner" "$permissions" "${sans_array[@]}"; then
                 log_info "Executing post-renewal command: ${post_renewal_command}"
+                if ! eval "$post_renewal_command"; then
+                    log_error "Post-renewal command failed for '${common_name}'."
+                else
+                    log_success "Post-renewal command executed successfully."
+                fi
+            fi
+        else
+            # If not forcing, still run the post-renewal for nginx to ensure permissions
+            if [ "$common_name" == "nginx.internal.thinkheads.ai" ]; then
+                log_info "Forcing post-renewal command for Nginx to ensure correct permissions..."
                 if ! eval "$post_renewal_command"; then
                     log_error "Post-renewal command failed for '${common_name}'."
                 else
@@ -134,4 +201,4 @@ main() {
 }
 
 # --- Script execution ---
-main
+main "$@"

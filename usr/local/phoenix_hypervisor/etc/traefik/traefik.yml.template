@@ -3,7 +3,7 @@ global:
   sendAnonymousUsage: false
 
 log:
-  level: INFO
+  level: DEBUG
 
 ping:
   entryPoint: "traefik"

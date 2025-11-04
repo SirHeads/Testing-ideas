@@ -100,7 +100,7 @@ EOF
             }),
             ($vm_config.vms[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": $gateway_ip
+                "ip": (if .traefik_service.name == "portainer-agent" then (.network_config.ip | split("/")[0]) else $gateway_ip end)
             }),
             # 3. Add records for all guests (LXC and VM) that need to be addressed by their own name
             ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
@@ -118,7 +118,6 @@ EOF
             }),
             # 5. Add static records
             { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
-            { "hostname": "portainer-agent.internal.thinkheads.ai", "ip": $gateway_ip },
             { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip }
         ] | unique_by(.hostname)
         '

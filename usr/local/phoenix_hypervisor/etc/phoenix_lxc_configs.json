@@ -441,6 +441,14 @@
             "gpu_assignment": "none",
             "unprivileged": true,
             "portainer_role": "infrastructure",
+            "id_maps": [
+                {
+                    "type": "gid",
+                    "host_id": 33,
+                    "container_id": 33,
+                    "size": 1
+                }
+            ],
             "clone_from_ctid": "900",
             "features": [
                 "base_setup",
