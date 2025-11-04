@@ -37,7 +37,9 @@ fi
 
 # Also, clean up the user's crontab to remove any old, incorrect entries
 log_info "Cleaning up old cron entries from user's crontab..."
-(crontab -l 2>/dev/null | grep -vF "${CRON_JOB_COMMAND}") | crontab -
+# The following command ensures that the script doesn't fail if the user has no crontab,
+# or if the crontab is empty.
+(crontab -l 2>/dev/null | grep -vF "${CRON_JOB_COMMAND}" || true) | crontab -
 log_info "Cleanup of user's crontab complete."
 
 log_info "--- Automated certificate renewal setup complete ---"

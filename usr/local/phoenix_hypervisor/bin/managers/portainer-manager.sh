@@ -148,8 +148,9 @@ get_portainer_jwt() {
     JWT_RESPONSE=$(retry_api_call -X POST \
         -H "Content-Type: application/json" \
         --cacert "$CA_CERT_PATH" \
+        --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" \
         -d "$AUTH_PAYLOAD" \
-        "${GATEWAY_URL}/api/auth")
+        "${GATEWAY_URL}/api/auth" --verbose)
 
     if [ -n "$JWT_RESPONSE" ]; then
         JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
@@ -162,6 +163,74 @@ get_portainer_jwt() {
     echo "$JWT"
 }
 
+
+# =====================================================================================
+# Function: ensure_portainer_certificates
+# Description: Ensures that a valid TLS certificate for Portainer is generated and
+#              in place before the service starts.
+# Arguments:
+#   $1 - The VMID of the Portainer server.
+#   $2 - The persistent volume path on the hypervisor.
+#   $3 - The FQDN for the Portainer service.
+# Returns:
+#   None. Exits with a fatal error if certificate generation fails.
+# =====================================================================================
+ensure_portainer_certificates() {
+    local VMID="$1"
+    local persistent_volume_path="$2"
+    local portainer_fqdn="$3"
+    
+    log_info "Ensuring TLS certificates are in place for Portainer on VM ${VMID}..."
+
+    local hypervisor_cert_dir="${persistent_volume_path}/portainer/certs"
+    mkdir -p "$hypervisor_cert_dir" || log_fatal "Failed to create Portainer cert directory on hypervisor."
+
+    local cert_file="${hypervisor_cert_dir}/portainer.crt"
+    local key_file="${hypervisor_cert_dir}/portainer.key"
+
+    # Idempotency Check: If certs exist and are valid, do nothing.
+    if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
+        if openssl x509 -in "$cert_file" -checkend 86400 >/dev/null 2>&1; then
+            log_info "Existing Portainer certificate is valid for more than 24 hours. Skipping generation."
+            return 0
+        else
+            log_warn "Existing Portainer certificate is expiring soon or has expired. Generating a new one."
+        fi
+    fi
+
+    log_info "Requesting new Portainer certificate for ${portainer_fqdn}..."
+    
+    # Ensure the host's step-cli is bootstrapped
+    step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(cat /mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint)" --force
+
+    # Dynamically get the IP address for the SAN
+    local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
+    if [ -z "$vm_ip" ]; then
+        log_fatal "Could not determine IP address for VM ${VMID} to include in certificate SAN."
+    fi
+
+    log_info "Generating certificate with SANs for both FQDN (${portainer_fqdn}) and IP (${vm_ip})..."
+    if ! step ca certificate "$portainer_fqdn" "$cert_file" "$key_file" --provisioner "admin@thinkheads.ai" --provisioner-password-file "/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt" --force --san "$vm_ip"; then
+        log_fatal "Failed to obtain Portainer certificate from Step CA."
+    fi
+
+    # --- User Requested Validation ---
+    log_info "Validating newly generated certificate..."
+    openssl x509 -in "$cert_file" -noout -text | grep -A 2 "Validity"
+    if ! openssl x509 -in "$cert_file" -checkend 0 >/dev/null 2>&1; then
+        log_fatal "Newly generated certificate is already expired!"
+    fi
+    log_success "Certificate validation passed."
+    # --- End Validation ---
+
+    log_success "Portainer TLS certificate generated and placed in ${hypervisor_cert_dir}."
+
+    log_info "Setting ownership of certs directory to nobody:nogroup for NFS access..."
+    if ! chown -R nobody:nogroup "$hypervisor_cert_dir"; then
+        log_fatal "Failed to set ownership on Portainer certs directory."
+    fi
+    log_success "Permissions set successfully."
+}
 
 # =====================================================================================
 # Function: deploy_portainer_instances
@@ -264,17 +333,9 @@ deploy_portainer_instances() {
 
                 # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
                 local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
-                local hypervisor_cert_dir="${hypervisor_portainer_dir}/certs"
-                
-                log_info "Ensuring correct permissions on Portainer certs directory..."
-                mkdir -p "$hypervisor_cert_dir"
-                if [ "$(stat -c '%U:%G' "$hypervisor_cert_dir")" != "nobody:nogroup" ]; then
-                    log_info "Setting ownership to nobody:nogroup for certs directory..."
-                    chown nobody:nogroup "$hypervisor_cert_dir" || log_fatal "Failed to set ownership on Portainer certs directory."
-                fi
-
-                local vm_cert_dir="${vm_mount_point}/portainer/certs"
-                # Certificate generation is now handled by the centralized certificate-renewal-manager.sh
+                # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
+                local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
+                ensure_portainer_certificates "$VMID" "$persistent_volume_path" "$portainer_fqdn"
                 # --- END: DYNAMIC CERTIFICATE GENERATION ---
 
                 # Copy the docker-compose.yml and modify it for TLS
@@ -306,7 +367,7 @@ deploy_portainer_instances() {
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'docker compose up -d' for Portainer server on VM $VMID."
                 else
-                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker ${DOCKER_TLS_FLAGS} compose -f ${compose_file_path} up -d"; then
+                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker compose -f ${compose_file_path} up -d"; then
                         log_fatal "Failed to deploy Portainer server on VM $VMID."
                     fi
                 fi
@@ -512,12 +573,34 @@ sync_all() {
     fi
     log_success "DNS server configuration synchronized."
 
+    # --- FIX: Ensure firewall rules are always synchronized ---
+    log_info "Synchronizing firewall configuration..."
+    if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh" "$HYPERVISOR_CONFIG_FILE"; then
+        log_fatal "Firewall synchronization failed. Aborting."
+    fi
+    log_success "Firewall configuration synchronized."
+
+    # --- FIX: Ensure firewall rules are always synchronized ---
+    log_info "Synchronizing firewall configuration..."
+    if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh" "$HYPERVISOR_CONFIG_FILE"; then
+        log_fatal "Firewall synchronization failed. Aborting."
+    fi
+    log_success "Firewall configuration synchronized."
+    
+    # --- NEW: Run Certificate Manager ---
+    log_info "Running certificate renewal manager to ensure all certificates are up to date..."
+    if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
+        log_fatal "Certificate renewal manager failed. Aborting."
+    fi
+    log_success "Certificate renewal manager completed successfully."
+
 
     # --- STAGE 2: DEPLOY & VERIFY UPSTREAM SERVICES ---
     log_info "--- Stage 2: Deploying and Verifying Portainer ---"
     local portainer_vmid="1001"
     if qm status "$portainer_vmid" > /dev/null 2>&1; then
         log_info "Portainer VM (1001) is running. Proceeding with deployment."
+        
         deploy_portainer_instances "$reset_portainer_on_sync"
     else
         log_warn "Portainer VM (1001) is not running. Skipping all subsequent stages."
@@ -556,14 +639,44 @@ sync_all() {
     if ! pct push 101 "${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway" /etc/nginx/sites-available/gateway; then
         log_fatal "Failed to push generated gateway config to NGINX container."
     fi
+   log_info "Creating symbolic link to enable NGINX gateway site..."
+   if ! pct exec 101 -- ln -sf /etc/nginx/sites-available/gateway /etc/nginx/sites-enabled/gateway; then
+       log_fatal "Failed to create symbolic link for NGINX gateway."
+   fi
     log_info "Reloading Nginx in container 101..."
     if ! pct exec 101 -- systemctl reload nginx; then
         log_fatal "Failed to reload Nginx in container 101." "pct exec 101 -- journalctl -u nginx -n 50"
     fi
     log_success "NGINX gateway configuration applied and reloaded successfully."
 
+    # --- BEGIN DEFINITIVE VERIFICATION ---
+    log_info "Verifying Nginx listener on port 443 inside container 101..."
+    local nginx_check_retries=10
+    local nginx_check_delay=3
+    local nginx_check_attempt=1
+    while [ "$nginx_check_attempt" -le "$nginx_check_retries" ]; do
+        if pct exec 101 -- ss -tuln | grep -q ':443'; then
+            log_success "Nginx is listening on port 443."
+            break
+        fi
+        log_warn "Nginx is not yet listening on port 443. Retrying in ${nginx_check_delay} seconds... (Attempt ${nginx_check_attempt}/${nginx_check_retries})"
+        sleep "$nginx_check_delay"
+        nginx_check_attempt=$((nginx_check_attempt + 1))
+    done
+
+    if [ "$nginx_check_attempt" -gt "$nginx_check_retries" ]; then
+        log_fatal "Nginx failed to start listening on port 443 after multiple retries. Aborting."
+    fi
+    # --- END DEFINITIVE VERIFICATION ---
+
     # --- STAGE 5: SYNCHRONIZE STACKS ---
     log_info "--- Stage 5: Synchronizing Portainer Endpoints and Docker Stacks ---"
+    # --- FIX: Proactively restart Portainer to avoid security timeout before API calls ---
+    log_info "Proactively restarting Portainer container to reset security timeout..."
+    run_qm_command guest exec "$portainer_vmid" -- /bin/bash -c "docker restart portainer_server" || log_warn "Failed to restart Portainer container. It may not have been running."
+    log_info "Waiting for Portainer to initialize after restart..."
+    sleep 15 # Give Portainer ample time to initialize after restart
+
     local JWT=$(get_portainer_jwt | tr -d '\n')
     if [ -z "$JWT" ]; then
         log_fatal "Failed to get Portainer JWT. Aborting stack synchronization."
@@ -593,7 +706,7 @@ sync_all() {
         
         log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         local ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         
         if [ -z "$ENDPOINT_ID" ]; then
@@ -652,7 +765,7 @@ sync_stack() {
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
         local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         if [ -z "$ENDPOINT_ID" ]; then
             log_fatal "Could not find Portainer environment for VMID ${VMID} (URL: ${ENDPOINT_URL}). Ensure agent is running and environment is created."
@@ -733,18 +846,18 @@ sync_stack() {
             local FILE_CONTENT=$(cat "$full_source_path")
 
             local configs_response
-            configs_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}")
+            configs_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}")
             local EXISTING_CONFIG_ID=$(echo "$configs_response" | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
             if [ -n "$EXISTING_CONFIG_ID" ]; then
                 log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating..."
-                retry_api_call --cacert "$CA_CERT_PATH" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"
+                retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"
             fi
 
             log_info "Creating Portainer Config '${CONFIG_NAME}'..."
             local CONFIG_PAYLOAD=$(jq -n --arg name "${CONFIG_NAME}" --arg data "${FILE_CONTENT}" '{Name: $name, Data: $data}')
             local CONFIG_RESPONSE
-            CONFIG_RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
+            CONFIG_RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
               -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
             local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
             
@@ -758,7 +871,7 @@ sync_stack() {
 
     local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}"
     local stacks_response
-    stacks_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
+    stacks_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
     local STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "$STACK_DEPLOY_NAME" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
     if [ -n "$STACK_EXISTS_ID" ]; then
@@ -769,7 +882,7 @@ sync_stack() {
             --argjson configs "$CONFIG_IDS_JSON" \
             '{StackFilePath: $path, Env: $env, Configs: $configs, Prune: true}')
         local RESPONSE
-        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
+        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to update stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
@@ -784,7 +897,7 @@ sync_stack() {
             --argjson configs "$CONFIG_IDS_JSON" \
             '{Name: $name, ComposeFilePathInContainer: $path, Env: $env, Configs: $configs}')
         local RESPONSE
-        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
+        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to deploy stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
@@ -827,7 +940,7 @@ sync_portainer_endpoints() {
         log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
         
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
         local EXISTING_ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
         if [ -n "$EXISTING_ENDPOINT_ID" ]; then
@@ -840,7 +953,7 @@ sync_portainer_endpoints() {
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
                 '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": false }' | \
-                retry_api_call --cacert "$CA_CERT_PATH" -X POST "${PORTAINER_URL}/api/endpoints" \
+                retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/endpoints" \
                     -H "Authorization: Bearer ${JWT}" \
                     -H "Content-Type: application/json" \
                     --data-binary @-)

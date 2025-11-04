@@ -91,10 +91,20 @@ initialize_step_ca() {
          log_fatal "Failed to initialize Smallstep CA in container $CTID."
      fi
     log_success "Smallstep CA initialized successfully."
- 
-   log_info "Dumping content of $CA_CONFIG_FILE after initialization for debugging:"
-   cat "$CA_CONFIG_FILE" || log_warn "Could not read $CA_CONFIG_FILE"
-   log_info "End of $CA_CONFIG_FILE dump."
+
+   # --- BEGIN BEST PRACTICE FIX: Configure server-side certificate bundling ---
+   log_info "Configuring CA to automatically bundle the intermediate certificate..."
+   local jq_filter='.authority.claims = { "x5cChain": "intermediate" }'
+   if ! jq "$jq_filter" "$CA_CONFIG_FILE" > "${CA_CONFIG_FILE}.tmp"; then
+       log_fatal "jq command failed to add certificate bundling claim."
+   fi
+   mv "${CA_CONFIG_FILE}.tmp" "$CA_CONFIG_FILE"
+   log_success "CA configured for server-side certificate bundling."
+   # --- END BEST PRACTICE FIX ---
+
+  log_info "Dumping content of $CA_CONFIG_FILE after initialization for debugging:"
+  cat "$CA_CONFIG_FILE" || log_warn "Could not read $CA_CONFIG_FILE"
+  log_info "End of $CA_CONFIG_FILE dump."
 }
 
 # =====================================================================================

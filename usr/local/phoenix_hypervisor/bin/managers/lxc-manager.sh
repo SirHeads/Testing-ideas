@@ -369,6 +369,19 @@ apply_lxc_configurations() {
         done
     fi
 
+    # --- Apply ID Mappings ---
+    local id_maps
+    id_maps=$(jq_get_array "$CTID" "(.id_maps // [])[]" || echo "")
+    if [ -n "$id_maps" ]; then
+        log_info "Applying ID mappings for CTID $CTID..."
+        # Clear existing idmap entries
+        sed -i '/^lxc.idmap:/d' "$conf_file"
+        
+        # Always map the root user
+        echo "lxc.idmap: u 0 100000 65536" >> "$conf_file"
+        echo "lxc.idmap: g 0 100000 65536" >> "$conf_file"
+    fi
+
     log_info "Configurations applied successfully for CTID $CTID."
 }
 
