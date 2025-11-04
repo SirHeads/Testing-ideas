@@ -132,6 +132,26 @@ get_portainer_jwt() {
     local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
     local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
 
+    # --- Robust API Ready Wait ---
+    local MAX_WAIT_ATTEMPTS=12
+    local WAIT_INTERVAL=5
+    log_info "Waiting for Portainer API to be fully initialized..."
+    for ((i=1; i<=MAX_WAIT_ATTEMPTS; i++)); do
+        local status_response
+        status_response=$(curl -s --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" "${GATEWAY_URL}/api/system/status")
+        if echo "$status_response" | jq -e '.InstanceID' > /dev/null; then
+            log_success "Portainer API is initialized and ready."
+            break
+        fi
+        log_info "Portainer not yet initialized. Waiting ${WAIT_INTERVAL}s... (Attempt ${i}/${MAX_WAIT_ATTEMPTS})"
+        sleep "$WAIT_INTERVAL"
+    done
+
+    if ! echo "$status_response" | jq -e '.InstanceID' > /dev/null; then
+        log_fatal "Portainer API did not initialize within the expected time."
+    fi
+    # --- End Robust API Ready Wait ---
+
     log_debug "Gateway URL: ${GATEWAY_URL}"
     log_debug "Portainer Username: ${USERNAME}"
     log_debug "Portainer Password (first 3 chars): ${PASSWORD:0:3}..."
@@ -272,32 +292,24 @@ deploy_portainer_instances() {
 
                 # --- BEGIN: Idempotent Data Directory Creation ---
                 local hypervisor_portainer_data_dir="${hypervisor_portainer_dir}/data"
-                if [ "$reset_portainer_flag" = true ]; then
-                    log_warn "Resetting Portainer data directory as requested."
+                if [ "$PHOENIX_RESET_PORTAINER" = true ]; then
+                    log_warn "--- RESETTING PORTAINER ---"
+                    log_info "Stopping Portainer container to release volume lock..."
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "docker stop portainer_server" || log_warn "Portainer server container was not running or failed to stop cleanly."
+
                     log_info "Removing Portainer data directory from hypervisor..."
                     if [ -d "$hypervisor_portainer_data_dir" ]; then
                         rm -rf "$hypervisor_portainer_data_dir" || log_fatal "Failed to remove Portainer data directory."
                     fi
-                    log_info "Removing Portainer data directory from within VM ${VMID} to bypass NFS cache..."
-                    qm guest exec "$VMID" -- rm -rf "${vm_mount_point}/portainer/data" || log_warn "Failed to remove Portainer data directory from within VM. This may not be a fatal error."
-                    log_info "Removing existing Portainer Docker volume from VM ${VMID}..."
-                    qm guest exec "$VMID" -- /bin/bash -c "docker volume rm portainer_data_nfs" || log_warn "Failed to remove Portainer Docker volume. It might not have existed."
+                    log_info "--- PORTAINER RESET COMPLETE ---"
                 fi
-                log_info "Ensuring Portainer data directory exists at: ${hypervisor_portainer_data_dir}"
-                if [ ! -d "$hypervisor_portainer_data_dir" ]; then
-                    log_info "Creating Portainer data directory..."
-                    mkdir -p "$hypervisor_portainer_data_dir" || log_fatal "Failed to create Portainer data directory."
-                fi
- 
-                log_info "Ensuring correct permissions on Portainer data directory..."
-                if [ "$(stat -c '%U:%G' "$hypervisor_portainer_dir")" != "nobody:nogroup" ]; then
-                    log_info "Setting ownership to nobody:nogroup for parent directory..."
-                    chown nobody:nogroup "$hypervisor_portainer_dir" || log_fatal "Failed to set ownership on Portainer parent directory."
-                fi
-                if [ "$(stat -c '%U:%G' "$hypervisor_portainer_data_dir")" != "nobody:nogroup" ]; then
-                    log_info "Setting ownership to nobody:nogroup for data directory..."
-                    chown nobody:nogroup "$hypervisor_portainer_data_dir" || log_fatal "Failed to set ownership on Portainer data directory."
-                fi
+
+                # --- ATOMIC CREATION AND PERMISSION SETTING ---
+                log_info "Ensuring Portainer data directory exists and has correct NFS permissions..."
+                mkdir -p "$hypervisor_portainer_data_dir" || log_fatal "Failed to create Portainer data directory."
+                chown -R nobody:nogroup "$hypervisor_portainer_dir" || log_fatal "Failed to set ownership on Portainer parent directory."
+                chmod -R 777 "$hypervisor_portainer_dir" || log_fatal "Failed to set permissions on Portainer parent directory."
+                log_success "Portainer data directory is ready."
                 # --- END: Idempotent Data Directory Creation ---
 
                 # --- BEGIN: Idempotent Docker Volume Creation ---
@@ -395,7 +407,9 @@ deploy_portainer_instances() {
 
                 # The agent is now a standard non-TLS service. Traefik will handle TLS.
                 log_info "Starting Portainer agent..."
-                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes portainer/agent:latest"
+                local agent_image
+                agent_image=$(get_global_config_value '.docker.portainer_agent_image')
+                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes ${agent_image}"
 
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'docker run' for Portainer agent on VM $VMID."
@@ -499,14 +513,19 @@ setup_portainer_admin_user() {
     fi
 
     log_info "Attempting to create initial admin user '${ADMIN_USERNAME}' (or verify existence)..."
-    local INIT_PAYLOAD
-    INIT_PAYLOAD=$(jq -n --arg user "$ADMIN_USERNAME" --arg pass "$ADMIN_PASSWORD" '{username: $user, password: $pass}')
+    local password_file="/tmp/portainer_admin_password"
+    echo -n "$ADMIN_PASSWORD" > "$password_file"
+
+    # Push the password file to the VM
+    run_qm_command guest exec "$VMID" -- mkdir -p "/tmp"
+    run_qm_command guest exec "$VMID" -- /bin/bash -c "echo -n '${ADMIN_PASSWORD}' > ${password_file}"
+
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Admin user creation attempt ${attempt}/${MAX_RETRIES}..."
         
         local response
-        response=$(retry_api_call -X POST -H "Content-Type: application/json" -d "${INIT_PAYLOAD}" "${PORTAINER_URL}/api/users/admin/init")
+        response=$(retry_api_call -X POST -H "Content-Type: application/json" --data '{"Username":"'"$ADMIN_USERNAME"'", "Password":"'"$ADMIN_PASSWORD"'"}' "${PORTAINER_URL}/api/users/admin/init")
         
         local http_status
         http_status=$(echo "$response" | sed -n 's/.*HTTP_STATUS://p')

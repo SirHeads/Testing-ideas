@@ -1,89 +1,52 @@
-# End-to-End System Verification Plan
+# End-to-End `phoenix sync all` Diagnostics Plan
 
-This document contains a comprehensive, self-contained shell script designed to verify the health and proper functioning of the entire Phoenix Hypervisor environment. It consolidates the key checks from the individual diagnostic plans into a single, executable script.
+This document consolidates the individual diagnostic plans into a single, sequential workflow. By executing these steps in order, we can systematically validate each component of the Phoenix Hypervisor system and pinpoint the exact cause of the `phoenix sync all` failures.
 
-## Objective
+## Workflow Diagram
 
-To provide a repeatable and automated way to test the core components of the system, including DNS, certificate management, the Nginx gateway, and the Portainer API endpoint.
+```mermaid
+graph TD
+    A[Start] --> B{Stage 1: Hypervisor Prep};
+    B --> C{DNS};
+    B --> D{Firewall};
+    B --> E{Certificates};
+    C --> F{Stage 2: Service Mesh & Gateway};
+    D --> F;
+    E --> F;
+    F --> G{Nginx};
+    F --> H{Traefik};
+    G --> I{Stage 3: Portainer};
+    H --> I;
+    I --> J{Portainer API};
+    I --> K{Stack Deployment};
+    J --> L[Success];
+    K --> L;
+```
 
-## Verification Script
+## Stage 1: Hypervisor Preparation (DNS, Firewall, Certificates)
 
-The following script can be copied and executed on the Proxmox host to perform the end-to-end verification.
+This stage ensures the fundamental networking and security services on the Proxmox host are functioning correctly.
 
-```bash
-#!/bin/bash
+1.  **DNS Verification:** Execute all steps in `temp_docs/dns_diagnostics_plan.md`.
+2.  **Firewall and Connectivity Verification:** Execute all steps in `temp_docs/firewall_and_dns_analysis.md`.
+3.  **Certificate Verification:** Execute all steps in `temp_docs/certificate_verification_plan.md`.
 
-# --- Color Codes for Output ---
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+**Do not proceed to Stage 2 until all verifications in Stage 1 pass.**
 
-# --- Helper Functions ---
-print_header() {
-    echo -e "\n${YELLOW}--- $1 ---${NC}"
-}
+## Stage 2: Service Mesh and Gateway (LXC 101 & 102)
 
-print_success() {
-    echo -e "${GREEN}SUCCESS:${NC} $1"
-}
+This stage validates that the internal and external traffic routing is correctly configured.
 
-print_failure() {
-    echo -e "${RED}FAILURE:${NC} $1"
-}
+1.  **Nginx and Traefik Verification:** Execute all steps in `temp_docs/nginx_diagnostics_plan.md`.
 
-# --- Verification Starts ---
+**Do not proceed to Stage 3 until the end-to-end routing test in the Nginx/Traefik plan is successful.**
 
-print_header "Phase 1: DNS Resolution Verification"
-echo "--> Verifying dnsmasq service on host..."
-if systemctl is-active --quiet dnsmasq; then
-    print_success "dnsmasq service is active."
-else
-    print_failure "dnsmasq service is not running."
-fi
+## Stage 3: Portainer API and Stack Deployment (VM 1001 & 1002)
 
-echo "--> Testing host resolution for portainer.internal.thinkheads.ai..."
-if dig @127.0.0.1 portainer.internal.thinkheads.ai | grep -A1 "ANSWER SECTION" | grep -q "10.0.0.153"; then
-    print_success "Host correctly resolved portainer.internal.thinkheads.ai to the Nginx gateway."
-else
-    print_failure "Host failed to resolve portainer.internal.thinkheads.ai."
-fi
+This final stage verifies the application deployment layer.
 
-print_header "Phase 2: Certificate Verification"
-echo "--> Verifying Step-CA service health (LXC 103)..."
-if pct exec 103 -- systemctl is-active --quiet step-ca; then
-    print_success "Step-CA service is active in LXC 103."
-else
-    print_failure "Step-CA service is not running in LXC 103."
-fi
+1.  **Portainer API and Stack Deployment Analysis:** Execute all steps in `temp_docs/portainer_api_analysis.md`.
 
-echo "--> Verifying Nginx certificate and key readability (LXC 101)..."
-if pct exec 101 -- sudo -u www-data cat /etc/nginx/ssl/nginx.internal.thinkheads.ai.key > /dev/null 2>&1; then
-    print_success "Nginx key is readable by www-data user."
-else
-    print_failure "Nginx key is NOT readable by www-data user. Check permissions on /mnt/pve/quickOS/lxc-persistent-data/101/ssl/"
-fi
+## Conclusion
 
-print_header "Phase 3: Nginx Gateway and End-to-End Connectivity"
-echo "--> Verifying Nginx service health (LXC 101)..."
-if pct exec 101 -- systemctl is-active --quiet nginx; then
-    print_success "Nginx service is active in LXC 101."
-else
-    print_failure "Nginx service is not running in LXC 101."
-fi
-
-echo "--> Performing end-to-end test of Portainer API via gateway..."
-CURL_OUTPUT=$(curl --resolve portainer.internal.thinkheads.ai:443:10.0.0.153 \
-                   --cacert /mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt \
-                   --silent \
-                   https://portainer.internal.thinkheads.ai/api/system/status)
-
-if echo "$CURL_OUTPUT" | grep -q "InstanceID"; then
-    print_success "Successfully retrieved Portainer status via gateway (Already Initialized)."
-elif echo "$CURL_OUTPUT" | grep -q "No administrator account found"; then
-    print_success "Successfully retrieved Portainer status via gateway (Ready for Init)."
-else
-    print_failure "Failed to retrieve Portainer status via gateway. Output: $CURL_OUTPUT"
-fi
-
-echo -e "\n${YELLOW}--- Verification Complete ---${NC}"
+By following this structured plan, we will methodically test every critical dependency in the `phoenix sync all` process. The results of these tests will provide a clear path to remediation.

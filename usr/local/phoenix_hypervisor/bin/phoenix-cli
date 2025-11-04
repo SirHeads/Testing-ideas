@@ -334,6 +334,9 @@ main() {
         if [[ "$arg" == "--dry-run" ]]; then
             export PHOENIX_DRY_RUN="true"
             log_info "--- DRY RUN MODE ENABLED ---"
+        elif [[ "$arg" == "--reset-portainer" ]]; then
+            export PHOENIX_RESET_PORTAINER="true"
+            log_info "--- PORTAINER RESET FLAG DETECTED ---"
         else
             ARGS+=("$arg")
         fi

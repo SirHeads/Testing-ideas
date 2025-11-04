@@ -112,7 +112,7 @@
                 "docker"
             ],
             "portainer_role": "agent",
-            "portainer_environment_name": "dr-phoenix",
+            "portainer_environment_name": "drphoenix",
             "portainer_agent_hostname": "portainer-agent.internal.thinkheads.ai",
             "trigger_sync_on_completion": true,
             "dependencies": [

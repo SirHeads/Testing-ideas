@@ -1,81 +1,60 @@
 # Certificate Verification Plan
 
-This plan details the steps to verify the entire certificate provisioning and deployment pipeline, with a special focus on file permissions and accessibility.
+This plan outlines the steps to verify the entire certificate chain and deployment process, from the Step-CA to the individual services.
 
-## Objective
+## 1. Verify Step-CA (LXC 103) Health
 
-To ensure that the Step-CA (LXC 103) is correctly issuing certificates, that the `certificate-renewal-manager.sh` is deploying them with the correct permissions, and that the services (Nginx, Traefik, Portainer) can access and use them.
+First, we must ensure the Certificate Authority itself is healthy and operational.
 
-## Verification Steps
+*   **Action:** Check the status of the `step-ca` service.
+*   **Command:** `pct exec 103 -- systemctl status step-ca`
+*   **Verification:** The service should be `active (running)`.
 
-### 1. Verify Step-CA Health (LXC 103)
+*   **Action:** Verify that the CA is listening on its designated port.
+*   **Command:** `pct exec 103 -- ss -tuln | grep ':9000'`
+*   **Verification:** The command should show a `LISTEN` state on port 9000.
 
-*   **Check the Step-CA service status:**
-    ```bash
-    pct exec 103 -- systemctl status step-ca
-    ```
-*   **Verify that the CA is responsive:**
-    ```bash
-    pct exec 103 -- step ca health --ca-url "https://127.0.0.1:9000" --root "/etc/step-ca/ssl/certs/root_ca.crt"
-    ```
+*   **Action:** Check the `step-ca` logs for any errors.
+*   **Command:** `pct exec 103 -- journalctl -u step-ca -n 50`
+*   **Verification:** The logs should not contain any fatal errors or repeated warnings.
 
-### 2. Inspect Certificate Files on the Hypervisor
+## 2. Verify Certificate Generation and Placement
 
-This is the most critical step, as it directly verifies the file permissions on the shared storage before they are mounted into containers.
+The `certificate-renewal-manager.sh` is responsible for creating and placing certificates. We need to verify that this process is working correctly.
 
-*   **List the contents of the shared SSL directory for Step-CA:**
-    ```bash
-    ls -l /mnt/pve/quickOS/lxc-persistent-data/103/ssl/
-    ```
-    *   **Expected:** `root_ca.crt`, `provisioner_password.txt`, etc., should be owned by `root:root` with restrictive permissions (e.g., `600` for keys/passwords).
+*   **Action:** Manually run the certificate manager with the `--force` flag to ensure all certificates are fresh.
+*   **Command:** `/usr/local/phoenix_hypervisor/bin/managers/certificate-renewal-manager.sh --force`
+*   **Verification:** The script should complete without errors.
 
-*   **Inspect the Nginx certificate and key permissions:**
-    ```bash
-    ls -l /mnt/pve/quickOS/lxc-persistent-data/101/ssl/
-    ```
-    *   **Expected:** `nginx.internal.thinkheads.ai.crt` and `nginx.internal.thinkheads.ai.key` should exist. The key file, in particular, must be readable by the user running the Nginx process (often `www-data` or `root`). Check ownership and group permissions carefully.
+*   **Action:** Inspect the generated certificates on the hypervisor's shared storage.
+*   **Command:** `ls -l /mnt/pve/quickOS/lxc-persistent-data/101/ssl/`
+*   **Verification:** The directory should contain the `nginx.internal.thinkheads.ai.crt` and `.key` files with recent timestamps.
 
-*   **Inspect the Traefik certificate and key permissions:**
-    ```bash
-    ls -l /mnt/pve/quickOS/lxc-persistent-data/102/certs/
-    ```
-    *   **Expected:** `traefik.internal.thinkheads.ai.crt` and `traefik.internal.thinkheads.ai.key` should exist and be readable by the user running Traefik.
+## 3. Verify Certificate Deployment to Guests
 
-*   **Inspect the Portainer certificate and key permissions:**
-    ```bash
-    ls -l /quickOS/vm-persistent-data/1001/portainer/certs/
-    ```
-    *   **Expected:** `portainer.crt` and `portainer.key` should exist and be readable by the user running the Portainer container. The directory is likely owned by `nobody:nogroup` for NFS access.
+Finally, we need to ensure that the generated certificates are correctly mounted and used by the services in their respective guests.
 
-### 3. Verify Certificate Accessibility from within Containers
+### Nginx (LXC 101):
 
-These checks confirm that the mounted certificates are readable by the services that need them.
+*   **Action:** Verify the certificate files are present inside the Nginx container.
+*   **Command:** `pct exec 101 -- ls -l /etc/nginx/ssl/`
+*   **Verification:** The directory should contain the `nginx.internal.thinkheads.ai.crt` and `.key` files.
 
-*   **From LXC 101 (Nginx):**
-    ```bash
-    # Check that the Nginx user (www-data) can read the certificate and key
-    pct exec 101 -- sudo -u www-data cat /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt > /dev/null
-    pct exec 101 -- sudo -u www-data cat /etc/nginx/ssl/nginx.internal.thinkheads.ai.key > /dev/null
-    ```
+*   **Action:** Use `openssl` to connect to the Nginx gateway and inspect the served certificate.
+*   **Command:** `openssl s_client -connect 10.0.0.153:443 -servername nginx.internal.thinkheads.ai < /dev/null 2>/dev/null | openssl x509 -noout -text`
+*   **Verification:**
+    *   The "Issuer" should be our internal CA.
+    *   The "Subject" should be `CN = nginx.internal.thinkheads.ai`.
+    *   The certificate should not be expired.
 
-*   **From LXC 102 (Traefik):**
-    ```bash
-    # Check that the root user (running Traefik) can read the certificate and key
-    pct exec 102 -- cat /etc/traefik/certs/traefik.internal.thinkheads.ai.crt > /dev/null
-    pct exec 102 -- cat /etc/traefik/certs/traefik.internal.thinkheads.ai.key > /dev/null
-    ```
+### Traefik (LXC 102):
 
-*   **From VM 1001 (Portainer):**
-    ```bash
-    # Check that the root user (running Portainer) can read the certificate and key
-    qm guest exec 1001 -- cat /persistent-storage/portainer/certs/portainer.crt > /dev/null
-    qm guest exec 1001 -- cat /persistent-storage/portainer/certs/portainer.key > /dev/null
-    ```
+*   **Action:** Verify the certificate files are present inside the Traefik container.
+*   **Command:** `pct exec 102 -- ls -l /etc/traefik/certs/`
+*   **Verification:** The directory should contain the `traefik.internal.thinkheads.ai.crt` and `.key` files.
 
-## Expected Outcomes
+## 4. Key Areas of Concern
 
-*   All certificate files and private keys exist in their expected locations on the hypervisor's persistent storage.
-*   The ownership and permissions of these files are appropriate for the service that will be using them (e.g., readable by `www-data` for Nginx).
-*   The `pct exec` and `qm guest exec` commands to `cat` the files should complete without any "Permission denied" errors.
-
-Any permission errors in these steps would strongly indicate that the file permissions are indeed the root cause of the connectivity issues.
+*   **Step-CA Failure:** If the Step-CA service is not running, no certificates can be issued.
+*   **Permissions Issues:** Incorrect file permissions on the shared storage can prevent the certificate manager from writing files or the guest containers from reading them.
+*   **Outdated Certificates:** If the renewal manager is failing, services may be attempting to use expired certificates.

@@ -1,70 +1,48 @@
-# DNS Diagnostics Plan
+# Final DNS Script Remediation Plan
 
-This plan outlines the steps to diagnose and verify the DNS resolution within the Phoenix Hypervisor environment.
+This document contains the precise `diff` required to fix the DNS generation logic in `hypervisor_feature_setup_dns_server.sh`.
 
-## Objective
+## The Elegant Solution
 
-To ensure that the `dnsmasq` service on the Proxmox host is correctly configured and that all key VMs and LXCs can resolve the hostnames of internal services.
+As per our discussion, this solution preserves the general `traefik_service` rule while surgically overriding the IP for the `portainer-agent` to ensure it gets its correct, direct IP address. This is achieved by reordering the `jq` query to ensure the specific agent rule is processed last, taking precedence.
 
-## Verification Steps
+## The `diff` to be Applied
 
-The following commands should be executed to verify DNS resolution.
+The following `diff` should be applied to `usr/local/phoenix_hypervisor/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh`.
 
-### 1. Verify `dnsmasq` Configuration on Proxmox Host
+```diff
+--- a/usr/local/phoenix_hypervisor/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh
++++ b/usr/local/phoenix_hypervisor/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh
+@@ -102,21 +102,21 @@
+              ($vm_config.vms[] | select(.traefik_service.name?) | {
+                  "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
+                  "ip": $gateway_ip
+-             }),
++             }),
+              # 3. Add records for all guests (LXC and VM) that need to be addressed by their own name
+              ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
+                  "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
+                  "ip": (.network_config.ip | split("/")[0])
+-             }),
++             }),
+              ($vm_config.vms[] | select(.name and .network_config.ip and .network_config.ip != "dhcp") | {
+                  "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
+                  "ip": (.network_config.ip | split("/")[0])
+-             }),
++             }),
+              # 4. Add records for Portainer agents specifically
+              ($vm_config.vms[] | select(.portainer_role == "agent") | {
+                  "hostname": .portainer_agent_hostname,
+                  "ip": (.network_config.ip | split("/")[0])
+-             }),
++             })
+              # 5. Add static records
+              { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
+-             { "hostname": "portainer-agent.internal.thinkheads.ai", "ip": $gateway_ip },
+              { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip }
+          ] | unique_by(.hostname)
+          '
 
-These commands should be run directly on the Proxmox host.
+```
 
-*   **Check `dnsmasq` service status:**
-    ```bash
-    systemctl status dnsmasq
-    ```
-*   **Verify the generated `dnsmasq` configuration:**
-    ```bash
-    cat /etc/dnsmasq.d/00-phoenix-internal.conf
-    ```
-*   **Test resolution of key services using `dig`:**
-    ```bash
-    dig @127.0.0.1 portainer.internal.thinkheads.ai
-    dig @127.0.0.1 ca.internal.thinkheads.ai
-    dig @127.0.0.1 traefik.internal.thinkheads.ai
-    ```
-
-### 2. Verify DNS Resolution from within Key LXCs
-
-These commands should be run from within the specified LXCs using `pct exec`.
-
-*   **From LXC 101 (Nginx):**
-    ```bash
-    pct exec 101 -- dig ca.internal.thinkheads.ai
-    pct exec 101 -- dig traefik.internal.thinkheads.ai
-    ```
-*   **From LXC 102 (Traefik):**
-    ```bash
-    pct exec 102 -- dig ca.internal.thinkheads.ai
-    pct exec 102 -- dig portainer.internal.thinkheads.ai
-    ```
-*   **From LXC 103 (Step-CA):**
-    ```bash
-    pct exec 103 -- dig portainer.internal.thinkheads.ai
-    ```
-
-### 3. Verify DNS Resolution from within Key VMs
-
-These commands should be run from within the specified VMs using `qm guest exec`.
-
-*   **From VM 1001 (Portainer):**
-    ```bash
-    qm guest exec 1001 -- dig ca.internal.thinkheads.ai
-    qm guest exec 1001 -- dig drphoenix.internal.thinkheads.ai
-    ```
-*   **From VM 1002 (drphoenix):**
-    ```bash
-    qm guest exec 1002 -- dig portainer.internal.thinkheads.ai
-    ```
-
-## Expected Outcomes
-
-*   All `dig` commands should return a `status: NOERROR` and an `ANSWER SECTION` containing the correct IP address for the queried hostname.
-*   The IP addresses should match the ones defined in the `phoenix_lxc_configs.json` and `phoenix_vm_configs.json` files.
-
-Any failures in these checks will indicate a problem with the `dnsmasq` configuration, the network configuration of the guest, or the firewall rules preventing DNS queries.
+This change correctly removes the erroneous static record for the agent and ensures the dynamic rule that assigns the correct IP (`10.0.0.102`) takes precedence.

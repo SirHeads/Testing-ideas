@@ -1,77 +1,43 @@
-# `phoenix create` Diagnostics Plan
+# Phase 1: Foundational Network & DNS Verification Plan
 
-This plan outlines the steps to diagnose and verify the `phoenix create` workflow for a single LXC container.
+This document outlines the commands to be executed to verify the foundational network connectivity and DNS resolution within the Phoenix Hypervisor environment.
 
-## Objective
+## Step 1.1: Verify Basic Network Connectivity
 
-To ensure that the `phoenix create` command correctly creates, configures, and starts a new LXC container based on its definition in `phoenix_lxc_configs.json`.
+These commands will test basic network reachability between the Portainer server (VM 1001) and the Portainer agent (VM 1002).
 
-## Test Case: Create a `vllm` Container
+```bash
+echo "---> Pinging VM 1002 (10.0.0.102) from VM 1001 (10.0.0.111)..."
+qm guest exec 1001 -- ping -c 4 10.0.0.102
 
-This plan will use the creation of a `vllm` container (e.g., CT 910) as the primary test case, as it involves cloning, feature application, and GPU passthrough.
+echo "---> Pinging VM 1001 (10.0.0.111) from VM 1002 (10.0.0.102)..."
+qm guest exec 1002 -- ping -c 4 10.0.0.111
 
-### 1. Pre-creation State Verification
+echo "---> Testing TCP connection on port 9001 (Portainer Agent) from VM 1001 to VM 1002..."
+qm guest exec 1001 -- nc -zv 10.0.0.102 9001
+```
 
-*   **Ensure the target container does not already exist:**
-    ```bash
-    pct status 910
-    ```
-    *   **Expected:** Command should fail or indicate the container does not exist. If it exists, it should be deleted (`phoenix delete 910`) before proceeding.
-*   **Verify that the clone template (CT 901) exists:**
-    ```bash
-    pct status 901
-    ```
-    *   **Expected:** The container should exist. If not, it needs to be created first (`phoenix create 901`).
+## Step 1.2: Verify DNS Resolution
 
-### 2. Execute the Create Command
+These commands will test DNS resolution for critical internal hostnames from the perspective of the Proxmox host itself, the Portainer server (VM 1001), and the Portainer agent (VM 1002).
 
-*   **Run the `phoenix create` command with the `--dry-run` flag first:**
-    ```bash
-    phoenix create 910 --dry-run
-    ```
-    *   **Expected:** The output should show the sequence of commands that *would* be run without actually executing them. This is a safe way to verify the logic.
-*   **Run the actual `create` command:**
-    ```bash
-    phoenix create 910
-    ```
+```bash
+CRITICAL_HOSTNAMES="portainer.internal.thinkheads.ai portainer-agent.internal.thinkheads.ai ca.internal.thinkheads.ai"
 
-### 3. Post-creation Verification
+echo "---> Verifying DNS from Proxmox Host..."
+for HOSTNAME in $CRITICAL_HOSTNAMES; do
+  echo "---> Resolving $HOSTNAME from Host"
+  dig +short $HOSTNAME
+done
 
-These commands should be run after the `create` command has finished.
+echo "---> Verifying DNS from VM 1001 (Portainer Server)..."
+for HOSTNAME in $CRITICAL_HOSTNAMES; do
+  echo "---> Resolving $HOSTNAME from VM 1001"
+  qm guest exec 1001 -- dig +short $HOSTNAME
+done
 
-*   **Check the status of the new container:**
-    ```bash
-    pct status 910
-    ```
-    *   **Expected:** `status: running`
-*   **Inspect the container's configuration:**
-    ```bash
-    pct config 910
-    ```
-    *   **Expected:** The output should match the settings defined in `phoenix_lxc_configs.json` for CT 910, including memory, cores, networking, and GPU passthrough (`lxc.cgroup2.devices.allow: c 195:* rwm`).
-*   **Verify network connectivity:**
-    ```bash
-    pct exec 910 -- ping -c 3 10.0.0.1
-    ```
-    *   **Expected:** The ping should be successful.
-*   **Verify GPU passthrough:**
-    ```bash
-    pct exec 910 -- nvidia-smi
-    ```
-    *   **Expected:** The `nvidia-smi` command should execute successfully and show the details of the assigned GPU(s).
-*   **Check the application script logs:**
-    The `vllm` containers run an application script (`phoenix_hypervisor_lxc_vllm.sh`). Check for logs to ensure it ran correctly.
-    ```bash
-    # The exact log location may vary, but check common places.
-    pct exec 910 -- journalctl -n 50
-    ```
-
-## Expected Outcomes
-
-*   The `phoenix create` command completes without errors.
-*   The new LXC container is created and running.
-*   The container's configuration in Proxmox matches the JSON definition.
-*   The container has network connectivity and can access its assigned hardware (GPUs).
-*   Any application-specific setup scripts have run successfully.
-
-This completes the analysis of the `phoenix create` workflow.
+echo "---> Verifying DNS from VM 1002 (Portainer Agent)..."
+for HOSTNAME in $CRITICAL_HOSTNAMES; do
+  echo "---> Resolving $HOSTNAME from VM 1002"
+  qm guest exec 1002 -- dig +short $HOSTNAME
+done

@@ -62,7 +62,13 @@ pct exec 101 -- curl -v http://10.0.0.12:80 -H "Host: portainer.internal.thinkhe
 # Check 5: Verify network connectivity from Traefik (102) to Portainer (1001)
 pct exec 102 -- curl -v --cacert /etc/step-ca/ssl/phoenix_root_ca.crt https://10.0.0.111:9443
 
-
+root@phoenix:~# qm guest exec 1001 -- curl -s --insecure https://localhost:9443/api/system/status
+{
+   "exitcode" : 0,
+   "exited" : 1,
+   "out-data" : "{\"Version\":\"2.33.3\",\"InstanceID\":\"c23997b1-649d-4b43-9708-4738b070593e\"}"
+}
+root@phoenix:~# 
 
 
 
