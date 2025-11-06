@@ -577,7 +577,7 @@ apply_volumes() {
 
     # Get all NFS volumes as a JSON array of objects
     local volumes_json
-    volumes_json=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\")")
+    volumes_json=$(jq_get_vm_value "$VMID" ".volumes[] | select(.type == \"nfs\")" || echo "")
 
     if [ -z "$volumes_json" ]; then
         log_info "No NFS volumes defined for VM $VMID. Skipping volume configuration."

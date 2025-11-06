@@ -271,99 +271,56 @@ deploy_portainer_instances() {
         local VMID=$(echo "$vm_config" | jq -r '.vmid')
         local PORTAINER_ROLE=$(echo "$vm_config" | jq -r '.portainer_role')
         local VM_NAME=$(echo "$vm_config" | jq -r '.name')
-        local persistent_volume_path=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
-        local vm_mount_point=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .mount_point' | head -n 1)
-
-        if [ -z "$persistent_volume_path" ] || [ -z "$vm_mount_point" ]; then
-            log_fatal "VM $VMID is configured for Portainer but is missing NFS persistent volume details."
-        fi
+        # The NFS volume path is no longer needed as we are using local Docker volumes.
+        # local persistent_volume_path=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
+        # local vm_mount_point=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .mount_point' | head -n 1)
+        #
+        # if [ -z "$persistent_volume_path" ] || [ -z "$vm_mount_point" ]; then
+        #     log_fatal "VM $VMID is configured for Portainer but is missing NFS persistent volume details."
+        # fi
 
         log_info "Processing VM $VMID with Portainer role: $PORTAINER_ROLE"
 
         case "$PORTAINER_ROLE" in
             primary)
                 log_info "Deploying Portainer server on VM $VMID..."
-                local compose_file_path="${vm_mount_point}/portainer/docker-compose.yml"
-                local config_json_path="${vm_mount_point}/portainer/config.json"
- 
-                 # Ensure the Portainer directory exists on the hypervisor's NFS share
-                local hypervisor_portainer_dir="${persistent_volume_path}/portainer"
-                mkdir -p "$hypervisor_portainer_dir" || log_fatal "Failed to create hypervisor Portainer directory: $hypervisor_portainer_dir"
+                # Define the path for the compose file inside the VM.
+                # We'll use a standard location in the user's home directory.
+                local compose_file_path="/home/phoenix_user/portainer/docker-compose.yml"
 
-                # --- BEGIN: Idempotent Data Directory Creation ---
-                local hypervisor_portainer_data_dir="${hypervisor_portainer_dir}/data"
+                # If the reset flag is set, perform a clean wipe using docker compose.
                 if [ "$PHOENIX_RESET_PORTAINER" = true ]; then
                     log_warn "--- RESETTING PORTAINER ---"
-                    log_info "Stopping Portainer container to release volume lock..."
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "docker stop portainer_server" || log_warn "Portainer server container was not running or failed to stop cleanly."
-
-                    log_info "Removing Portainer data directory from hypervisor..."
-                    if [ -d "$hypervisor_portainer_data_dir" ]; then
-                        rm -rf "$hypervisor_portainer_data_dir" || log_fatal "Failed to remove Portainer data directory."
-                    fi
+                    log_info "Forcefully removing Portainer stack and volumes..."
+                    # The '-v' flag removes the named volumes associated with the stack.
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down -v --remove-orphans" || log_warn "Portainer stack was not running or failed to stop cleanly."
                     log_info "--- PORTAINER RESET COMPLETE ---"
                 fi
 
-                # --- ATOMIC CREATION AND PERMISSION SETTING ---
-                log_info "Ensuring Portainer data directory exists and has correct NFS permissions..."
-                mkdir -p "$hypervisor_portainer_data_dir" || log_fatal "Failed to create Portainer data directory."
-                chown -R nobody:nogroup "$hypervisor_portainer_dir" || log_fatal "Failed to set ownership on Portainer parent directory."
-                chmod -R 777 "$hypervisor_portainer_dir" || log_fatal "Failed to set permissions on Portainer parent directory."
-                log_success "Portainer data directory is ready."
-                # --- END: Idempotent Data Directory Creation ---
-
-                # --- BEGIN: Idempotent Docker Volume Creation ---
-                log_info "Ensuring Portainer NFS Docker volume exists on VM ${VMID}..."
-                local nfs_server_ip=$(get_global_config_value '.network.nfs_server')
-                
-                # --- Idempotent Docker Volume Creation for Portainer ---
-                local portainer_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/portainer/data portainer_data_nfs"
-                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect portainer_data_nfs > /dev/null 2>&1"; then
-                    log_info "Docker volume 'portainer_data_nfs' already exists."
-                else
-                    log_info "Creating Portainer Docker volume..."
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$portainer_volume_create_command" || log_fatal "Failed to create Portainer Docker volume."
-                fi
-
-                # --- Idempotent Docker Volume Creation for Qdrant ---
-                local qdrant_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/qdrant/storage qdrant_data_nfs"
-                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect qdrant_data_nfs > /dev/null 2>&1"; then
-                    log_info "Docker volume 'qdrant_data_nfs' already exists."
-                else
-                    log_info "Creating Qdrant Docker volume..."
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$qdrant_volume_create_command" || log_fatal "Failed to create Qdrant Docker volume."
-                fi
-
-                # --- Idempotent Docker Volume Creation for ThinkHeads AI App ---
-                local thinkheads_volume_create_command="docker volume create --driver local --opt type=nfs --opt o=addr=${nfs_server_ip},rw,nfsvers=4 --opt device=:${persistent_volume_path}/thinkheads_ai/app thinkheads_ai_app_data_nfs"
-                if run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume inspect thinkheads_ai_app_data_nfs > /dev/null 2>&1"; then
-                    log_info "Docker volume 'thinkheads_ai_app_data_nfs' already exists."
-                else
-                    log_info "Creating ThinkHeads AI App Docker volume..."
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "$thinkheads_volume_create_command" || log_fatal "Failed to create ThinkHeads AI App Docker volume."
-                fi
-
-                # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
+                # --- DYNAMIC CERTIFICATE GENERATION ---
+                # Certificates are still stored on the host for renewal purposes, but are copied into the container.
                 local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
-                # --- BEGIN: DYNAMIC CERTIFICATE GENERATION ---
-                local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
-                ensure_portainer_certificates "$VMID" "$persistent_volume_path" "$portainer_fqdn"
-                # --- END: DYNAMIC CERTIFICATE GENERATION ---
+                local hypervisor_cert_dir="/usr/local/phoenix_hypervisor/persistent-storage/portainer/certs"
+                ensure_portainer_certificates "$VMID" "/usr/local/phoenix_hypervisor/persistent-storage" "$portainer_fqdn"
 
-                # Copy the docker-compose.yml and modify it for TLS
-                log_info "Copying and modifying Portainer docker-compose.yml for TLS..."
-                rm -f "${hypervisor_portainer_dir}/docker-compose.yml"
-                cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "${hypervisor_portainer_dir}/docker-compose.yml"
-                
-                # Use yq to add the command and volumes for TLS
-                # Use yq to add the command and volumes for TLS. The syntax is for the python-based yq (v3.x).
-                yq -i -y '.services.portainer.command = "--tlsverify --tlscert /certs/portainer.crt --tlskey /certs/portainer.key" | .services.portainer.volumes += ["./certs:/certs"]' "${hypervisor_portainer_dir}/docker-compose.yml"
+                # --- PREPARE FILES FOR PUSHING TO VM ---
+                log_info "Preparing Portainer files for deployment to VM..."
+                local temp_deploy_dir=$(mktemp -d)
+                cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "${temp_deploy_dir}/docker-compose.yml"
+                cp -r "$hypervisor_cert_dir" "${temp_deploy_dir}/certs"
 
+                # Modify the compose file for TLS
+                yq -i -y '.services.portainer.command = "--tlsverify --tlscert /certs/portainer.crt --tlskey /certs/portainer.key" | .services.portainer.volumes += ["./certs:/certs"]' "${temp_deploy_dir}/docker-compose.yml"
 
-                # Ensure the compose file is present on the VM's persistent storage
-                if ! qm guest exec "$VMID" -- /bin/bash -c "test -f $compose_file_path"; then
-                    log_fatal "Portainer server compose file not found in VM $VMID at $compose_file_path."
+                # --- PUSH FILES TO VM ---
+                log_info "Pushing compose file and certificates to VM ${VMID}..."
+                run_qm_command guest exec "$VMID" -- mkdir -p "$(dirname "$compose_file_path")"
+                if ! qm_push_dir "$VMID" "$temp_deploy_dir" "$(dirname "$compose_file_path")"; then
+                    log_fatal "Failed to push Portainer deployment files to VM ${VMID}."
                 fi
+                log_info "Setting correct ownership on deployment directory in VM..."
+                run_qm_command guest exec "$VMID" -- /bin/chown -R phoenix_user:phoenix_user "/home/phoenix_user/portainer"
+                rm -rf "$temp_deploy_dir" # Clean up temp directory
 
                 log_info "Ensuring clean restart for Portainer server on VM $VMID..."
                 local DOCKER_TLS_DIR="/etc/docker/tls"
@@ -806,40 +763,54 @@ sync_stack() {
         log_fatal "Compose file not found for stack '${STACK_NAME}' at ${FULL_COMPOSE_PATH}."
     fi
 
-    # --- BEGIN FILE-BASED DEPLOYMENT LOGIC ---
-    local vm_config=$(jq -r ".vms[] | select(.vmid == $VMID)" "$VM_CONFIG_FILE")
-    local persistent_volume_path=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
-    local vm_mount_point=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .mount_point' | head -n 1)
+    # --- BEGIN IN-MEMORY DEPLOYMENT LOGIC ---
+    log_info "Preparing stack content for API deployment to VM ${VMID}..."
 
-    if [ -z "$persistent_volume_path" ] || [ -z "$vm_mount_point" ]; then
-        log_fatal "VM $VMID is missing NFS persistent volume details. Cannot deploy stack from file."
-    fi
-
-    local hypervisor_stack_dir="${persistent_volume_path}/stacks/${STACK_NAME}"
-    local agent_stack_path="${vm_mount_point}/stacks/${STACK_NAME}/docker-compose.yml"
-
-    log_info "Preparing stack file on persistent storage for VM ${VMID}..."
-    mkdir -p "$hypervisor_stack_dir" || log_fatal "Failed to create stack directory on hypervisor: $hypervisor_stack_dir"
-    chmod 777 "$hypervisor_stack_dir" || log_warn "Failed to set permissions on stack directory: $hypervisor_stack_dir"
-    cp "$FULL_COMPOSE_PATH" "${hypervisor_stack_dir}/docker-compose.yml" || log_fatal "Failed to copy compose file to hypervisor's persistent storage."
+    # Create a temporary file to hold the modified compose file
+    local temp_compose_file
+    temp_compose_file=$(mktemp)
+    cp "$FULL_COMPOSE_PATH" "$temp_compose_file"
 
     # --- BEGIN TRAEFIK LABEL INJECTION ---
-    log_info "Injecting Traefik labels into compose file for stack '${STACK_NAME}'..."
-    local services_to_label=$(echo "$STACK_DEFINITION" | jq -r '.services | keys[] // ""')
+    log_info "Injecting Traefik labels into temporary compose file for stack '${STACK_NAME}'..."
+    local services_to_label
+    services_to_label=$(echo "$STACK_DEFINITION" | jq -r '.services | keys[] // ""')
     for service_name in $services_to_label; do
-        local labels=$(echo "$STACK_DEFINITION" | jq -c ".services.\"${service_name}\".traefik_labels // []")
+        local labels
+        labels=$(echo "$STACK_DEFINITION" | jq -c ".services.\"${service_name}\".traefik_labels // []")
         if [ "$(echo "$labels" | jq 'length')" -gt 0 ]; then
             log_info "  Injecting labels for service: ${service_name}"
             local yq_script=""
             echo "$labels" | jq -r '.[]' | while read -r label; do
-                yq_script+=" .services.\"${service_name}\".labels += [\"${label}\"] |"
+                # Ensure the label is properly escaped for yq
+                local escaped_label
+                escaped_label=$(printf '%s\n' "$label" | sed "s/'/''/g")
+                yq_script+=" .services.\"${service_name}\".labels += ['${escaped_label}'] |"
             done
             yq_script=${yq_script%?} # Remove trailing pipe
-            yq eval -i "$yq_script" "${hypervisor_stack_dir}/docker-compose.yml"
+            yq eval -i "$yq_script" "$temp_compose_file"
         fi
     done
     log_success "Traefik label injection complete."
     # --- END TRAEFIK LABEL INJECTION ---
+
+    # Read the final, modified compose file content into a variable
+    local stack_file_content
+    stack_file_content=$(cat "$temp_compose_file")
+    rm "$temp_compose_file" # Clean up the temporary file
+
+    # --- Handle Docker Volumes ---
+    log_info "Ensuring external Docker volumes exist for stack '${STACK_NAME}' on VM ${VMID}..."
+    local volumes_to_create=$(yq e '.volumes | keys | .[]' "$temp_compose_file")
+    for volume_name in $volumes_to_create; do
+        local is_external=$(yq e ".volumes.${volume_name}.external" "$temp_compose_file")
+        if [ "$is_external" == "true" ]; then
+            log_info "  - Ensuring external volume '${volume_name}' exists..."
+            # This command is idempotent. It will create the volume if it doesn't exist,
+            # and do nothing if it already exists.
+            run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume create ${volume_name}"
+        fi
+    done
 
     # --- Handle Environment Variables ---
     local ENV_VARS_JSON="[]"
@@ -895,11 +866,14 @@ sync_stack() {
 
     if [ -n "$STACK_EXISTS_ID" ]; then
         log_info "Stack '${STACK_DEPLOY_NAME}' already exists. Updating..."
-        local JSON_PAYLOAD=$(jq -n \
-            --arg path "${agent_stack_path}" \
+        log_info "Updating stack '${STACK_DEPLOY_NAME}' using in-memory content..."
+        local JSON_PAYLOAD
+        JSON_PAYLOAD=$(jq -n \
+            --arg content "$stack_file_content" \
             --argjson env "$ENV_VARS_JSON" \
             --argjson configs "$CONFIG_IDS_JSON" \
-            '{StackFilePath: $path, Env: $env, Configs: $configs, Prune: true}')
+            '{StackFileContent: $content, Env: $env, Configs: $configs, Prune: true}')
+        
         local RESPONSE
         RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
@@ -909,14 +883,17 @@ sync_stack() {
         log_success "Stack '${STACK_DEPLOY_NAME}' updated successfully."
     else
         log_info "Stack '${STACK_DEPLOY_NAME}' does not exist. Deploying..."
-        local JSON_PAYLOAD=$(jq -n \
+        log_info "Deploying stack '${STACK_DEPLOY_NAME}' using in-memory content..."
+        local JSON_PAYLOAD
+        JSON_PAYLOAD=$(jq -n \
             --arg name "${STACK_DEPLOY_NAME}" \
-            --arg path "${agent_stack_path}" \
+            --arg content "$stack_file_content" \
             --argjson env "$ENV_VARS_JSON" \
             --argjson configs "$CONFIG_IDS_JSON" \
-            '{Name: $name, ComposeFilePathInContainer: $path, Env: $env, Configs: $configs}')
+            '{Name: $name, StackFileContent: $content, Env: $env, Configs: $configs}')
+        
         local RESPONSE
-        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=file&endpointId=${ENDPOINT_ID}" \
+        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=string&endpointId=${ENDPOINT_ID}" \
           -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to deploy stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"

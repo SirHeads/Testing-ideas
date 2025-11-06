@@ -21,11 +21,14 @@ set -e
 LOG_FILE="/var/log/phoenix_feature_trusted_ca.log"
 exec &> >(tee -a "$LOG_FILE")
 
-source "/persistent-storage/.phoenix_scripts/phoenix_hypervisor_common_utils.sh"
+# Determine the absolute path of the script's directory to ensure reliable sourcing.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 VMID="$1"
-CA_CERT_SOURCE_PATH="/etc/step-ca/certs/root_ca.crt"
+# The CA files are staged on the persistent mount, which is standardized to /mnt/persistent
+CA_CERT_SOURCE_PATH="/mnt/persistent/.step-ca/root_ca.crt"
 CA_CERT_DEST_PATH="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 
 # =====================================================================================

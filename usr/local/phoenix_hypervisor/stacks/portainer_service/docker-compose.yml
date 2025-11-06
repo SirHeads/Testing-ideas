@@ -8,7 +8,7 @@ services:
       - 10.0.0.13
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - portainer_data_nfs:/data
+      - portainer_data:/data
     ports:
       - "9000:9000"
       - "9443:9443"
@@ -23,5 +23,4 @@ networks:
     driver: bridge
 
 volumes:
-  portainer_data_nfs:
-    external: true
+  portainer_data: {}

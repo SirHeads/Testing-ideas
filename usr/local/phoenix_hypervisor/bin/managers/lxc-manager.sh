@@ -1030,15 +1030,21 @@ run_application_script() {
             local temp_tarball="/tmp/nginx_configs_${CTID}.tar.gz"
 
             # --- REMEDIATION: Generate dynamic config on the host before packaging ---
-            log_info "Generating dynamic Nginx gateway configuration on the host..."
-            local nginx_generator_script="${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"
-            if [ ! -f "$nginx_generator_script" ]; then
-                log_fatal "Nginx config generator script not found at $nginx_generator_script."
-            fi
-            if ! "$nginx_generator_script"; then
-                log_fatal "Failed to generate dynamic Nginx configuration on the host."
-            fi
-            log_info "Dynamic Nginx configuration generated successfully."
+            # This block is being intentionally commented out. The dynamic gateway configuration
+            # requires an SSL certificate that does not exist at this stage of the 'create'
+            # process. The Nginx container's own application script creates a placeholder
+            # configuration to allow Nginx to start. The final configuration will be
+            # generated and applied by the 'phoenix sync all' command.
+            #
+            # log_info "Generating dynamic Nginx gateway configuration on the host..."
+            # local nginx_generator_script="${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"
+            # if [ ! -f "$nginx_generator_script" ]; then
+            #     log_fatal "Nginx config generator script not found at $nginx_generator_script."
+            # fi
+            # if ! "$nginx_generator_script"; then
+            #     log_fatal "Failed to generate dynamic Nginx configuration on the host."
+            # fi
+            # log_info "Dynamic Nginx configuration generated successfully."
             # --- END REMEDIATION ---
 
             # --- NEW LOGIC: Push individual Nginx config files ---

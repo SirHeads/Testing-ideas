@@ -109,7 +109,7 @@ log_info "Docker Engine installed successfully."
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
 INTERNAL_DNS_SERVER="10.0.0.1"
 CA_URL="https://10.0.0.10:9000"
-PROVISIONER_PASSWORD_FILE="/etc/step-ca/certs/provisioner_password.txt"
+PROVISIONER_PASSWORD_FILE="/mnt/persistent/.step-ca/provisioner_password.txt"
 ROOT_CA_CERT_FILE="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 DOCKER_TLS_DIR="/etc/docker/tls"
 DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
@@ -135,7 +135,7 @@ log_info "Generating TLS certificate for the Docker daemon..."
 mkdir -p "$DOCKER_TLS_DIR"
 fqdn=$(hostname -f)
 /usr/bin/step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
-cp "/etc/step-ca/certs/root_ca.crt" "$DOCKER_CA_FILE"
+cp "$ROOT_CA_CERT_FILE" "$DOCKER_CA_FILE"
 
 # Securely remove the temporary files
 log_info "Securely removing temporary CA files..."

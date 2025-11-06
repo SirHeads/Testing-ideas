@@ -363,6 +363,7 @@ jq_get_value() {
     fi
 
     # Check if jq command failed
+    # Check if jq command failed
     if [ "$?" -ne 0 ]; then
         log_error "jq command failed for CTID $ctid with query '${jq_query}'."
         return 1
@@ -586,6 +587,111 @@ run_pct_push() {
 
     log_fatal "Failed to push/copy file to CTID $ctid after $max_attempts attempts."
     return 1
+}
+
+# =====================================================================================
+# Function: qm_push_file
+# Description: Pushes a single file into a VM using qm guest exec and dd.
+#
+# Arguments:
+#   $1 - The VMID of the target VM.
+#   $2 - The path of the source file on the host.
+#   $3 - The destination path inside the VM.
+#
+# Returns:
+#   0 on success, 1 on failure.
+# =====================================================================================
+qm_push_file() {
+    local VMID="$1"
+    local source_file="$2"
+    local dest_file="$3"
+
+    log_info "Pushing file from '${source_file}' to VM ${VMID} at '${dest_file}'..."
+
+    if [ ! -f "$source_file" ]; then
+        log_error "Source file not found: ${source_file}"
+        return 1
+    fi
+
+    # Create the destination directory inside the VM
+    local dest_dir
+    dest_dir=$(dirname "$dest_file")
+    run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$dest_dir"
+
+    # Encode the file in base64 and write it to the VM
+    local encoded_content
+    encoded_content=$(base64 -w 0 "$source_file")
+    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "echo '${encoded_content}' | base64 --decode > '${dest_file}'"; then
+        log_fatal "Failed to push file '${source_file}' to VM ${VMID}."
+        return 1
+    fi
+
+    log_success "File '${source_file}' pushed successfully to VM ${VMID}."
+    return 0
+}
+
+# =====================================================================================
+# Function: qm_push_dir
+# Description: Pushes a directory into a VM by creating a tarball and extracting it.
+#
+# Arguments:
+#   $1 - The VMID of the target VM.
+#   $2 - The path of the source directory on the host.
+#   $3 - The destination path inside the VM where the contents will be extracted.
+#
+# Returns:
+#   0 on success, 1 on failure.
+# =====================================================================================
+qm_push_dir() {
+    local VMID="$1"
+    local source_dir="$2"
+    local dest_dir="$3"
+
+    log_info "Pushing directory from '${source_dir}' to VM ${VMID} at '${dest_dir}'..."
+
+    if [ ! -d "$source_dir" ]; then
+        log_error "Source directory not found: ${source_dir}"
+        return 1
+    fi
+
+    # Create the destination directory inside the VM
+    run_qm_command guest exec "$VMID" -- /bin/mkdir -p "$dest_dir"
+
+    # Create a temporary tarball on the host
+    local temp_tarball
+    temp_tarball=$(mktemp)
+    log_info "Creating temporary tarball of source directory at ${temp_tarball}..."
+    if ! tar -czf "$temp_tarball" -C "$source_dir" .; then
+        log_error "Failed to create tarball for directory '${source_dir}'."
+        rm -f "$temp_tarball"
+        return 1
+    fi
+
+    # Push the tarball to a temporary location in the VM
+    local vm_temp_tarball="/tmp/$(basename "$temp_tarball").tar.gz"
+    if ! qm_push_file "$VMID" "$temp_tarball" "$vm_temp_tarball"; then
+        log_error "Failed to push tarball to VM ${VMID}."
+        rm -f "$temp_tarball"
+        return 1
+    fi
+
+    # Extract the tarball inside the VM
+    log_info "Extracting tarball inside VM ${VMID}..."
+    if ! run_qm_command guest exec "$VMID" -- /bin/tar -xzf "$vm_temp_tarball" -C "$dest_dir"; then
+        log_fatal "Failed to extract tarball in VM ${VMID}."
+        # Cleanup temporary files even on failure
+        run_qm_command guest exec "$VMID" -- /bin/rm -f "$vm_temp_tarball"
+        rm -f "$temp_tarball"
+        return 1
+    fi
+
+    # Cleanup temporary files
+    log_info "Cleaning up temporary files..."
+    run_qm_command guest exec "$VMID" -- /bin/rm -f "$vm_temp_tarball"
+    rm -f "$temp_tarball"
+
+    log_success "Directory '${source_dir}' pushed successfully to VM ${VMID}."
+    return 0
 }
 
 

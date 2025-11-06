@@ -57,17 +57,9 @@
             "volumes": [
                 {
                     "type": "nfs",
-                    "name": "persistent-storage",
+                    "server": "10.0.0.13",
                     "path": "/quickOS/vm-persistent-data/1001",
-                    "mount_point": "/persistent-storage",
-                    "server": "10.0.0.13"
-                },
-                {
-                    "type": "nfs",
-                    "name": "vm-step-ca-certs",
-                    "path": "/quickOS/vm-persistent-data/1001/.step-ca",
-                    "mount_point": "/etc/step-ca/certs",
-                    "server": "10.0.0.13"
+                    "mount_point": "/mnt/persistent"
                 }
             ],
             "docker_stacks": [
@@ -133,17 +125,9 @@
             "volumes": [
                 {
                     "type": "nfs",
-                    "name": "persistent-storage",
+                    "server": "10.0.0.13",
                     "path": "/quickOS/vm-persistent-data/1002",
-                    "mount_point": "/persistent-storage",
-                    "server": "10.0.0.13"
-                },
-                {
-                    "type": "nfs",
-                    "name": "vm-step-ca-certs",
-                    "path": "/quickOS/vm-persistent-data/1002/.step-ca",
-                    "mount_point": "/etc/step-ca/certs",
-                    "server": "10.0.0.13"
+                    "mount_point": "/mnt/persistent"
                 }
             ],
             "docker_stacks": [
