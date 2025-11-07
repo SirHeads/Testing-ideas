@@ -26,5 +26,13 @@
         "owner": "root:root",
         "permissions": "644",
         "post_renewal_command": "pct exec 102 -- /bin/bash -c 'while [ ! -f /etc/traefik/certs/traefik.internal.thinkheads.ai.crt ]; do sleep 1; done; systemctl reload traefik'"
+    },
+    {
+        "common_name": "drphoenix-agent.internal.thinkheads.ai",
+        "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1002/docker/certs/cert.pem",
+        "key_path": "/mnt/pve/quickOS/vm-persistent-data/1002/docker/certs/key.pem",
+        "owner": "root:root",
+        "permissions": "600",
+        "post_renewal_command": "qm guest exec 1002 -- systemctl restart docker"
     }
 ]

@@ -294,6 +294,8 @@ deploy_portainer_instances() {
                     log_info "Forcefully removing Portainer stack and volumes..."
                     # The '-v' flag removes the named volumes associated with the stack.
                     run_qm_command guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down -v --remove-orphans" || log_warn "Portainer stack was not running or failed to stop cleanly."
+                    log_info "Forcefully removing Portainer data volume to ensure a clean slate..."
+                    run_qm_command guest exec "$VMID" -- docker volume rm portainer_portainer_data || log_warn "Portainer data volume did not exist or could not be removed."
                     log_info "--- PORTAINER RESET COMPLETE ---"
                 fi
 
@@ -353,51 +355,79 @@ deploy_portainer_instances() {
             agent)
                 log_info "Deploying Portainer agent on VM $VMID..."
                 local agent_port=$(get_global_config_value '.network.portainer_agent_port')
-                local agent_name=$(echo "$vm_config" | jq -r '.name')
-                local domain_name=$(get_global_config_value '.domain_name')
-                local agent_fqdn="${agent_name}.${domain_name}"
+                local agent_fqdn=$(echo "$vm_config" | jq -r '.portainer_agent_hostname')
+                local persistent_volume_path=$(echo "$vm_config" | jq -r '.volumes[] | select(.type == "nfs") | .path' | head -n 1)
 
+                if [ -z "$agent_fqdn" ]; then
+                    log_fatal "VM $VMID is configured as a Portainer agent but is missing the 'portainer_agent_hostname' attribute."
+                fi
+                if [ -z "$persistent_volume_path" ]; then
+                    log_fatal "VM $VMID is configured as a Portainer agent but is missing NFS persistent volume details."
+                fi
 
+                # --- DYNAMIC CERTIFICATE GENERATION (Mirrors Server Logic) ---
+                log_info "Ensuring TLS certificates are in place for Portainer Agent on VM ${VMID}..."
+                local hypervisor_cert_dir="${persistent_volume_path}/portainer-agent/certs"
+                mkdir -p "$hypervisor_cert_dir" || log_fatal "Failed to create Portainer Agent cert directory on hypervisor."
 
+                local cert_file="${hypervisor_cert_dir}/agent.crt"
+                local key_file="${hypervisor_cert_dir}/agent.key"
+
+                # Idempotency Check
+                if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
+                    if openssl x509 -in "$cert_file" -checkend 86400 >/dev/null 2>&1; then
+                        log_info "Existing Portainer Agent certificate is valid. Skipping generation."
+                    else
+                        log_warn "Existing Portainer Agent certificate is expiring or invalid. Generating a new one."
+                    fi
+                fi
+                
+                log_info "Requesting new Portainer Agent certificate for ${agent_fqdn}..."
+                step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(cat /mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint)" --force
+                local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
+                step ca certificate "$agent_fqdn" "$cert_file" "$key_file" --provisioner "admin@thinkheads.ai" --provisioner-password-file "/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt" --force --san "$vm_ip" || log_fatal "Failed to obtain Portainer Agent certificate."
+                
+                # --- PREPARE AND PUSH FILES TO VM (Mirrors Server Logic) ---
+                log_info "Preparing Portainer Agent files for deployment to VM..."
+                local temp_deploy_dir=$(mktemp -d)
+                mkdir -p "${temp_deploy_dir}/certs"
+                cp "$cert_file" "${temp_deploy_dir}/certs/agent.crt"
+                cp "$key_file" "${temp_deploy_dir}/certs/agent.key"
+                cp "${CENTRALIZED_CA_CERT_PATH}" "${temp_deploy_dir}/certs/ca.crt" # Add the root CA
+
+                local agent_deploy_path="/home/phoenix_user/portainer-agent"
+                log_info "Pushing certificates to VM ${VMID} at ${agent_deploy_path}..."
+                run_qm_command guest exec "$VMID" -- mkdir -p "$agent_deploy_path"
+                qm_push_dir "$VMID" "$temp_deploy_dir" "$agent_deploy_path" || log_fatal "Failed to push Portainer Agent deployment files to VM ${VMID}."
+                log_info "Setting correct ownership on deployment directory in VM..."
+                run_qm_command guest exec "$VMID" -- /bin/chown -R phoenix_user:phoenix_user "$agent_deploy_path"
+                rm -rf "$temp_deploy_dir"
+
+                # --- DEPLOY AGENT WITH TLS (New Logic) ---
                 log_info "Ensuring clean restart for Portainer agent on VM $VMID..."
-                qm guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly on VM $VMID. Proceeding with deployment."
+                run_qm_command guest exec "$VMID" -- /bin/bash -c "docker rm -f portainer_agent" || log_warn "Portainer agent container was not running or failed to remove cleanly."
 
-                # The agent is now a standard non-TLS service. Traefik will handle TLS.
-                log_info "Starting Portainer agent..."
-                local agent_image
-                agent_image=$(get_global_config_value '.docker.portainer_agent_image')
-                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/docker/volumes:/var/lib/docker/volumes ${agent_image}"
+                log_info "Starting Portainer agent with TLS enabled..."
+                local agent_image=$(get_global_config_value '.docker.portainer_agent_image')
+                local docker_command="docker run -d -p 127.0.0.1:${agent_port}:9001 --name portainer_agent --restart=always \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+                    -v ${agent_deploy_path}/certs:/certs \
+                    -e AGENT_TLS=true \
+                    -e AGENT_TLS_CACERT=/certs/ca.crt \
+                    -e AGENT_TLS_CERT=/certs/agent.crt \
+                    -e AGENT_TLS_KEY=/certs/agent.key \
+                    ${agent_image}"
 
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
-                    log_info "DRY-RUN: Would execute 'docker run' for Portainer agent on VM $VMID."
+                    log_info "DRY-RUN: Would execute TLS-enabled 'docker run' for Portainer agent on VM $VMID."
                 else
-                    if ! qm guest exec "$VMID" -- /bin/bash -c "$docker_command"; then
+                    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "$docker_command"; then
                         log_fatal "Failed to deploy Portainer agent on VM $VMID."
                     fi
                 fi
                 log_info "Portainer agent deployment initiated on VM $VMID."
 
-                # --- BEGIN AGENT HEALTH CHECK ---
-                log_info "Waiting for Portainer agent on VM $VMID to become healthy..."
-                local agent_health_check_retries=10
-                local agent_health_check_delay=5
-                local agent_health_check_attempt=1
-                while [ "$agent_health_check_attempt" -le "$agent_health_check_retries" ]; do
-                    local agent_status_json=$(qm guest exec "$VMID" -- /bin/bash -c "curl -s -o /dev/null -w '%{http_code}' --insecure https://localhost:9001/ping")
-                    local agent_status_code=$(echo "$agent_status_json" | jq -r '."out-data" // ""')
-                    if [ "$agent_status_code" == "204" ]; then
-                        log_success "Portainer agent on VM $VMID is healthy."
-                        break
-                    fi
-                    log_warn "Portainer agent on VM $VMID not yet healthy (HTTP status: ${agent_status_code}). Retrying in ${agent_health_check_delay} seconds... (Attempt ${agent_health_check_attempt}/${agent_health_check_retries})"
-                    sleep "$agent_health_check_delay"
-                    agent_health_check_attempt=$((agent_health_check_attempt + 1))
-                done
-
-                if [ "$agent_health_check_attempt" -gt "$agent_health_check_retries" ]; then
-                    log_fatal "Portainer agent on VM $VMID did not become healthy after multiple retries. Aborting."
-                fi
-                # --- END AGENT HEALTH CHECK ---
                 ;;
             *)
                 log_warn "Unknown Portainer role '$PORTAINER_ROLE' for VM $VMID. Skipping deployment."
@@ -434,78 +464,33 @@ setup_portainer_admin_user() {
         log_fatal "Portainer admin password is not configured or is null in phoenix_hypervisor_config.json."
     fi
 
-    log_info "Waiting for Portainer API to become available..."
-    local status_attempt=1
-    while [ "$status_attempt" -le "$MAX_RETRIES" ]; do
-        local http_status
-        local curl_status_args=(-s -o /dev/null -w "%{http_code}")
-        [ -n "$CURL_EXTRA_ARGS" ] && curl_status_args+=("$CURL_EXTRA_ARGS")
-        curl_status_args+=("${PORTAINER_URL}/api/system/status")
-        http_status=$(curl "${curl_status_args[@]}")
-        
-        if [[ "$http_status" -eq 200 ]]; then
-            local body
-            local curl_body_args=(-s)
-            [ -n "$CURL_EXTRA_ARGS" ] && curl_body_args+=("$CURL_EXTRA_ARGS")
-            curl_body_args+=("${PORTAINER_URL}/api/system/status")
-            body=$(curl "${curl_body_args[@]}")
-            if echo "$body" | jq -e '.InstanceID' > /dev/null; then
-                log_info "Portainer is already initialized. Skipping admin user creation."
-                return 0
-            elif echo "$body" | jq -e '.Status == "No administrator account found"' > /dev/null; then
-                log_success "Portainer API is responsive and ready for initialization."
-                break
-            fi
-        elif [[ "$http_status" -eq 503 ]]; then
-            log_info "Portainer API is starting up (HTTP 503). Retrying..."
-        fi
-
-        log_info "Portainer API not ready yet (HTTP status: ${http_status}). Retrying in ${RETRY_DELAY} seconds... (Attempt ${status_attempt}/${MAX_RETRIES})"
-        sleep "$RETRY_DELAY"
-        status_attempt=$((status_attempt + 1))
-    done
-
-    if [ "$status_attempt" -gt "$MAX_RETRIES" ]; then
-        log_fatal "Portainer API did not become available after ${MAX_RETRIES} attempts."
-    fi
-
-    log_info "Attempting to create initial admin user '${ADMIN_USERNAME}' (or verify existence)..."
-    local password_file="/tmp/portainer_admin_password"
-    echo -n "$ADMIN_PASSWORD" > "$password_file"
-
-    # Push the password file to the VM
-    run_qm_command guest exec "$VMID" -- mkdir -p "/tmp"
-    run_qm_command guest exec "$VMID" -- /bin/bash -c "echo -n '${ADMIN_PASSWORD}' > ${password_file}"
-
+    log_info "Attempting to create initial admin user '${ADMIN_USERNAME}'..."
 
     while [ "$attempt" -le "$MAX_RETRIES" ]; do
         log_info "Admin user creation attempt ${attempt}/${MAX_RETRIES}..."
         
         local response
-        response=$(retry_api_call -X POST -H "Content-Type: application/json" --data '{"Username":"'"$ADMIN_USERNAME"'", "Password":"'"$ADMIN_PASSWORD"'"}' "${PORTAINER_URL}/api/users/admin/init")
-        
         local http_status
-        http_status=$(echo "$response" | sed -n 's/.*HTTP_STATUS://p')
-        local body
-        body=$(echo "$response" | sed 's/HTTP_STATUS:.*//')
+        
+        # Construct curl arguments
+        local curl_args=(-s -w "\nHTTP_STATUS:%{http_code}" -X POST -H "Content-Type: application/json" --data '{"Username":"'"$ADMIN_USERNAME"'", "Password":"'"$ADMIN_PASSWORD"'"}' "${PORTAINER_URL}/api/users/admin/init")
+        [ -n "$CURL_EXTRA_ARGS" ] && curl_args+=($CURL_EXTRA_ARGS)
+
+        response=$(curl "${curl_args[@]}")
+        http_status=$(echo -e "$response" | tail -n1 | sed -n 's/.*HTTP_STATUS://p')
+        body=$(echo -e "$response" | sed '$d')
 
         log_debug "Admin creation response body: ${body}"
         log_debug "Admin creation HTTP status: ${http_status}"
 
-        # Success Case 1: User created successfully
         if [[ "$http_status" -eq 200 ]]; then
             log_success "Portainer admin user '${ADMIN_USERNAME}' created successfully."
             return 0
-        # Success Case 2: User already exists
         elif [[ "$http_status" -eq 409 ]]; then
-            log_info "Portainer admin user '${ADMIN_USERNAME}' already exists. Skipping creation."
+            log_info "Portainer admin user already exists. Skipping creation."
             return 0
-        # Retry Case: Portainer is not fully initialized yet
-        elif echo "$body" | jq -e '.details | contains("Administrator initialization timeout")' > /dev/null; then
-            log_warn "Portainer is not fully initialized yet. Retrying in ${RETRY_DELAY} seconds. (Attempt ${attempt}/${MAX_RETRIES})"
-        # General Failure Case
         else
-            log_warn "Failed to create Portainer admin user with HTTP status ${http_status}. Retrying in ${RETRY_DELAY} seconds. (Attempt ${attempt}/${MAX_RETRIES})"
+            log_warn "Failed to create Portainer admin user (HTTP: ${http_status}). Retrying in ${RETRY_DELAY} seconds..."
             log_warn "Response: ${body}"
         fi
 
@@ -931,7 +916,7 @@ sync_portainer_endpoints() {
         fi
         log_info "Using agent hostname: ${AGENT_HOSTNAME} for VM ${VMID}"
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="tcp://${AGENT_HOSTNAME}:${AGENT_PORT}"
+        local ENDPOINT_URL="https://${AGENT_HOSTNAME}:${AGENT_PORT}"
 
         log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
         
@@ -940,15 +925,21 @@ sync_portainer_endpoints() {
         local EXISTING_ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
         if [ -n "$EXISTING_ENDPOINT_ID" ]; then
-            log_info "Endpoint '${AGENT_NAME}' already exists with ID ${EXISTING_ENDPOINT_ID}. No update needed for non-TLS endpoint."
+            log_info "Endpoint '${AGENT_NAME}' already exists with ID ${EXISTING_ENDPOINT_ID}. Skipping creation."
         else
-            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now as a standard non-TLS endpoint..."
+            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now as a secure TLS endpoint..."
+            
+            # Correctly escape the CA content for JSON
+            local ca_content_escaped
+            ca_content_escaped=$(jq -R -s . /mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt)
+
             local CREATE_RESPONSE
             CREATE_RESPONSE=$(jq -n \
                 --arg name "$AGENT_NAME" \
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
-                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": false }' | \
+                --argjson ca_content "$ca_content_escaped" \
+                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": true, "TLSSkipVerify": true, "TLSCACertFileContent": $ca_content }' | \
                 retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/endpoints" \
                     -H "Authorization: Bearer ${JWT}" \
                     -H "Content-Type: application/json" \

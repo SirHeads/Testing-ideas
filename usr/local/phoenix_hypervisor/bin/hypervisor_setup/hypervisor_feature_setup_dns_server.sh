@@ -87,6 +87,7 @@ EOF
         --argjson vm_config "$(cat "$VM_CONFIG_FILE")" \
         '
         ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Nginx-Phoenix") | .value.network_config.ip | split("/")[0]) as $gateway_ip |
+        ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Traefik-Internal") | .value.network_config.ip | split("/")[0]) as $traefik_ip |
         [
             # 1. Process Discovered Docker Stacks for Traefik-routed services
             ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | {
@@ -94,13 +95,14 @@ EOF
                 "ip": $gateway_ip
             }),
             # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
+            # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
             ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": (if .traefik_service.name == "ca" then "10.0.0.10" else (.network_config.ip | split("/")[0]) end)
+                "ip": $traefik_ip
             }),
             ($vm_config.vms[] | select(.traefik_service.name?) | {
                 "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": (if .traefik_service.name == "portainer-agent" then (.network_config.ip | split("/")[0]) else $gateway_ip end)
+                "ip": $traefik_ip
             }),
             # 3. Add records for all guests (LXC and VM) that need to be addressed by their own name
             ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
@@ -111,10 +113,22 @@ EOF
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
                 "ip": (.network_config.ip | split("/")[0])
             }),
-            # 4. Add records for Portainer agents specifically
-            ($vm_config.vms[] | select(.portainer_role == "agent") | {
+            # --- BEGIN STRATEGIC FIX ---
+            # Add a specific rule to create a DNS record for the portainer_agent_hostname
+            # if it exists. This ensures the scalable, unique hostname is always resolvable.
+            ($vm_config.vms[] | select(.portainer_agent_hostname? and .portainer_agent_hostname != "") | {
                 "hostname": .portainer_agent_hostname,
                 "ip": (.network_config.ip | split("/")[0])
+            }),
+            # --- END STRATEGIC FIX ---
+            # 4. Add records from the new declarative dns_records arrays
+            ($lxc_config.lxc_configs | values[] | .dns_records[]? | {
+                "hostname": .hostname,
+                "ip": .ip
+            }),
+            ($vm_config.vms[] | .dns_records[]? | {
+                "hostname": .hostname,
+                "ip": .ip
             }),
             # 5. Add static records
             { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },

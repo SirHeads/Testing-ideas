@@ -763,6 +763,8 @@ apply_vm_features() {
         fi
         log_info "Successfully copied and verified phoenix_hypervisor_config.json."
 
+        # --- Definitive Fix: Stage the Trusted CA Certificate ---
+
         # --- Definitive Fix: Copy Portainer compose file ---
         log_info "Copying Portainer docker-compose.yml to VM's persistent storage..."
         local portainer_compose_dest_dir="${persistent_volume_path}/portainer"
@@ -924,22 +926,19 @@ prepare_vm_ca_staging_area() {
 
     wait_for_step_ca_service
 
-    local source_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
-    local dest_dir="/quickOS/vm-persistent-data/${VMID}/.step-ca"
+    wait_for_step_ca_service
 
-    log_info "Creating and preparing staging directory: ${dest_dir}"
-    mkdir -p "${dest_dir}"
-    rm -f "${dest_dir}"/* # Clean out old files
+    wait_for_step_ca_service
 
-    log_info "Copying CA files to staging area..."
-    cp "${source_dir}/certs/root_ca.crt" "${dest_dir}/root_ca.crt"
-    cp "${source_dir}/provisioner_password.txt" "${dest_dir}/provisioner_password.txt"
-    cp "${source_dir}/root_ca.fingerprint" "${dest_dir}/root_ca.fingerprint"
+    # This function is now responsible for pushing the CA cert directly into the VM's /tmp directory.
+    # The feature script will then move it to the final destination.
+    local ca_cert_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
+    local vm_temp_path="/tmp/phoenix_root_ca.crt"
 
-    log_info "Setting world-readable permissions on staged CA files..."
-    chmod 644 "${dest_dir}/root_ca.crt"
-    chmod 644 "${dest_dir}/provisioner_password.txt"
-    chmod 644 "${dest_dir}/root_ca.fingerprint"
+    log_info "Pushing CA certificate from host to VM's temporary directory..."
+    if ! qm_push_file "$VMID" "$ca_cert_source_path" "$vm_temp_path"; then
+        log_fatal "Failed to push CA certificate to VM ${VMID}."
+    fi
 
     log_success "CA staging area for VM ${VMID} is ready."
 }

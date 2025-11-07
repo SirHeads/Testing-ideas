@@ -116,6 +116,19 @@ DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
 DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
 DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
 
+# --- BEGIN BOOTSTRAP FIX ---
+# This is a temporary fix to allow the VM to resolve the CA during initial creation.
+# The centralized dnsmasq service on the hypervisor will not have the CA's record
+# until a 'phoenix sync all' is run. This static entry bridges that gap.
+log_info "Temporarily adding static host entry for Step CA to bridge bootstrap DNS gap..."
+CA_IP="10.0.0.10" # This is the static IP of the Step-CA container from phoenix_lxc_configs.json
+CA_HOSTNAME="ca.internal.thinkheads.ai"
+# Idempotently add the hosts entry
+sed -i "/${CA_HOSTNAME}/d" /etc/hosts
+echo "${CA_IP} ${CA_HOSTNAME}" >> /etc/hosts
+log_info "Static host entry for ${CA_HOSTNAME} added to /etc/hosts."
+# --- END BOOTSTRAP FIX ---
+
 # Bootstrap Step CLI
 log_info "Waiting for DNS resolution of ca.internal.thinkheads.ai..."
 while ! getent hosts ca.internal.thinkheads.ai > /dev/null; do
@@ -183,5 +196,46 @@ log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 
 # Steps 9, 10, and 11 are now obsolete.
 log_info "Step 9, 10, and 11 are now handled directly by this script for robust mTLS configuration."
+
+# --- BEGIN DYNAMIC IPTABLES CONFIGURATION ---
+log_info "Applying dynamic Docker firewall rules..."
+if ! command -v iptables-persistent >/dev/null 2>&1; then
+    log_info "Installing iptables-persistent..."
+    # Pre-seed debconf to avoid interactive prompts
+    echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
+    echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
+    apt-get install -y iptables-persistent >/dev/null
+fi
+
+firewall_rules_json=$(jq -r '.docker_firewall_rules // []' "$CONTEXT_FILE")
+if [ -n "$firewall_rules_json" ] && [ "$firewall_rules_json" != "[]" ]; then
+    echo "$firewall_rules_json" | jq -c '.[]' | while read -r rule; do
+        chain=$(echo "$rule" | jq -r '.chain')
+        interface=$(echo "$rule" | jq -r '.interface')
+        protocol=$(echo "$rule" | jq -r '.protocol')
+        port=$(echo "$rule" | jq -r '.port')
+        action=$(echo "$rule" | jq -r '.action')
+
+        iptables_rule="-I ${chain} -i ${interface} -p ${protocol} --dport ${port} -j ${action}"
+        log_info "Applying iptables rule: iptables ${iptables_rule}"
+        
+        # Check if the rule already exists to ensure idempotency
+        if ! iptables -C ${chain} -i ${interface} -p ${protocol} --dport ${port} -j ${action} >/dev/null 2>&1; then
+            if ! iptables ${iptables_rule}; then
+                log_fatal "Failed to apply iptables rule: ${iptables_rule}"
+            fi
+        else
+            log_info "iptables rule already exists. Skipping."
+        fi
+    done
+    
+    log_info "Saving iptables rules to make them persistent..."
+    if ! netfilter-persistent save; then
+        log_warn "Failed to save iptables rules. They may not persist after a reboot."
+    fi
+else
+    log_info "No dynamic Docker firewall rules to apply."
+fi
+# --- END DYNAMIC IPTABLES CONFIGURATION ---
 
 log_info "--- Docker Installation Complete ---"

@@ -31,7 +31,7 @@ main() {
         --arg internal_domain "$INTERNAL_DOMAIN_NAME" \
         '
         [
-            # Process VMs
+            # Process VMs with standard traefik_service definitions
             ($vms[0].vms[]? | select(.traefik_service? and .traefik_service != null) |
                 . as $vm_config |
                 .traefik_service as $service_def |
@@ -41,6 +41,18 @@ main() {
                     "url": "https://\($vm_config.network_config.ip | split("/")[0]):\($service_def.port)"
                 }
             ),
+            # --- BEGIN STRATEGIC FIX V2 ---
+            # Add a new, separate rule to specifically handle Portainer Agents
+            # This creates a router for the unique, scalable hostname.
+            ($vms[0].vms[]? | select(.portainer_agent_hostname? and .portainer_agent_hostname != "") |
+                . as $vm_config |
+                {
+                    "name": $vm_config.portainer_environment_name, # Use the environment name for the service name
+                    "rule": "Host(`\($vm_config.portainer_agent_hostname)`)",
+                    "url": "https://\($vm_config.network_config.ip | split("/")[0]):9001" # Port is always 9001 for agents
+                }
+            ),
+            # --- END STRATEGIC FIX V2 ---
             # Process LXCs
             ($lxcs[0].lxc_configs | values[]? | select(.traefik_service? and .traefik_service != null) |
                 . as $lxc_config |

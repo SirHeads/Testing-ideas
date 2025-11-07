@@ -28,7 +28,7 @@ source "${SCRIPT_DIR}/phoenix_hypervisor_common_utils.sh"
 # --- Script Variables ---
 VMID="$1"
 # The CA files are staged on the persistent mount, which is standardized to /mnt/persistent
-CA_CERT_SOURCE_PATH="/mnt/persistent/.step-ca/root_ca.crt"
+CA_CERT_SOURCE_PATH="/tmp/phoenix_root_ca.crt"
 CA_CERT_DEST_PATH="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 
 # =====================================================================================

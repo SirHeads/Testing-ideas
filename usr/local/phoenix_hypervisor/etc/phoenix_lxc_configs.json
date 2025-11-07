@@ -805,7 +805,7 @@
             "application_script": "phoenix_hypervisor_lxc_102.sh",
             "bootstrap_ca_url": "https://10.0.0.10:9000",
             "dependencies": [
-                "103"
+                "101"
             ],
             "firewall": {
                 "enabled": true,
@@ -889,6 +889,14 @@
                         "proto": "tcp",
                         "port": "8081",
                         "comment": "Allow proxy to llamacpp-gpu0 (10.0.0.157)"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.102",
+                        "proto": "tcp",
+                        "port": "9001",
+                        "comment": "Allow Traefik to proxy to Portainer Agent"
                     }
                 ]
             },

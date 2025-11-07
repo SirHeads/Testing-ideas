@@ -105,15 +105,11 @@
             ],
             "portainer_role": "agent",
             "portainer_environment_name": "drphoenix",
-            "portainer_agent_hostname": "portainer-agent.internal.thinkheads.ai",
+            "portainer_agent_hostname": "drphoenix-agent.internal.thinkheads.ai",
             "trigger_sync_on_completion": true,
             "dependencies": [
                 "1001"
             ],
-            "traefik_service": {
-                "name": "portainer-agent",
-                "port": 9001
-            },
             "network_config": {
                 "ip": "10.0.0.102/24",
                 "gw": "10.0.0.1",
@@ -134,7 +130,15 @@
                 "qdrant_service",
                 "thinkheads_ai_app"
             ],
-            "dns_records": [],
+            "docker_firewall_rules": [
+                {
+                    "chain": "DOCKER-USER",
+                    "interface": "eth0",
+                    "protocol": "tcp",
+                    "port": 9001,
+                    "action": "ACCEPT"
+                }
+            ],
             "firewall": {
                 "enabled": true,
                 "rules": [
