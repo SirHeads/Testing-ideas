@@ -8,6 +8,33 @@
             "description": "The base domain name for the internal network (e.g., 'phoenix.thinkheads.ai').",
             "type": "string"
         },
+        "portainer_api": {
+            "description": "Configuration for the Portainer API.",
+            "type": "object",
+            "properties": {
+                "admin_user": {
+                    "type": "string"
+                },
+                "admin_password": {
+                    "type": "string"
+                },
+                "portainer_hostname": {
+                    "type": "string"
+                },
+                "api_key": {
+                    "description": "A persistent API key for authenticating with the Portainer API. If not provided, it will be generated automatically.",
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                }
+            },
+            "required": [
+                "admin_user",
+                "admin_password",
+                "portainer_hostname"
+            ]
+        },
         "vm_defaults": {
             "description": "Default settings for virtual machines.",
             "type": "object",

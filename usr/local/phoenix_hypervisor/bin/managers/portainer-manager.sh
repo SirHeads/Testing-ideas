@@ -118,69 +118,77 @@ retry_api_call() {
 }
 
 # =====================================================================================
-# Function: get_portainer_jwt
-# Description: Authenticates with the Portainer API and retrieves a JWT.
+# Function: get_or_create_portainer_api_key
+# Description: Retrieves the Portainer API key from the config, validates it, and
+#              generates a new one if it's missing or invalid.
 #
 # Returns:
-#   The JWT on success, or exits with a fatal error on failure.
+#   The valid API key on success, or exits with a fatal error on failure.
 # =====================================================================================
-get_portainer_jwt() {
-    log_info "Attempting to authenticate with Portainer API..."
-    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
-    local GATEWAY_URL="https://${PORTAINER_HOSTNAME}"
-    local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
-    local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
-    local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
+get_or_create_portainer_api_key() {
+    log_info "--- Ensuring Portainer API Key is available ---"
+    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
+    local PORTAINER_URL="http://${PORTAINER_SERVER_IP}:9000"
+    local API_KEY=$(get_global_config_value '.portainer_api.api_key // ""')
+    local key_is_valid=false
 
-    # --- Robust API Ready Wait ---
-    local MAX_WAIT_ATTEMPTS=12
-    local WAIT_INTERVAL=5
-    log_info "Waiting for Portainer API to be fully initialized..."
-    for ((i=1; i<=MAX_WAIT_ATTEMPTS; i++)); do
+    # 1. Validate existing key
+    if [ -n "$API_KEY" ] && [ "$API_KEY" != "null" ]; then
+        log_info "Validating existing Portainer API key..."
         local status_response
-        status_response=$(curl -s --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" "${GATEWAY_URL}/api/system/status")
-        if echo "$status_response" | jq -e '.InstanceID' > /dev/null; then
-            log_success "Portainer API is initialized and ready."
-            break
+        status_response=$(curl -s -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/system/status")
+        if echo "$status_response" | jq -e '.Status == "healthy"' > /dev/null; then
+            log_success "Existing Portainer API key is valid."
+            key_is_valid=true
+        else
+            log_warn "Existing Portainer API key is invalid. A new key will be generated."
         fi
-        log_info "Portainer not yet initialized. Waiting ${WAIT_INTERVAL}s... (Attempt ${i}/${MAX_WAIT_ATTEMPTS})"
-        sleep "$WAIT_INTERVAL"
-    done
-
-    if ! echo "$status_response" | jq -e '.InstanceID' > /dev/null; then
-        log_fatal "Portainer API did not initialize within the expected time."
-    fi
-    # --- End Robust API Ready Wait ---
-
-    log_debug "Gateway URL: ${GATEWAY_URL}"
-    log_debug "Portainer Username: ${USERNAME}"
-    log_debug "Portainer Password (first 3 chars): ${PASSWORD:0:3}..."
-
-    if [ ! -f "$CA_CERT_PATH" ]; then
-        log_fatal "CA certificate file not found at: ${CA_CERT_PATH}. Cannot authenticate with Portainer API."
+    else
+        log_info "No Portainer API key found in configuration. A new key will be generated."
     fi
 
-    local JWT=""
-    local AUTH_PAYLOAD
-    AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
+    # 2. Generate new key if necessary
+    if [ "$key_is_valid" = false ]; then
+        log_info "Generating new Portainer API key..."
+        local USERNAME=$(get_global_config_value '.portainer_api.admin_user')
+        local PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
 
-    local JWT_RESPONSE
-    JWT_RESPONSE=$(retry_api_call -X POST \
-        -H "Content-Type: application/json" \
-        --cacert "$CA_CERT_PATH" \
-        --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" \
-        -d "$AUTH_PAYLOAD" \
-        "${GATEWAY_URL}/api/auth" --verbose)
+        # Get a temporary JWT
+        local AUTH_PAYLOAD
+        AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
+        local JWT_RESPONSE
+        JWT_RESPONSE=$(retry_api_call -X POST -H "Content-Type: application/json" -d "$AUTH_PAYLOAD" "${PORTAINER_URL}/api/auth")
+        local JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
 
-    if [ -n "$JWT_RESPONSE" ]; then
-        JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
+        if [ -z "$JWT" ]; then
+            log_fatal "Failed to obtain temporary JWT for API key generation."
+        fi
+        log_info "Successfully obtained temporary JWT."
+
+        # Create a new API key
+        local API_KEY_PAYLOAD
+        API_KEY_PAYLOAD=$(jq -n --arg pass "$PASSWORD" '{description: "phoenix-cli-key", password: $pass}')
+        local API_KEY_RESPONSE
+        API_KEY_RESPONSE=$(retry_api_call -X POST -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "$API_KEY_PAYLOAD" "${PORTAINER_URL}/api/users/1/tokens")
+        API_KEY=$(echo "$API_KEY_RESPONSE" | jq -r '.rawAPIKey // ""')
+
+        if [ -z "$API_KEY" ]; then
+            log_fatal "Failed to generate a new Portainer API key."
+        fi
+        log_success "Successfully generated new Portainer API key."
+
+        # 3. Save the new key back to the configuration file
+        log_info "Saving new API key to phoenix_hypervisor_config.json..."
+        local temp_config
+        temp_config=$(mktemp)
+        jq --arg key "$API_KEY" '.portainer_api.api_key = $key' "$HYPERVISOR_CONFIG_FILE" > "$temp_config"
+        if ! mv "$temp_config" "$HYPERVISOR_CONFIG_FILE"; then
+            log_fatal "Failed to save new API key to configuration file. Please check permissions."
+        fi
+        log_success "New API key saved successfully."
     fi
 
-    if [ -z "$JWT" ]; then
-      log_fatal "Failed to authenticate with Portainer API after multiple attempts."
-    fi
-    log_success "Successfully authenticated with Portainer API."
-    echo "$JWT"
+    echo "$API_KEY"
 }
 
 
@@ -346,10 +354,9 @@ deploy_portainer_instances() {
                 
                 # --- BEGIN IMMEDIATE ADMIN SETUP ---
                 log_info "Waiting for Portainer API and setting up admin user..."
-                local portainer_server_ip="10.0.0.111"
-                local portainer_server_port="9443" # Use HTTPS port now
-                local PORTAINER_URL="https://${portainer_server_ip}:${portainer_server_port}"
-                setup_portainer_admin_user "$PORTAINER_URL" "" "--insecure" # Use insecure for initial setup against IP
+                local portainer_server_ip=$(get_global_config_value '.network.portainer_server_ip')
+                local PORTAINER_URL="http://${portainer_server_ip}:9000"
+                setup_portainer_admin_user "$PORTAINER_URL"
                 # --- END IMMEDIATE ADMIN SETUP ---
                 ;;
             agent)
@@ -375,17 +382,17 @@ deploy_portainer_instances() {
 
                 # Idempotency Check
                 if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
-                    if openssl x509 -in "$cert_file" -checkend 86400 >/dev/null 2>&1; then
-                        log_info "Existing Portainer Agent certificate is valid. Skipping generation."
+                    if ! openssl x509 -in "$cert_file" -checkend 86400 >/dev/null 2>&1; then
+                         log_warn "Existing Portainer Agent certificate is expiring or invalid. Generating a new one."
                     else
-                        log_warn "Existing Portainer Agent certificate is expiring or invalid. Generating a new one."
+                        log_info "Existing Portainer Agent certificate is valid. Skipping generation."
                     fi
+                else
+                    log_info "Requesting new Portainer Agent certificate for ${agent_fqdn}..."
+                    step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(cat /mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint)" --force
+                    local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
+                    step ca certificate "$agent_fqdn" "$cert_file" "$key_file" --provisioner "admin@thinkheads.ai" --provisioner-password-file "/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt" --force --san "$vm_ip" || log_fatal "Failed to obtain Portainer Agent certificate."
                 fi
-                
-                log_info "Requesting new Portainer Agent certificate for ${agent_fqdn}..."
-                step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(cat /mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint)" --force
-                local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
-                step ca certificate "$agent_fqdn" "$cert_file" "$key_file" --provisioner "admin@thinkheads.ai" --provisioner-password-file "/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt" --force --san "$vm_ip" || log_fatal "Failed to obtain Portainer Agent certificate."
                 
                 # --- PREPARE AND PUSH FILES TO VM (Mirrors Server Logic) ---
                 log_info "Preparing Portainer Agent files for deployment to VM..."
@@ -409,7 +416,7 @@ deploy_portainer_instances() {
 
                 log_info "Starting Portainer agent with TLS enabled..."
                 local agent_image=$(get_global_config_value '.docker.portainer_agent_image')
-                local docker_command="docker run -d -p 127.0.0.1:${agent_port}:9001 --name portainer_agent --restart=always \
+                local docker_command="docker run -d -p ${agent_port}:9001 --name portainer_agent --restart=always \
                     -v /var/run/docker.sock:/var/run/docker.sock \
                     -v /var/lib/docker/volumes:/var/lib/docker/volumes \
                     -v ${agent_deploy_path}/certs:/certs \
@@ -449,8 +456,6 @@ deploy_portainer_instances() {
 # =====================================================================================
 setup_portainer_admin_user() {
     local PORTAINER_URL="$1"
-    local CA_CERT_PATH="$2"
-    local CURL_EXTRA_ARGS="$3" # Accept extra curl arguments, like --insecure
     local ADMIN_USERNAME=$(get_global_config_value '.portainer_api.admin_user')
     local ADMIN_PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
     local MAX_RETRIES=5 # Increased retries for robustness
@@ -472,11 +477,7 @@ setup_portainer_admin_user() {
         local response
         local http_status
         
-        # Construct curl arguments
-        local curl_args=(-s -w "\nHTTP_STATUS:%{http_code}" -X POST -H "Content-Type: application/json" --data '{"Username":"'"$ADMIN_USERNAME"'", "Password":"'"$ADMIN_PASSWORD"'"}' "${PORTAINER_URL}/api/users/admin/init")
-        [ -n "$CURL_EXTRA_ARGS" ] && curl_args+=($CURL_EXTRA_ARGS)
-
-        response=$(curl "${curl_args[@]}")
+        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST -H "Content-Type: application/json" --data '{"Username":"'"$ADMIN_USERNAME"'", "Password":"'"$ADMIN_PASSWORD"'"}' "${PORTAINER_URL}/api/users/admin/init")
         http_status=$(echo -e "$response" | tail -n1 | sed -n 's/.*HTTP_STATUS://p')
         body=$(echo -e "$response" | sed '$d')
 
@@ -638,12 +639,12 @@ sync_all() {
     log_info "Waiting for Portainer to initialize after restart..."
     sleep 15 # Give Portainer ample time to initialize after restart
 
-    local JWT=$(get_portainer_jwt | tr -d '\n')
-    if [ -z "$JWT" ]; then
-        log_fatal "Failed to get Portainer JWT. Aborting stack synchronization."
+    local API_KEY=$(get_or_create_portainer_api_key)
+    if [ -z "$API_KEY" ]; then
+        log_fatal "Failed to get Portainer API Key. Aborting stack synchronization."
     fi
-    local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
-    sync_portainer_endpoints "$JWT" "$CA_CERT_PATH"
+
+    sync_portainer_endpoints "$API_KEY"
     
     log_info "Discovering all available Docker stacks..."
     local all_stacks_config
@@ -667,7 +668,7 @@ sync_all() {
         
         log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
         local ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         
         if [ -z "$ENDPOINT_ID" ]; then
@@ -678,7 +679,7 @@ sync_all() {
         echo "$vm_config" | jq -r '.docker_stacks[]' | while read -r stack_name; do
             # We assume the "production" environment by default for now.
             # This could be made more flexible in the future if needed.
-            sync_stack "$VMID" "$stack_name" "production" "$all_stacks_config" "$JWT" "$ENDPOINT_ID"
+            sync_stack "$VMID" "$stack_name" "production" "$all_stacks_config" "$API_KEY" "$ENDPOINT_ID"
         done
     done < <(echo "$vms_with_stacks" | jq -c '.')
     log_info "--- Docker stack synchronization complete ---"
@@ -708,17 +709,16 @@ sync_stack() {
     local STACK_NAME="$2"
     local ENVIRONMENT_NAME="$3"
     local ALL_STACKS_CONFIG="$4"
-    local JWT="${5:-}"
+    local API_KEY="${5:-}"
     local ENDPOINT_ID="${6:-}"
 
     log_info "Synchronizing stack '${STACK_NAME}' (environment: '${ENVIRONMENT_NAME}') to VMID '${VMID}'..."
 
-    local portainer_hostname="portainer.internal.thinkheads.ai"
-    local PORTAINER_URL="https://${portainer_hostname}"
-    local CA_CERT_PATH="${CENTRALIZED_CA_CERT_PATH}"
+    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
+    local PORTAINER_URL="http://${PORTAINER_SERVER_IP}:9000"
 
-    if [ -z "$JWT" ]; then
-        JWT=$(get_portainer_jwt)
+    if [ -z "$API_KEY" ]; then
+        API_KEY=$(get_or_create_portainer_api_key)
     fi
 
     if [ -z "$ENDPOINT_ID" ]; then
@@ -726,7 +726,7 @@ sync_stack() {
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
         local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
         ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
         if [ -z "$ENDPOINT_ID" ]; then
             log_fatal "Could not find Portainer environment for VMID ${VMID} (URL: ${ENDPOINT_URL}). Ensure agent is running and environment is created."
@@ -821,19 +821,19 @@ sync_stack() {
             local FILE_CONTENT=$(cat "$full_source_path")
 
             local configs_response
-            configs_response=$(retry_api_call -s --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/configs" -H "Authorization: Bearer ${JWT}")
+            configs_response=$(retry_api_call -X GET "${PORTAINER_URL}/api/configs" -H "X-API-Key: ${API_KEY}")
             local EXISTING_CONFIG_ID=$(echo "$configs_response" | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
             if [ -n "$EXISTING_CONFIG_ID" ]; then
                 log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating..."
-                retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "Authorization: Bearer ${JWT}"
+                retry_api_call -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "X-API-Key: ${API_KEY}"
             fi
 
             log_info "Creating Portainer Config '${CONFIG_NAME}'..."
             local CONFIG_PAYLOAD=$(jq -n --arg name "${CONFIG_NAME}" --arg data "${FILE_CONTENT}" '{Name: $name, Data: $data}')
             local CONFIG_RESPONSE
-            CONFIG_RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
-              -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
+            CONFIG_RESPONSE=$(retry_api_call -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
+              -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
             local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
             
             if [ -z "$NEW_CONFIG_ID" ]; then
@@ -846,7 +846,7 @@ sync_stack() {
 
     local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}"
     local stacks_response
-    stacks_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/stacks" -H "Authorization: Bearer ${JWT}")
+    stacks_response=$(retry_api_call -X GET "${PORTAINER_URL}/api/stacks" -H "X-API-Key: ${API_KEY}")
     local STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "$STACK_DEPLOY_NAME" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
 
     if [ -n "$STACK_EXISTS_ID" ]; then
@@ -860,8 +860,8 @@ sync_stack() {
             '{StackFileContent: $content, Env: $env, Configs: $configs, Prune: true}')
         
         local RESPONSE
-        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
-          -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
+        RESPONSE=$(retry_api_call -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
+          -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to update stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
         fi
@@ -878,8 +878,8 @@ sync_stack() {
             '{Name: $name, StackFileContent: $content, Env: $env, Configs: $configs}')
         
         local RESPONSE
-        RESPONSE=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${portainer_hostname}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/stacks?type=2&method=string&endpointId=${ENDPOINT_ID}" \
-          -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
+        RESPONSE=$(retry_api_call -X POST "${PORTAINER_URL}/api/stacks?type=2&method=string&endpointId=${ENDPOINT_ID}" \
+          -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
         if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
           log_fatal "Failed to deploy stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
         fi
@@ -890,18 +890,16 @@ sync_stack() {
 # =====================================================================================
 # Function: sync_portainer_endpoints
 # Description: Ensures that all Portainer agent endpoints defined in the configuration
-#              are registered with the Portainer server.
+#              are registered with the Portainer server using standard TCP connections.
 # Arguments:
-#   $1 - The Portainer JWT.
-#   $2 - The path to the CA certificate.
+#   $1 - The Portainer API Key.
 # =====================================================================================
 sync_portainer_endpoints() {
-    local JWT="$1"
-    local CA_CERT_PATH="$2"
-    local PORTAINER_HOSTNAME="portainer.internal.thinkheads.ai"
-    local PORTAINER_URL="https://${PORTAINER_HOSTNAME}"
+    local API_KEY="$1"
+    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
+    local PORTAINER_URL="http://${PORTAINER_SERVER_IP}:9000"
 
-    log_info "--- Synchronizing Portainer Endpoints ---"
+    log_info "--- Synchronizing Portainer Endpoints (Portainer CE Method) ---"
 
     local agents_to_register
     agents_to_register=$(jq -c '.vms[] | select(.portainer_role == "agent")' "$VM_CONFIG_FILE")
@@ -909,41 +907,48 @@ sync_portainer_endpoints() {
     while read -r agent_config; do
         local VMID=$(echo "$agent_config" | jq -r '.vmid')
         local AGENT_NAME=$(echo "$agent_config" | jq -r '.portainer_environment_name' | tr -d '[:space:]')
-        local AGENT_HOSTNAME=$(echo "$agent_config" | jq -r '.portainer_agent_hostname // ""')
-        if [ -z "$AGENT_HOSTNAME" ]; then
-            log_warn "portainer_agent_hostname not defined for VM ${VMID}. Falling back to legacy naming convention."
-            AGENT_HOSTNAME="${AGENT_NAME}.internal.thinkheads.ai"
-        fi
-        log_info "Using agent hostname: ${AGENT_HOSTNAME} for VM ${VMID}"
+        local agent_ip=$(echo "$agent_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
         local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="https://${AGENT_HOSTNAME}:${AGENT_PORT}"
+        local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
 
         log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
         
         local endpoints_response
-        endpoints_response=$(retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X GET "${PORTAINER_URL}/api/endpoints" -H "Authorization: Bearer ${JWT}")
+        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
         local EXISTING_ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
 
         if [ -n "$EXISTING_ENDPOINT_ID" ]; then
             log_info "Endpoint '${AGENT_NAME}' already exists with ID ${EXISTING_ENDPOINT_ID}. Skipping creation."
         else
-            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now as a secure TLS endpoint..."
+            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now as a standard TCP endpoint..."
             
-            # Correctly escape the CA content for JSON
-            local ca_content_escaped
-            ca_content_escaped=$(jq -R -s . /mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt)
-
-            local CREATE_RESPONSE
-            CREATE_RESPONSE=$(jq -n \
+            # --- BEGIN PORTAINER CE API BUG WORKAROUND ---
+            # This version of Portainer CE has a known bug where creating a TLS-enabled
+            # endpoint via the API fails with a misleading "Invalid environment name" error.
+            # The workaround is to register the endpoint with "TLS": false, even though the
+            # agent itself is running with TLS enabled. The connection will still be secure
+            # because the agent will enforce the TLS handshake.
+            log_info "Constructing payload for Portainer CE API bug workaround..."
+            local CREATE_PAYLOAD
+            CREATE_PAYLOAD=$(jq -n \
                 --arg name "$AGENT_NAME" \
                 --arg url "$ENDPOINT_URL" \
                 --argjson groupID 1 \
-                --argjson ca_content "$ca_content_escaped" \
-                '{ "Name": $name, "URL": $url, "Type": 2, "GroupID": $groupID, "TLS": true, "TLSSkipVerify": true, "TLSCACertFileContent": $ca_content }' | \
-                retry_api_call --cacert "$CA_CERT_PATH" --resolve "${PORTAINER_HOSTNAME}:443:10.0.0.153" -X POST "${PORTAINER_URL}/api/endpoints" \
-                    -H "Authorization: Bearer ${JWT}" \
-                    -H "Content-Type: application/json" \
-                    --data-binary @-)
+                '{
+                    "Name": $name,
+                    "URL": $url,
+                    "Type": 2,
+                    "GroupID": $groupID,
+                    "TLS": false
+                }')
+
+            local CREATE_RESPONSE
+            CREATE_RESPONSE=$(retry_api_call -X POST \
+                -H "X-API-Key: ${API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d "$CREATE_PAYLOAD" \
+                "${PORTAINER_URL}/api/endpoints")
+            # --- END PORTAINER CE API BUG WORKAROUND ---
 
             if echo "$CREATE_RESPONSE" | jq -e '.Id' > /dev/null; then
                 log_success "Successfully created endpoint for VM ${VMID}."

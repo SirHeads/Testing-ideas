@@ -353,6 +353,22 @@
                     "proto": "tcp",
                     "port": "443",
                     "comment": "Allow Proxmox host to access the Nginx gateway for Portainer API calls"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.111",
+                    "dest": "10.0.0.102",
+                    "proto": "tcp",
+                    "port": "9001",
+                    "comment": "Allow Portainer server to connect to agent"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.111",
+                    "dest": "10.0.0.102",
+                    "comment": "DEBUG: Allow all traffic from Portainer server to agent"
                 }
             ]
         }
@@ -360,7 +376,8 @@
     "portainer_api": {
         "admin_user": "admin",
         "admin_password": "NewKick@$$2025",
-        "portainer_hostname": "portainer.internal.thinkheads.ai"
+        "portainer_hostname": "portainer.internal.thinkheads.ai",
+        "api_key": null
     },
     "vm_defaults": {
         "ubuntu_release": "noble"
