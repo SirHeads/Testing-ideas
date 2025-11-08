@@ -60,6 +60,12 @@
                     "server": "10.0.0.13",
                     "path": "/quickOS/vm-persistent-data/1001",
                     "mount_point": "/mnt/persistent"
+                },
+                {
+                    "type": "nfs",
+                    "server": "10.0.0.13",
+                    "path": "/quickOS/portainer_stacks",
+                    "mount_point": "/mnt/stacks"
                 }
             ],
             "docker_stacks": [

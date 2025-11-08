@@ -56,6 +56,17 @@
                     "no_subtree_check",
                     "no_root_squash"
                 ]
+            },
+            {
+                "path": "/quickOS/portainer_stacks",
+                "clients": [
+                    "10.0.0.111"
+                ],
+                "options": [
+                    "ro",
+                    "sync",
+                    "no_subtree_check"
+                ]
             }
         ]
     },
@@ -210,6 +221,14 @@
                 "properties": "recordsize=1M,compression=lz4,sync=standard,quota=100G",
                 "proxmox_storage_type": "dir",
                 "proxmox_content_type": "iso,vztmpl",
+                "storage_class": "shared"
+            },
+            {
+                "name": "portainer_stacks",
+                "pool": "quickOS",
+                "properties": "sharenfs=on",
+                "proxmox_storage_type": "dir",
+                "proxmox_content_type": "snippets",
                 "storage_class": "shared"
             }
         ]

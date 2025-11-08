@@ -1,4 +1,0 @@
-
-
-
-cat /etc/dnsmasq.d/00-phoenix-internal.conf && cat /usr/local/phoenix_hypervisor/etc/traefik/dynamic_conf.yml && qm guest exec 1001 -- docker logs portainer_server && qm guest exec 1002 -- docker logs portainer_agent && qm guest exec 1002 -- iptables -L && cat /etc/pve/firewall/1001.fw && cat /etc/pve/firewall/102.fw && cat /etc/pve/firewall/cluster.fw

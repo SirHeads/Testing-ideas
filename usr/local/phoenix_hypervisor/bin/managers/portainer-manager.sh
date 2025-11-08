@@ -503,6 +503,35 @@ setup_portainer_admin_user() {
 }
 
 # =====================================================================================
+# Function: sync_stack_files
+# Description: Synchronizes the local stack definition files to the shared ZFS dataset
+#              so they are available for Portainer to use.
+# =====================================================================================
+sync_stack_files() {
+    log_info "--- Syncing stack files to shared ZFS dataset ---"
+    local source_dir="${PHOENIX_BASE_DIR}/stacks/"
+    local dest_dir="/quickOS/portainer_stacks/"
+
+    if [ ! -d "$source_dir" ]; then
+        log_warn "Source stacks directory not found at ${source_dir}. Skipping sync."
+        return
+    fi
+
+    # Ensure the destination directory exists.
+    if ! mkdir -p "$dest_dir"; then
+        log_fatal "Failed to create destination directory for stacks: ${dest_dir}"
+    fi
+
+    # Use rsync to efficiently synchronize the files. The --delete flag ensures that
+    # stacks removed from the git repo are also removed from the shared volume.
+    if ! rsync -av --delete "$source_dir" "$dest_dir"; then
+        log_fatal "Failed to rsync stack files from ${source_dir} to ${dest_dir}"
+    fi
+
+    log_success "Stack files synchronized successfully to ${dest_dir}."
+}
+
+# =====================================================================================
 # Function: sync_all
 # Description: Synchronizes all Portainer environments and deploys all associated stacks.
 # Arguments:
@@ -513,6 +542,9 @@ setup_portainer_admin_user() {
 sync_all() {
     local reset_portainer_on_sync=${1:-false}
     log_info "--- Starting Full System State Synchronization ---"
+
+    # --- NEW STAGE 0: Sync Stack Files ---
+    sync_stack_files
 
     # --- STAGE 1: CERTIFICATE GENERATION & CORE INFRASTRUCTURE ---
     log_info "--- Stage 1: Synchronizing Certificates, DNS, and Firewall ---"
@@ -644,45 +676,15 @@ sync_all() {
         log_fatal "Failed to get Portainer API Key. Aborting stack synchronization."
     fi
 
-    sync_portainer_endpoints "$API_KEY"
-    
-    log_info "Discovering all available Docker stacks..."
-    local all_stacks_config
-    all_stacks_config=$(discover_stacks)
-    if [ -z "$all_stacks_config" ] || [ "$all_stacks_config" == "{}" ]; then
-        log_info "No stacks found to synchronize."
-        log_info "--- Full System State Synchronization Finished ---"
-        return
-    fi
-    log_info "Discovered stacks: $(echo "$all_stacks_config" | jq 'keys_unsorted | join(", ")')"
-
-    log_info "--- Synchronizing all declared Docker stacks ---"
-    local vms_with_stacks
-    vms_with_stacks=$(jq -c '.vms[] | select(.docker_stacks and (.docker_stacks | length > 0))' "$VM_CONFIG_FILE")
-    
-    while read -r vm_config; do
-        local VMID=$(echo "$vm_config" | jq -r '.vmid')
-        local agent_ip=$(echo "$vm_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
-        local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
-        
-        log_info "Fetching Portainer endpoint ID for VM ${VMID}..."
-        local endpoints_response
-        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
-        local ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
-        
-        if [ -z "$ENDPOINT_ID" ]; then
-            log_warn "Could not find Portainer endpoint for VM ${VMID}. Skipping stack deployment."
-            continue
-        fi
-
-        echo "$vm_config" | jq -r '.docker_stacks[]' | while read -r stack_name; do
-            # We assume the "production" environment by default for now.
-            # This could be made more flexible in the future if needed.
-            sync_stack "$VMID" "$stack_name" "production" "$all_stacks_config" "$API_KEY" "$ENDPOINT_ID"
-        done
-    done < <(echo "$vms_with_stacks" | jq -c '.')
-    log_info "--- Docker stack synchronization complete ---"
+    # DEPRECATED: The following block for endpoint and stack synchronization is
+    #             now handled manually via the Portainer UI. See the new
+    #             manual_deployment_guide.md for the updated workflow.
+    #
+    # sync_portainer_endpoints "$API_KEY"
+    #
+    # log_info "Discovering all available Docker stacks..."
+    # ... (rest of the block commented out) ...
+    # log_info "--- Docker stack synchronization complete ---"
 
     # --- FINAL HEALTH CHECK ---
     # wait_for_system_ready
@@ -692,273 +694,23 @@ sync_all() {
 
 # =====================================================================================
 # Function: sync_stack
-# Description: Synchronizes a specific Docker stack to a given VM's Portainer environment
-#              using the new convention-based directory structure.
-# Arguments:
-#   $1 - The VMID of the target VM.
-#   $2 - The name of the stack (corresponds to the directory name in /stacks).
-#   $3 - The name of the environment to deploy (e.g., "production").
-#   $4 - A JSON object containing all discovered stack configurations.
-#   $5 - (Optional) The JWT for Portainer API authentication.
-#   $6 - (Optional) The Portainer Endpoint ID.
-# Returns:
-#   None. Exits with a fatal error on failure.
+# DEPRECATED: This function is deprecated in favor of the new UI-driven workflow.
+#             Application stacks are now deployed manually via the Portainer UI
+#             using the shared /stacks volume. See manual_deployment_guide.md.
 # =====================================================================================
-sync_stack() {
-    local VMID="$1"
-    local STACK_NAME="$2"
-    local ENVIRONMENT_NAME="$3"
-    local ALL_STACKS_CONFIG="$4"
-    local API_KEY="${5:-}"
-    local ENDPOINT_ID="${6:-}"
-
-    log_info "Synchronizing stack '${STACK_NAME}' (environment: '${ENVIRONMENT_NAME}') to VMID '${VMID}'..."
-
-    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
-    local PORTAINER_URL="http://${PORTAINER_SERVER_IP}:9000"
-
-    if [ -z "$API_KEY" ]; then
-        API_KEY=$(get_or_create_portainer_api_key)
-    fi
-
-    if [ -z "$ENDPOINT_ID" ]; then
-        local agent_ip=$(jq -r ".vms[] | select(.vmid == $VMID) | .network_config.ip" "$VM_CONFIG_FILE" | cut -d'/' -f1)
-        local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
-        local endpoints_response
-        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
-        ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg url "${ENDPOINT_URL}" '.[] | select(.URL==$url) | .Id // ""')
-        if [ -z "$ENDPOINT_ID" ]; then
-            log_fatal "Could not find Portainer environment for VMID ${VMID} (URL: ${ENDPOINT_URL}). Ensure agent is running and environment is created."
-        fi
-    fi
-
-    local STACK_MANIFEST=$(echo "$ALL_STACKS_CONFIG" | jq -r --arg name "$STACK_NAME" '.[$name]')
-    if [ -z "$STACK_MANIFEST" ] || [ "$STACK_MANIFEST" == "null" ]; then
-        log_fatal "Stack '${STACK_NAME}' not found in discovered configurations."
-    fi
-
-    local STACK_DEFINITION=$(echo "$STACK_MANIFEST" | jq -r --arg env "$ENVIRONMENT_NAME" '.environments[$env]')
-    if [ -z "$STACK_DEFINITION" ] || [ "$STACK_DEFINITION" == "null" ]; then
-        log_fatal "Environment '${ENVIRONMENT_NAME}' not found for stack '${STACK_NAME}'."
-    fi
-
-    local FULL_COMPOSE_PATH="${PHOENIX_BASE_DIR}/stacks/${STACK_NAME}/docker-compose.yml"
-    if [ ! -f "$FULL_COMPOSE_PATH" ]; then
-        log_fatal "Compose file not found for stack '${STACK_NAME}' at ${FULL_COMPOSE_PATH}."
-    fi
-
-    # --- BEGIN IN-MEMORY DEPLOYMENT LOGIC ---
-    log_info "Preparing stack content for API deployment to VM ${VMID}..."
-
-    # Create a temporary file to hold the modified compose file
-    local temp_compose_file
-    temp_compose_file=$(mktemp)
-    cp "$FULL_COMPOSE_PATH" "$temp_compose_file"
-
-    # --- BEGIN TRAEFIK LABEL INJECTION ---
-    log_info "Injecting Traefik labels into temporary compose file for stack '${STACK_NAME}'..."
-    local services_to_label
-    services_to_label=$(echo "$STACK_DEFINITION" | jq -r '.services | keys[] // ""')
-    for service_name in $services_to_label; do
-        local labels
-        labels=$(echo "$STACK_DEFINITION" | jq -c ".services.\"${service_name}\".traefik_labels // []")
-        if [ "$(echo "$labels" | jq 'length')" -gt 0 ]; then
-            log_info "  Injecting labels for service: ${service_name}"
-            local yq_script=""
-            echo "$labels" | jq -r '.[]' | while read -r label; do
-                # Ensure the label is properly escaped for yq
-                local escaped_label
-                escaped_label=$(printf '%s\n' "$label" | sed "s/'/''/g")
-                yq_script+=" .services.\"${service_name}\".labels += ['${escaped_label}'] |"
-            done
-            yq_script=${yq_script%?} # Remove trailing pipe
-            yq eval -i "$yq_script" "$temp_compose_file"
-        fi
-    done
-    log_success "Traefik label injection complete."
-    # --- END TRAEFIK LABEL INJECTION ---
-
-    # Read the final, modified compose file content into a variable
-    local stack_file_content
-    stack_file_content=$(cat "$temp_compose_file")
-    rm "$temp_compose_file" # Clean up the temporary file
-
-    # --- Handle Docker Volumes ---
-    log_info "Ensuring external Docker volumes exist for stack '${STACK_NAME}' on VM ${VMID}..."
-    local volumes_to_create=$(yq e '.volumes | keys | .[]' "$temp_compose_file")
-    for volume_name in $volumes_to_create; do
-        local is_external=$(yq e ".volumes.${volume_name}.external" "$temp_compose_file")
-        if [ "$is_external" == "true" ]; then
-            log_info "  - Ensuring external volume '${volume_name}' exists..."
-            # This command is idempotent. It will create the volume if it doesn't exist,
-            # and do nothing if it already exists.
-            run_qm_command guest exec "$VMID" -- /bin/bash -c "docker volume create ${volume_name}"
-        fi
-    done
-
-    # --- Handle Environment Variables ---
-    local ENV_VARS_JSON="[]"
-    local variables_array=$(echo "$STACK_DEFINITION" | jq -c '.variables // []')
-    if [ "$(echo "$variables_array" | jq 'length')" -gt 0 ]; then
-        ENV_VARS_JSON=$(echo "$variables_array" | jq -c '. | map({name: .name, value: .value})')
-    fi
-
-    # --- Handle Configuration Files (Portainer Configs) ---
-    local CONFIG_IDS_JSON="[]"
-    local files_array=$(echo "$STACK_DEFINITION" | jq -c '.files // []')
-    if [ "$(echo "$files_array" | jq 'length')" -gt 0 ]; then
-        local temp_config_ids="[]"
-        echo "$files_array" | jq -c '.[]' | while read -r file_config; do
-            local SOURCE_PATH=$(echo "$file_config" | jq -r '.source')
-            local DESTINATION_PATH=$(echo "$file_config" | jq -r '.destination_in_container')
-            local CONFIG_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}-$(basename "$SOURCE_PATH" | tr '.' '-')"
-
-            local full_source_path="${PHOENIX_BASE_DIR}/stacks/${STACK_NAME}/${SOURCE_PATH}"
-            if [ ! -f "$full_source_path" ]; then
-                log_fatal "Source config file not found: ${full_source_path} for stack '${STACK_NAME}'."
-            fi
-            local FILE_CONTENT=$(cat "$full_source_path")
-
-            local configs_response
-            configs_response=$(retry_api_call -X GET "${PORTAINER_URL}/api/configs" -H "X-API-Key: ${API_KEY}")
-            local EXISTING_CONFIG_ID=$(echo "$configs_response" | jq -r --arg name "${CONFIG_NAME}" '.[] | select(.Name==$name) | .Id // ""')
-
-            if [ -n "$EXISTING_CONFIG_ID" ]; then
-                log_info "Portainer Config '${CONFIG_NAME}' already exists. Deleting and recreating..."
-                retry_api_call -X DELETE "${PORTAINER_URL}/api/configs/${EXISTING_CONFIG_ID}" -H "X-API-Key: ${API_KEY}"
-            fi
-
-            log_info "Creating Portainer Config '${CONFIG_NAME}'..."
-            local CONFIG_PAYLOAD=$(jq -n --arg name "${CONFIG_NAME}" --arg data "${FILE_CONTENT}" '{Name: $name, Data: $data}')
-            local CONFIG_RESPONSE
-            CONFIG_RESPONSE=$(retry_api_call -X POST "${PORTAINER_URL}/api/configs?endpointId=${ENDPOINT_ID}" \
-              -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${CONFIG_PAYLOAD}")
-            local NEW_CONFIG_ID=$(echo "$CONFIG_RESPONSE" | jq -r '.Id // ""')
-            
-            if [ -z "$NEW_CONFIG_ID" ]; then
-                log_fatal "Failed to create Portainer Config '${CONFIG_NAME}'. Response: ${CONFIG_RESPONSE}"
-            fi
-            temp_config_ids=$(echo "$temp_config_ids" | jq --arg id "$NEW_CONFIG_ID" --arg dest "$DESTINATION_PATH" '. + [{configId: $id, fileName: $dest}]')
-        done
-        CONFIG_IDS_JSON="$temp_config_ids"
-    fi
-
-    local STACK_DEPLOY_NAME="${STACK_NAME}-${ENVIRONMENT_NAME}"
-    local stacks_response
-    stacks_response=$(retry_api_call -X GET "${PORTAINER_URL}/api/stacks" -H "X-API-Key: ${API_KEY}")
-    local STACK_EXISTS_ID=$(echo "$stacks_response" | jq -r --arg name "$STACK_DEPLOY_NAME" --argjson endpoint_id "${ENDPOINT_ID}" '.[] | select(.Name==$name and .EndpointId==$endpoint_id) | .Id // ""')
-
-    if [ -n "$STACK_EXISTS_ID" ]; then
-        log_info "Stack '${STACK_DEPLOY_NAME}' already exists. Updating..."
-        log_info "Updating stack '${STACK_DEPLOY_NAME}' using in-memory content..."
-        local JSON_PAYLOAD
-        JSON_PAYLOAD=$(jq -n \
-            --arg content "$stack_file_content" \
-            --argjson env "$ENV_VARS_JSON" \
-            --argjson configs "$CONFIG_IDS_JSON" \
-            '{StackFileContent: $content, Env: $env, Configs: $configs, Prune: true}')
-        
-        local RESPONSE
-        RESPONSE=$(retry_api_call -X PUT "${PORTAINER_URL}/api/stacks/${STACK_EXISTS_ID}?endpointId=${ENDPOINT_ID}" \
-          -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
-        if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
-          log_fatal "Failed to update stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
-        fi
-        log_success "Stack '${STACK_DEPLOY_NAME}' updated successfully."
-    else
-        log_info "Stack '${STACK_DEPLOY_NAME}' does not exist. Deploying..."
-        log_info "Deploying stack '${STACK_DEPLOY_NAME}' using in-memory content..."
-        local JSON_PAYLOAD
-        JSON_PAYLOAD=$(jq -n \
-            --arg name "${STACK_DEPLOY_NAME}" \
-            --arg content "$stack_file_content" \
-            --argjson env "$ENV_VARS_JSON" \
-            --argjson configs "$CONFIG_IDS_JSON" \
-            '{Name: $name, StackFileContent: $content, Env: $env, Configs: $configs}')
-        
-        local RESPONSE
-        RESPONSE=$(retry_api_call -X POST "${PORTAINER_URL}/api/stacks?type=2&method=string&endpointId=${ENDPOINT_ID}" \
-          -H "X-API-Key: ${API_KEY}" -H "Content-Type: application/json" -d "${JSON_PAYLOAD}")
-        if ! echo "$RESPONSE" | jq -e '.Id' > /dev/null; then
-          log_fatal "Failed to deploy stack '${STACK_DEPLOY_NAME}'. Response: ${RESPONSE}"
-        fi
-        log_success "Stack '${STACK_DEPLOY_NAME}' deployed successfully."
-    fi
-}
+# sync_stack() {
+#     ... (code commented out) ...
+# }
 
 # =====================================================================================
 # Function: sync_portainer_endpoints
-# Description: Ensures that all Portainer agent endpoints defined in the configuration
-#              are registered with the Portainer server using standard TCP connections.
-# Arguments:
-#   $1 - The Portainer API Key.
+# DEPRECATED: This function is deprecated in favor of the new UI-driven workflow.
+#             Endpoints are now added manually via the Portainer UI.
+#             See manual_deployment_guide.md.
 # =====================================================================================
-sync_portainer_endpoints() {
-    local API_KEY="$1"
-    local PORTAINER_SERVER_IP=$(get_global_config_value '.network.portainer_server_ip')
-    local PORTAINER_URL="http://${PORTAINER_SERVER_IP}:9000"
-
-    log_info "--- Synchronizing Portainer Endpoints (Portainer CE Method) ---"
-
-    local agents_to_register
-    agents_to_register=$(jq -c '.vms[] | select(.portainer_role == "agent")' "$VM_CONFIG_FILE")
-
-    while read -r agent_config; do
-        local VMID=$(echo "$agent_config" | jq -r '.vmid')
-        local AGENT_NAME=$(echo "$agent_config" | jq -r '.portainer_environment_name' | tr -d '[:space:]')
-        local agent_ip=$(echo "$agent_config" | jq -r '.network_config.ip' | cut -d'/' -f1)
-        local AGENT_PORT=$(get_global_config_value '.network.portainer_agent_port')
-        local ENDPOINT_URL="tcp://${agent_ip}:${AGENT_PORT}"
-
-        log_info "Checking for existing endpoint for VM ${VMID} ('${AGENT_NAME}')..."
-        
-        local endpoints_response
-        endpoints_response=$(retry_api_call -X GET -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/endpoints")
-        local EXISTING_ENDPOINT_ID=$(echo "$endpoints_response" | jq -r --arg name "${AGENT_NAME}" '.[] | select(.Name==$name) | .Id // ""')
-
-        if [ -n "$EXISTING_ENDPOINT_ID" ]; then
-            log_info "Endpoint '${AGENT_NAME}' already exists with ID ${EXISTING_ENDPOINT_ID}. Skipping creation."
-        else
-            log_info "Endpoint '${AGENT_NAME}' not found. Creating it now as a standard TCP endpoint..."
-            
-            # --- BEGIN PORTAINER CE API BUG WORKAROUND ---
-            # This version of Portainer CE has a known bug where creating a TLS-enabled
-            # endpoint via the API fails with a misleading "Invalid environment name" error.
-            # The workaround is to register the endpoint with "TLS": false, even though the
-            # agent itself is running with TLS enabled. The connection will still be secure
-            # because the agent will enforce the TLS handshake.
-            log_info "Constructing payload for Portainer CE API bug workaround..."
-            local CREATE_PAYLOAD
-            CREATE_PAYLOAD=$(jq -n \
-                --arg name "$AGENT_NAME" \
-                --arg url "$ENDPOINT_URL" \
-                --argjson groupID 1 \
-                '{
-                    "Name": $name,
-                    "URL": $url,
-                    "Type": 2,
-                    "GroupID": $groupID,
-                    "TLS": false
-                }')
-
-            local CREATE_RESPONSE
-            CREATE_RESPONSE=$(retry_api_call -X POST \
-                -H "X-API-Key: ${API_KEY}" \
-                -H "Content-Type: application/json" \
-                -d "$CREATE_PAYLOAD" \
-                "${PORTAINER_URL}/api/endpoints")
-            # --- END PORTAINER CE API BUG WORKAROUND ---
-
-            if echo "$CREATE_RESPONSE" | jq -e '.Id' > /dev/null; then
-                log_success "Successfully created endpoint for VM ${VMID}."
-            else
-                log_fatal "Failed to create endpoint for VM ${VMID}. Response: ${CREATE_RESPONSE}"
-            fi
-        fi
-    done < <(echo "$agents_to_register" | jq -c '.')
-    log_info "--- Portainer Endpoint Synchronization Complete ---"
-}
+# sync_portainer_endpoints() {
+#     ... (code commented out) ...
+# }
 
 # =====================================================================================
 # Function: main_portainer_orchestrator
