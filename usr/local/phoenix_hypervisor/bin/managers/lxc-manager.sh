@@ -113,11 +113,14 @@ create_container_from_template() {
     log_info "Starting creation of container $CTID from template."
 
     # --- Retrieve all necessary parameters from the config file ---
-    # The `jq_get_value` function is a wrapper that simplifies querying the JSON configuration.
     local hostname=$(jq_get_value "$CTID" ".name")
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
-    local template=$(jq_get_value "$CTID" ".template")
+    local template_filename
+    template_filename=$(jq_get_value "$CTID" ".template_file")
+    local storage_id
+    storage_id=$(get_global_config_value ".proxmox_storage_ids.fastData_shared_iso")
+    local template_file="${storage_id}:vztmpl/${template_filename}"
     local storage_pool=$(jq_get_value "$CTID" ".storage_pool")
     local storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
 
@@ -128,33 +131,7 @@ create_container_from_template() {
     local unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
     local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0") # Convert boolean to 0 or 1
 
-    # --- Check for template existence and download if necessary ---
-    # This logic ensures that the required template is available before attempting to create the container.
-    local mount_point_base=$(get_global_config_value ".mount_point_base")
-    local iso_dataset_path=$(get_global_config_value ".zfs.datasets[] | select(.name == \"shared-iso\") | .pool + \"/\" + .name")
-    local template_path="${mount_point_base}/${iso_dataset_path}/template/cache/$(basename "$template")"
-
-    if [ ! -f "$template_path" ]; then
-        log_info "Template file not found at $template_path. Attempting to download..."
-        local template_filename=$(basename "$template")
-        local template_name="$template_filename"
-        
-         # Determine the storage ID for ISOs from the configuration file
-         local storage_id
-         storage_id=$(get_global_config_value ".proxmox_storage_ids.fastData_shared_iso")
-         if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
-            log_fatal "Could not determine ISO storage ID from configuration file."
-         fi
-
-        log_info "Downloading template '$template_name' to storage '$storage_id'..."
-        if ! pveam download "$storage_id" "$template_name"; then
-            log_fatal "Failed to download template '$template_name'."
-        fi
-        log_info "Template downloaded successfully."
-    fi
-
     # --- Construct network configuration string ---
-    # The network configuration is assembled into a single string as required by the `pct create` command.
     local net0_name=$(jq_get_value "$CTID" ".network_config.name")
     local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
@@ -164,9 +141,8 @@ create_container_from_template() {
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
  
      # --- Build the pct create command array ---
-     # Using an array for the command arguments is a best practice that avoids issues with word splitting and quoting.
     local pct_create_cmd=(
-        create "$CTID" "$template"
+        create "$CTID" "$template_file"
         --hostname "$hostname"
         --memory "$memory_mb"
         --cores "$cores"
@@ -180,11 +156,7 @@ create_container_from_template() {
         pct_create_cmd+=(--nameserver "$nameservers")
     fi
 
-    # Note: The --features flag is reserved for Proxmox's internal use.
-    # Custom features (e.g., Docker, Nvidia) are handled by the state machine after container creation.
-
     # --- Execute the command ---
-    # The `run_pct_command` function is a wrapper that handles logging and dry-run mode.
     if ! run_pct_command "${pct_create_cmd[@]}"; then
         log_fatal "'pct create' command failed for CTID $CTID."
     fi
@@ -209,29 +181,18 @@ clone_container() {
     local source_ctid=$(jq_get_value "$CTID" ".clone_from_ctid") # Retrieve source CTID from config
     log_info "Starting clone of container $CTID from source CTID $source_ctid."
 
-    local source_snapshot_name=$(jq_get_value "$source_ctid" ".template_snapshot_name") # Retrieve snapshot name from source CTID config
-
     # --- Pre-flight checks for cloning ---
-    # These checks ensure that the source container and snapshot are available before proceeding.
+    # Ensure the source template exists before proceeding.
     if ! pct status "$source_ctid" > /dev/null 2>&1; then
-        log_warn "Source container $source_ctid does not exist yet. Will retry."
-    fi
-    if ! pct listsnapshot "$source_ctid" | grep -q "$source_snapshot_name"; then
-        log_warn "Snapshot '$source_snapshot_name' not found on source container $source_ctid yet. Will retry."
+        log_fatal "Source template $source_ctid does not exist. Cannot proceed with cloning."
     fi
 
     local hostname=$(jq_get_value "$CTID" ".name") # New hostname for the cloned container
-    local storage_pool=$(jq_get_value "$CTID" ".storage_pool") # Storage pool for the cloned container
  
-    # --- Check for storage pool existence ---
-    check_storage_pool_exists "$storage_pool"
-
      # --- Build the pct clone command array ---
     local pct_clone_cmd=(
         clone "$source_ctid" "$CTID"
-        --snapname "$source_snapshot_name"
         --hostname "$hostname"
-        --storage "$storage_pool"
     )
 
     # --- Execute the command ---
@@ -242,41 +203,35 @@ clone_container() {
 }
 
 # =====================================================================================
-# Function: apply_lxc_configurations
-# Description: Applies a set of configurations to a newly created or cloned container. This
-#              function is responsible for setting the container's resources (memory, cores),
-#              network settings, and other options based on the values defined in the JSON
-#              configuration file. This is a key step in the idempotent state machine.
-#
-# Arguments:
-#   $1 - The CTID of the container to configure.
-#
-# Returns:
-#   None. The function will exit the script with a fatal error if any of the `pct set` commands fail.
-# =====================================================================================
-apply_lxc_configurations() {
+# Function: apply_resource_configs
+# Description: Applies resource-related configurations to a container.
+apply_resource_configs() {
     local CTID="$1"
-    log_info "Applying configurations for CTID: $CTID"
-    local conf_file="/etc/pve/lxc/${CTID}.conf"
-
-    # --- Retrieve configuration values ---
+    log_info "Applying resource configurations for CTID: $CTID"
     local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
     local cores=$(jq_get_value "$CTID" ".cores")
-    local features
-    features=$(jq_get_array "$CTID" ".features[]" || echo "")
+    run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
+    run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
+}
+
+# Function: apply_startup_configs
+# Description: Applies startup and boot-related configurations to a container.
+apply_startup_configs() {
+    local CTID="$1"
+    log_info "Applying startup configurations for CTID: $CTID"
     local start_at_boot=$(jq_get_value "$CTID" ".start_at_boot")
     local boot_order=$(jq_get_value "$CTID" ".boot_order")
     local boot_delay=$(jq_get_value "$CTID" ".boot_delay")
     local start_at_boot_val=$([ "$start_at_boot" == "true" ] && echo "1" || echo "0")
- 
-     # --- Apply core settings ---
-     # These commands set the fundamental resource allocations for the container.
-    run_pct_command set "$CTID" --memory "$memory_mb" || log_fatal "Failed to set memory."
-    run_pct_command set "$CTID" --cores "$cores" || log_fatal "Failed to set cores."
     run_pct_command set "$CTID" --onboot "${start_at_boot_val}" || log_fatal "Failed to set onboot."
     run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
+}
 
-    # --- Apply Network Configuration ---
+# Function: apply_network_configs
+# Description: Applies network configurations to a container.
+apply_network_configs() {
+    local CTID="$1"
+    log_info "Applying network configurations for CTID: $CTID"
     local net0_name=$(jq_get_value "$CTID" ".network_config.name")
     local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
@@ -284,105 +239,105 @@ apply_lxc_configurations() {
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
-    # Read nameserver from the config file
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
     if [ -n "$nameservers" ]; then
         run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
     fi
- 
-    # --- Apply AppArmor Profile ---
-    # This function handles the application of the AppArmor profile, which is a critical security feature.
-    apply_apparmor_profile "$CTID"
+}
 
-    # --- Apply pct options ---
-    # These are Proxmox-specific features that can be enabled on the container.
-    local pct_options
-    pct_options=$(jq_get_array "$CTID" ".pct_options // [] | .[]" || echo "")
+# Function: apply_proxmox_features
+# Description: Applies Proxmox-specific features to a container.
+apply_proxmox_features() {
+    local CTID="$1"
+    log_info "Applying Proxmox features for CTID: $CTID"
+    local pct_options=$(jq_get_array "$CTID" ".pct_options // [] | .[]" || echo "")
     if [ -n "$pct_options" ]; then
-        log_info "Applying pct options for CTID $CTID..."
         local features_to_set=()
         for option in $pct_options; do
             features_to_set+=("$option")
         done
         if [ ${#features_to_set[@]} -gt 0 ]; then
-            local features_string
-            features_string=$(IFS=,; echo "${features_to_set[*]}")
+            local features_string=$(IFS=,; echo "${features_to_set[*]}")
             log_info "Applying features: $features_string"
-            run_pct_command set "$CTID" --features "$features_string" || log_fatal "Failed to set pct options: ${features_to_set[*]}"
+            run_pct_command set "$CTID" --features "$features_string" || log_fatal "Failed to set Proxmox features."
         fi
     fi
+}
 
-    # --- Apply lxc options ---
-    # These are low-level LXC options that are written directly to the container's configuration file.
-    local lxc_options
-    lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
+# Function: apply_lxc_directives
+# Description: Applies low-level LXC directives to a container's configuration file.
+apply_lxc_directives() {
+    local CTID="$1"
+    log_info "Applying LXC directives for CTID: $CTID"
+    local lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
     if [ -n "$lxc_options" ]; then
-        log_info "Applying lxc options for CTID $CTID..."
         local conf_file="/etc/pve/lxc/${CTID}.conf"
         for option in $lxc_options; do
             if [[ "$option" == "lxc.cap.keep="* ]]; then
                 local caps_to_keep=$(echo "$option" | cut -d'=' -f2)
-                # Remove existing lxc.cap.keep entries to avoid duplicates
                 sed -i '/^lxc.cap.keep/d' "$conf_file"
-                # Add each capability on a new line
                 for cap in $(echo "$caps_to_keep" | tr ',' ' '); do
-                    echo "lxc.cap.keep: $cap" >> "$conf_file" || log_fatal "Failed to add capability to $conf_file: $cap"
+                    echo "lxc.cap.keep: $cap" >> "$conf_file" || log_fatal "Failed to add capability."
                 done
             elif ! grep -qF "$option" "$conf_file"; then
-                echo "$option" >> "$conf_file" || log_fatal "Failed to add lxc option to $conf_file: $option"
+                echo "$option" >> "$conf_file" || log_fatal "Failed to add LXC directive."
             fi
         done
     fi
-    # Note: The --features flag here is for Proxmox's internal features.
-    # Custom feature scripts are applied in a later state.
+}
 
-
-    # --- Apply GPU Passthrough Configuration ---
-    # This is a critical step for containers that require GPU access.
-    # By applying this configuration here, we ensure that the container is created
-    # with the correct hardware access from the very beginning, avoiding the need
-    # for a restart later in the provisioning process.
-    local gpu_assignment
-    gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment" || echo "none")
+# Function: apply_gpu_passthrough
+# Description: Applies GPU passthrough configurations to a container.
+apply_gpu_passthrough() {
+    local CTID="$1"
+    log_info "Applying GPU passthrough for CTID: $CTID"
+    local gpu_assignment=$(jq_get_value "$CTID" ".gpu_assignment" || echo "none")
     if [ -n "$gpu_assignment" ] && [ "$gpu_assignment" != "none" ]; then
-        log_info "Applying GPU passthrough configuration for CTID: $CTID"
-        local cgroup_entries=(
-            "lxc.cgroup2.devices.allow: c 195:* rwm"
-            "lxc.cgroup2.devices.allow: c 243:* rwm"
-        )
-        local mount_entries=(
-            "lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file"
-            "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file"
-            "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file"
-        )
+        local conf_file="/etc/pve/lxc/${CTID}.conf"
+        local cgroup_entries=("lxc.cgroup2.devices.allow: c 195:* rwm" "lxc.cgroup2.devices.allow: c 243:* rwm")
+        local mount_entries=("lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file" "lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file" "lxc.mount.entry: /dev/nvidia-uvm-tools dev/nvidia-uvm-tools none bind,optional,create=file")
         IFS=',' read -ra gpus <<< "$gpu_assignment"
         for gpu_idx in "${gpus[@]}"; do
             gpu_idx=$(echo "$gpu_idx" | xargs)
             local nvidia_device="/dev/nvidia${gpu_idx}"
             mount_entries+=("lxc.mount.entry: $nvidia_device ${nvidia_device#/} none bind,optional,create=file")
         done
-
         for entry in "${mount_entries[@]}" "${cgroup_entries[@]}"; do
             if ! grep -qF "$entry" "$conf_file"; then
-                echo "$entry" >> "$conf_file" || log_fatal "Failed to add GPU passthrough entry to $conf_file: $entry"
+                echo "$entry" >> "$conf_file" || log_fatal "Failed to add GPU passthrough entry."
             fi
         done
     fi
+}
 
-    # --- Apply ID Mappings ---
-    local id_maps
-    id_maps=$(jq_get_array "$CTID" "(.id_maps // [])[]" || echo "")
+# Function: apply_id_mappings
+# Description: Applies ID mappings for unprivileged containers.
+apply_id_mappings() {
+    local CTID="$1"
+    log_info "Applying ID mappings for CTID: $CTID"
+    local id_maps=$(jq_get_array "$CTID" "(.id_maps // [])[]" || echo "")
     if [ -n "$id_maps" ]; then
-        log_info "Applying ID mappings for CTID $CTID..."
-        # Clear existing idmap entries
+        local conf_file="/etc/pve/lxc/${CTID}.conf"
         sed -i '/^lxc.idmap:/d' "$conf_file"
-        
-        # Always map the root user
         echo "lxc.idmap: u 0 100000 65536" >> "$conf_file"
         echo "lxc.idmap: g 0 100000 65536" >> "$conf_file"
     fi
+}
 
-    log_info "Configurations applied successfully for CTID $CTID."
+# Function: apply_lxc_configurations
+# Description: Main function to apply all configurations to a container.
+apply_lxc_configurations() {
+    local CTID="$1"
+    log_info "Applying all configurations for CTID: $CTID"
+    apply_resource_configs "$CTID"
+    apply_startup_configs "$CTID"
+    apply_network_configs "$CTID"
+    apply_apparmor_profile "$CTID"
+    apply_proxmox_features "$CTID"
+    apply_lxc_directives "$CTID"
+    apply_gpu_passthrough "$CTID"
+    apply_id_mappings "$CTID"
+    log_info "All configurations applied successfully for CTID $CTID."
 }
 
 
@@ -472,6 +427,12 @@ apply_lxc_firewall_rules() {
     done
 
     log_info "Firewall rules applied successfully for LXC $CTID."
+
+    # Reload the firewall to apply the new rules immediately
+    log_info "Reloading Proxmox firewall to apply changes..."
+    if ! pve-firewall restart; then
+        log_warn "Failed to restart Proxmox firewall. Rules may not be immediately active."
+    fi
 }
 
 # =====================================================================================
@@ -495,14 +456,20 @@ ensure_container_defined() {
         return 0
     fi
     log_info "Container $CTID does not exist. Proceeding with creation..."
-    local clone_from_ctid
-    clone_from_ctid=$(jq_get_value "$CTID" ".clone_from_ctid" || echo "")
-    if [ -n "$clone_from_ctid" ]; then
+    if jq -e ".lxc_configs[\"$CTID\"].clone_from_ctid" "$LXC_CONFIG_FILE" > /dev/null; then
+        local clone_source
+        clone_source=$(jq -r ".lxc_configs[\"$CTID\"].clone_from_ctid" "$LXC_CONFIG_FILE")
+        if ! pct status "$clone_source" > /dev/null 2>&1; then
+            ensure_container_defined "$clone_source"
+        fi
+        
         if ! clone_container "$CTID"; then
             return 1
         fi
+    elif jq -e ".lxc_configs[\"$CTID\"].template" "$LXC_CONFIG_FILE" > /dev/null; then
+        create_container_from_os_template "$CTID"
     else
-        create_container_from_template "$CTID"
+        log_fatal "No creation method found for $CTID. It must have either a 'clone_from_ctid' or a 'template' defined."
     fi
  
         # NEW: Set unprivileged flag immediately after creation if specified in config
@@ -1257,6 +1224,12 @@ run_post_deployment_validation() {
 create_template_snapshot() {
     local CTID="$1"
     log_info "Checking for template snapshot for CTID: $CTID"
+    local is_template
+    is_template=$(jq -r ".lxc_configs[\"$CTID\"].is_template // false" "$LXC_CONFIG_FILE")
+    if [ "$is_template" == "true" ]; then
+        log_info "Container $CTID is a template, skipping all snapshot creation."
+        return 0
+    fi
     local snapshot_name # Variable to store the template snapshot name
     snapshot_name=$(jq_get_value "$CTID" ".template_snapshot_name" || echo "") # Retrieve snapshot name from config
 
@@ -1304,6 +1277,12 @@ create_pre_configured_snapshot() {
     local CTID="$1"
     local snapshot_name="pre-configured"
     log_info "Checking for pre-configured snapshot for CTID: $CTID"
+    local is_template
+    is_template=$(jq -r ".lxc_configs[\"$CTID\"].is_template // false" "$LXC_CONFIG_FILE")
+    if [ "$is_template" == "true" ]; then
+        log_info "Container $CTID is a template, skipping all snapshot creation."
+        return 0
+    fi
 
     if pct listsnapshot "$CTID" | grep -q "$snapshot_name"; then
         log_info "Snapshot '$snapshot_name' already exists for CTID $CTID. Deleting and recreating."
@@ -1343,6 +1322,12 @@ create_final_form_snapshot() {
     local CTID="$1"
     local snapshot_name="final-form"
     log_info "Checking for final-form snapshot for CTID: $CTID"
+    local is_template
+    is_template=$(jq -r ".lxc_configs[\"$CTID\"].is_template // false" "$LXC_CONFIG_FILE")
+    if [ "$is_template" == "true" ]; then
+        log_info "Container $CTID is a template, skipping all snapshot creation."
+        return 0
+    fi
 
     if pct listsnapshot "$CTID" | grep -q "$snapshot_name"; then
         log_info "Snapshot '$snapshot_name' already exists for CTID $CTID. Deleting and recreating."
@@ -1431,6 +1416,192 @@ apply_apparmor_profile() {
     systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
 # =====================================================================================
+# Function: create_lxc_templates
+# Description: Idempotently creates LXC templates based on the `lxc_templates` object
+#              in the configuration file.
+# =====================================================================================
+create_lxc_templates() {
+    log_info "Starting LXC template creation process..."
+    local templates
+    templates=$(jq -c '.lxc_templates | to_entries[]' "$LXC_CONFIG_FILE")
+
+    for template in $templates; do
+        local template_name
+        template_name=$(echo "$template" | jq -r '.key')
+        local source_ctid
+        source_ctid=$(echo "$template" | jq -r '.value.source_ctid')
+        local mount_point_base
+        mount_point_base=$(get_global_config_value ".mount_point_base")
+        local iso_dataset_path
+        iso_dataset_path=$(get_global_config_value ".zfs.datasets[] | select(.name == \"shared-iso\") | .pool + \"/\" + .name")
+        local template_dir="${mount_point_base}/${iso_dataset_path}/template/vztmpl"
+        mkdir -p "$template_dir"
+        local template_path="${template_dir}/${template_name}"
+
+        if [ -f "$template_path" ]; then
+            log_info "Template '$template_name' already exists. Skipping."
+            continue
+        fi
+
+        log_info "Creating template '$template_name' from source CTID '$source_ctid'..."
+        create_container_for_templating "$source_ctid"
+
+        log_info "Stopping container '$source_ctid' before creating template..."
+        run_pct_command stop "$source_ctid" || log_fatal "Failed to stop container $source_ctid."
+
+        log_info "Creating template..."
+        vzdump "$source_ctid" --mode stop --compress gzip --stdout > "$template_path" || log_fatal "Failed to create template."
+        
+        log_info "Template '$template_name' created successfully."
+    done
+}
+
+# =====================================================================================
+# Function: create_lxc_template
+# Description: Idempotently creates a single LXC template.
+# =====================================================================================
+create_lxc_template() {
+    local template_name="$1"
+    log_info "Starting LXC template creation for '$template_name'..."
+    local source_ctid
+    source_ctid=$(jq -r ".lxc_templates[\"$template_name\"].source_ctid" "$LXC_CONFIG_FILE")
+    local mount_point_base
+    mount_point_base=$(get_global_config_value ".mount_point_base")
+    local iso_dataset_path
+    iso_dataset_path=$(get_global_config_value ".zfs.datasets[] | select(.name == \"shared-iso\") | .pool + \"/\" + .name")
+    local template_dir="${mount_point_base}/${iso_dataset_path}/template/vztmpl"
+    mkdir -p "$template_dir"
+    local template_path="${template_dir}/${template_name}"
+
+    if [ -f "$template_path" ]; then
+        log_info "Template '$template_name' already exists. Skipping."
+        return 0
+    fi
+
+    log_info "Creating template '$template_name' from source CTID '$source_ctid'..."
+    create_container_for_templating "$source_ctid"
+
+    log_info "Stopping container '$source_ctid' before creating template..."
+    run_pct_command stop "$source_ctid" || log_fatal "Failed to stop container $source_ctid."
+
+    log_info "Creating template..."
+    vzdump "$source_ctid" --mode stop --compress gzip --stdout > "$template_path" || log_fatal "Failed to create template."
+    
+    log_info "Template '$template_name' created successfully."
+}
+
+# =====================================================================================
+# Function: create_container_from_os_template
+# Description: Creates a new LXC container from a base OS template file.
+# =====================================================================================
+create_container_from_os_template() {
+    local CTID="$1"
+    log_info "Starting creation of container $CTID from OS template."
+
+    # --- Retrieve all necessary parameters from the config file ---
+    local hostname=$(jq_get_value "$CTID" ".name")
+    local memory_mb=$(jq_get_value "$CTID" ".memory_mb")
+    local cores=$(jq_get_value "$CTID" ".cores")
+    local template=$(jq_get_value "$CTID" ".template")
+    local storage_pool=$(jq_get_value "$CTID" ".storage_pool")
+    local storage_size_gb=$(jq_get_value "$CTID" ".storage_size_gb")
+
+    # --- Check for storage pool existence ---
+    check_storage_pool_exists "$storage_pool"
+    local features=$(jq_get_value "$CTID" ".features | join(\",\")" || echo "") # Features are handled separately
+    local mac_address=$(jq_get_value "$CTID" ".mac_address")
+    local unprivileged_bool=$(jq_get_value "$CTID" ".unprivileged")
+    local unprivileged_val=$([ "$unprivileged_bool" == "true" ] && echo "1" || echo "0") # Convert boolean to 0 or 1
+
+    # --- Check for template existence and download if necessary ---
+    local mount_point_base=$(get_global_config_value ".mount_point_base")
+    local iso_dataset_path=$(get_global_config_value ".zfs.datasets[] | select(.name == \"shared-iso\") | .pool + \"/\" + .name")
+    local template_path="${mount_point_base}/${iso_dataset_path}/template/cache/$(basename "$template")"
+
+    if [ ! -f "$template_path" ]; then
+        log_info "Template file not found at $template_path. Attempting to download..."
+        local template_filename=$(basename "$template")
+        local template_name="$template_filename"
+        
+         # Determine the storage ID for ISOs from the configuration file
+         local storage_id
+         storage_id=$(get_global_config_value ".proxmox_storage_ids.fastData_shared_iso")
+         if [ -z "$storage_id" ] || [ "$storage_id" == "null" ]; then
+            log_fatal "Could not determine ISO storage ID from configuration file."
+         fi
+
+        log_info "Downloading template '$template_name' to storage '$storage_id'..."
+        if ! pveam download "$storage_id" "$template_name"; then
+            log_fatal "Failed to download template '$template_name'."
+        fi
+        log_info "Template downloaded successfully."
+    fi
+
+    # --- Construct network configuration string ---
+    local net0_name=$(jq_get_value "$CTID" ".network_config.name")
+    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
+    local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
+    local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
+    local mac_address=$(jq_get_value "$CTID" ".mac_address")
+    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+ 
+     # --- Build the pct create command array ---
+    local pct_create_cmd=(
+        create "$CTID" "$template"
+        --hostname "$hostname"
+        --memory "$memory_mb"
+        --cores "$cores"
+        --storage "$storage_pool"
+        --rootfs "${storage_pool}:${storage_size_gb}"
+        --net0 "$net0_string"
+        --unprivileged "$unprivileged_val"
+    )
+
+    if [ -n "$nameservers" ]; then
+        pct_create_cmd+=(--nameserver "$nameservers")
+    fi
+
+    # --- Execute the command ---
+    if ! run_pct_command "${pct_create_cmd[@]}"; then
+        log_fatal "'pct create' command failed for CTID $CTID."
+    fi
+    log_info "Container $CTID created from OS template successfully."
+}
+
+# =====================================================================================
+# Function: create_container_for_templating
+# Description: Creates a container from a base OS image for the purpose of templating.
+# =====================================================================================
+create_container_for_templating() {
+    local CTID="$1"
+    log_info "Starting creation of container $CTID for templating..."
+
+    if pct status "$CTID" > /dev/null 2>&1; then
+        log_info "Container $CTID already exists. Skipping creation."
+        return 0
+    fi
+
+    local os_template=$(jq_get_value "$CTID" ".template" || echo "")
+    if [ -z "$os_template" ]; then
+        log_fatal "Container $CTID has no OS template defined."
+    fi
+
+    create_container_from_os_template "$CTID"
+    apply_lxc_configurations "$CTID"
+    apply_lxc_firewall_rules "$CTID"
+    apply_zfs_volumes "$CTID"
+    apply_secure_permissions "$CTID"
+    apply_dedicated_volumes "$CTID"
+    ensure_container_disk_size "$CTID"
+    apply_mount_points "$CTID"
+    apply_host_path_permissions "$CTID"
+    start_container "$CTID"
+    apply_features "$CTID"
+    run_application_script "$CTID"
+}
+
+# =====================================================================================
 # Function: main_lxc_orchestrator
 # Description: The main entry point for the LXC manager script. It parses the
 #              action and CTID, and then executes the appropriate lifecycle
@@ -1444,16 +1615,15 @@ main_lxc_orchestrator() {
     local action="$1"
     local ctid="$2"
 
-    validate_inputs "$ctid"
-
     case "$action" in
+        create-templates)
+            create_lxc_templates
+            ;;
         create)
+            validate_inputs "$ctid"
             log_info "Starting 'create' workflow for CTID $ctid..."
 
-
-
             if ensure_container_defined "$ctid"; then
-                # Ensure the container is stopped before applying configurations that require a restart
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
                 
                 apply_lxc_configurations "$ctid"
@@ -1465,10 +1635,8 @@ main_lxc_orchestrator() {
                 
                 apply_mount_points "$ctid"
                 apply_host_path_permissions "$ctid"
-                # Now, start the container *after* all hardware configurations are applied
                 start_container "$ctid"
 
-                # --- NEW: Handle CA password file for CTID 103 after container is started and volumes are mounted ---
                 if [ "$ctid" -eq 103 ]; then
                     log_info "Setting final permissions for shared SSL directory on host..."
                     local shared_ssl_dir="/mnt/pve/quickOS/lxc-persistent-data/103/ssl"
@@ -1477,7 +1645,6 @@ main_lxc_orchestrator() {
                     fi
                     log_success "Host-side password management and permissions set for CTID 103."
                 fi
-                # --- END NEW HANDLING ---
 
                 local enable_lifecycle_snapshots
                 enable_lifecycle_snapshots=$(jq_get_value "$ctid" ".enable_lifecycle_snapshots" || echo "false")
@@ -1490,7 +1657,6 @@ main_lxc_orchestrator() {
                 
                 run_application_script "$ctid"
                 
-                # Restart dependent containers to pick up changes from this container's application script
                 local dependents
                 dependents=$(jq -r --arg ctid "$ctid" '.lxc_configs | to_entries[] | select(.value.dependencies[]? == ($ctid | tonumber)) | .key' "$LXC_CONFIG_FILE")
                 if [ -n "$dependents" ]; then
@@ -1507,34 +1673,59 @@ main_lxc_orchestrator() {
                     create_final_form_snapshot "$ctid"
                 fi
 
+                # Convert to template if specified
+                local is_template
+                is_template=$(jq -r ".lxc_configs[\"$ctid\"].is_template // false" "$LXC_CONFIG_FILE")
+                if [ "$is_template" == "true" ]; then
+                    log_info "Container $ctid is marked as a template. Stopping before conversion..."
+                    run_pct_command stop "$ctid" || log_warn "Container $ctid may have already been stopped."
+
+                    # Wait for container to be fully stopped
+                    local max_wait=30
+                    local wait_interval=2
+                    local waited=0
+                    while pct status "$ctid" 2>/dev/null | grep -q "status: running"; do
+                        if [ "$waited" -ge "$max_wait" ]; then
+                            log_fatal "Container $ctid did not stop within $max_wait seconds."
+                        fi
+                        sleep "$wait_interval"
+                        waited=$((waited + wait_interval))
+                        log_info "Waiting for container $ctid to stop... (${waited}s)"
+                    done
+                    
+                    log_info "Container $ctid confirmed stopped. Converting to template..."
+                    pct template "$ctid" || log_fatal "Failed to convert container $ctid to a template."
+                fi
+
                 log_info "'create' workflow completed for CTID $ctid."
             fi
 
-            # --- Idempotency Fix for NGINX Container ---
-            # Always run the application script for CTID 101 to ensure its
-            # configuration (especially CA trust) is always up-to-date.
             if [ "$ctid" -eq 101 ]; then
                 log_info "Ensuring NGINX container (101) is correctly configured..."
                 run_application_script "$ctid"
             fi
             ;;
         start)
+            validate_inputs "$ctid"
             log_info "Starting 'start' workflow for CTID $ctid..."
             start_container "$ctid"
             log_info "'start' workflow completed for CTID $ctid."
             ;;
         stop)
+            validate_inputs "$ctid"
             log_info "Starting 'stop' workflow for CTID $ctid..."
             run_pct_command stop "$ctid" || log_fatal "Failed to stop container $ctid."
             log_info "'stop' workflow completed for CTID $ctid."
             ;;
         restart)
+            validate_inputs "$ctid"
             log_info "Starting 'restart' workflow for CTID $ctid..."
             run_pct_command stop "$ctid" || log_warn "Failed to stop container $ctid before restart."
             start_container "$ctid"
             log_info "'restart' workflow completed for CTID $ctid."
             ;;
         delete)
+            validate_inputs "$ctid"
             log_info "Starting 'delete' workflow for CTID $ctid..."
             run_pct_command stop "$ctid" || log_warn "Container $ctid was not running before deletion."
             run_pct_command destroy "$ctid" || log_fatal "Failed to delete container $ctid."

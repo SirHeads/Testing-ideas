@@ -2,8 +2,7 @@
     {
         "common_name": "nginx.internal.thinkheads.ai",
         "sans": [
-            "nginx.internal.thinkheads.ai",
-            "portainer.internal.thinkheads.ai"
+            "*.internal.thinkheads.ai"
         ],
         "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt",
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key",

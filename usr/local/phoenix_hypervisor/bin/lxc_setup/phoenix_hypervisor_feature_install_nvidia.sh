@@ -62,7 +62,7 @@ CTID=""
 #   - None. Exits with status 2 if the CTID is not provided.
 # =====================================================================================
 parse_arguments() {
-    if [ "$#" -ne 1 ]; then
+    if [ "$#" -lt 1 ]; then
         log_error "Usage: $0 <CTID>"
         log_error "This script requires the LXC Container ID to install the NVIDIA feature."
         exit_script 2

@@ -6,6 +6,7 @@
     "lxc_configs": {
         "900": {
             "name": "Copy-Base",
+            "is_template": true,
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
@@ -31,7 +32,6 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
-            "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,
@@ -58,6 +58,7 @@
         },
         "901": {
             "name": "Copy-Cuda12.8",
+            "is_template": true,
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
@@ -85,7 +86,6 @@
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
             ],
-            "template_snapshot_name": "final-form",
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true
@@ -112,9 +112,25 @@
             "clone_from_ctid": "901",
             "features": [
                 "nvidia",
-                "vllm"
+                "vllm",
+                "trusted_ca",
+                "step_cli"
+            ],
+            "dependencies": [
+                "103"
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
+                }
             ],
             "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "traefik_service": {
+                "name": "vllm-qwen2.5-7b-awq",
+                "port": 8000,
+                "scheme": "https"
+            },
             "vllm_engine_config": {
                 "ModelConfig": {
                     "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
@@ -145,6 +161,7 @@
         },
         "911": {
             "name": "Copy-VLLM-GPU0",
+            "is_template": true,
             "clone_from_ctid": "901",
             "start_at_boot": false,
             "boot_order": 0,
@@ -163,30 +180,13 @@
             "gpu_assignment": "0",
             "features": [
                 "nvidia",
-                "vllm"
+                "vllm",
+                "trusted_ca",
+                "step_cli"
             ],
-            "application_script": "phoenix_hypervisor_lxc_vllm.sh",
-            "vllm_engine_config": {
-                "ModelConfig": {
-                    "model": "Qwen/Qwen2-7B-Instruct",
-                    "trust_remote_code": true,
-                    "dtype": "auto",
-                    "max_model_len": 8192
-                },
-                "CacheConfig": {
-                    "quantization": "fp8",
-                    "gpu_memory_utilization": 0.9
-                },
-                "ParallelConfig": {
-                    "tensor_parallel_size": 1
-                },
-                "ServerConfig": {
-                    "host": "0.0.0.0",
-                    "port": 8000,
-                    "served_model_name": "qwen2-7b-fp8"
-                }
-            },
-            "template_snapshot_name": "final-form",
+            "dependencies": [
+                "103"
+            ],
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "enable_lifecycle_snapshots": true,
@@ -196,7 +196,7 @@
         },
         "912": {
             "name": "Copy-VLLM-GPU1",
-            "clone_from_ctid": "901",
+            "clone_from_ctid": "911",
             "start_at_boot": false,
             "boot_order": 0,
             "boot_delay": 0,
@@ -214,9 +214,25 @@
             "gpu_assignment": "1",
             "features": [
                 "nvidia",
-                "vllm"
+                "vllm",
+                "trusted_ca",
+                "step_cli"
+            ],
+            "dependencies": [
+                "103"
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
+                }
             ],
             "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "traefik_service": {
+                "name": "vllm-qwen2-7b-fp8-gpu1",
+                "port": 8000,
+                "scheme": "https"
+            },
             "vllm_engine_config": {
                 "ModelConfig": {
                     "model": "Qwen/Qwen2-7B-Instruct",
@@ -263,15 +279,19 @@
             "portainer_role": "none",
             "clone_from_ctid": "911",
             "features": [
-                "vllm"
+                "vllm",
+                "trusted_ca",
+                "step_cli"
             ],
             "application_script": "phoenix_hypervisor_lxc_vllm.sh",
+            "bootstrap_ca_url": "https://10.0.0.10:9000",
             "ports": [
                 "8000:8000"
             ],
             "traefik_service": {
                 "name": "granite-embedding",
-                "port": 8000
+                "port": 8000,
+                "scheme": "https"
             },
             "vllm_engine_config": {
                 "ModelConfig": {
@@ -302,12 +322,35 @@
                         "source": "10.0.0.12",
                         "proto": "tcp",
                         "port": "8000",
-                        "comment": "Allow Traefik to access granite-embedding"
+                        "comment": "Allow Traefik to access granite-embedding (HTTPS)"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow outbound communication to Step CA for certificate requests"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow outbound communication to Step CA for certificate requests"
                     }
                 ]
             },
             "dependencies": [
-                "1002"
+                "1002",
+                "103"
+            ],
+            "mount_points": [
+                {
+                    "host_path": "/mnt/pve/quickOS/lxc-persistent-data/103/ssl",
+                    "container_path": "/etc/step-ca/ssl"
+                }
             ],
             "start_at_boot": true,
             "boot_order": 6,
@@ -343,6 +386,7 @@
         },
         "802": {
             "name": "granite-3.3-8b-fp8",
+            "enable_lifecycle_snapshots": true,
             "memory_mb": 72000,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -359,7 +403,9 @@
             "portainer_role": "none",
             "clone_from_ctid": "911",
             "features": [
-                "vllm"
+                "vllm",
+                "trusted_ca",
+                "step_cli"
             ],
             "application_script": "phoenix_hypervisor_lxc_vllm.sh",
             "ports": [
@@ -425,6 +471,8 @@
         },
         "101": {
             "name": "Nginx-Phoenix",
+            "template_file": "nginx-phoenix-v1.tar.gz",
+            "enable_lifecycle_snapshots": true,
             "memory_mb": 4096,
             "swap_mb": 512,
             "cores": 4,
@@ -558,6 +606,7 @@
         },
         "914": {
             "name": "ollama-gpu0",
+            "enable_lifecycle_snapshots": true,
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -614,6 +663,7 @@
         },
         "917": {
             "name": "llamacpp-gpu0",
+            "enable_lifecycle_snapshots": true,
             "memory_mb": 32768,
             "cores": 6,
             "storage_pool": "quickOS-lxc-disks",
@@ -777,6 +827,7 @@
         },
         "102": {
             "name": "Traefik-Internal",
+            "template_file": "traefik-internal-v1.tar.gz",
             "start_at_boot": true,
             "boot_order": 3,
             "boot_delay": 5,
@@ -857,14 +908,6 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow outbound communication to Step CA (10.0.0.10) for certificate requests"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.141",
-                        "proto": "tcp",
-                        "port": "8000",
-                        "comment": "Allow proxy to granite-embedding (10.0.0.141)"
                     },
                     {
                         "type": "out",

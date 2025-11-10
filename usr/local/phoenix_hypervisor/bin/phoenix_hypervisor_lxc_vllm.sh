@@ -30,6 +30,12 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/phoenix_hypervisor_common_utils.sh"
 # --- Script Variables ---
 CTID=""
 SERVICE_NAME="vllm_model_server"
+CERT_DIR="/etc/ssl/vllm"
+CERT_FILE="${CERT_DIR}/vllm.crt"
+KEY_FILE="${CERT_DIR}/vllm.key"
+CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
+PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
+ROOT_CA_CERT="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 
 # =====================================================================================
 # Function: parse_arguments
@@ -90,6 +96,49 @@ build_vllm_cli_args() {
 }
 
 # =====================================================================================
+# Function: wait_for_ca
+# Description: Waits for the Step CA to be ready by checking for a file.
+# =====================================================================================
+wait_for_ca() {
+    log_info "Waiting for Step CA to become ready..."
+    while [ ! -f "${CA_READY_FILE}" ]; do
+        log_info "CA not ready yet. Waiting 5 seconds..."
+        sleep 5
+    done
+    log_success "Step CA is ready."
+}
+
+# =====================================================================================
+# Function: bootstrap_step_cli
+# Description: Bootstraps the step CLI to trust the internal CA.
+# =====================================================================================
+bootstrap_step_cli() {
+    log_info "Bootstrapping Step CLI..."
+    if ! step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
+        log_fatal "Failed to bootstrap Step CLI."
+    fi
+    log_success "Step CLI bootstrapped successfully."
+}
+
+# =====================================================================================
+# Function: request_vllm_certificate
+# Description: Requests a TLS certificate for the vLLM service from the Step CA.
+# =====================================================================================
+request_vllm_certificate() {
+    local service_name
+    service_name=$(jq_get_value "$CTID" ".traefik_service.name")
+    local fqdn="${service_name}.internal.thinkheads.ai"
+
+    log_info "Requesting vLLM certificate for ${fqdn}..."
+    mkdir -p "${CERT_DIR}"
+
+    if ! step ca certificate "$fqdn" "${CERT_FILE}" "${KEY_FILE}" --provisioner "admin@thinkheads.ai" --provisioner-password-file "${PROVISIONER_PASSWORD_FILE}" --force; then
+        log_fatal "Failed to obtain vLLM certificate."
+    fi
+    log_success "vLLM certificate obtained successfully."
+}
+
+# =====================================================================================
 # Function: generate_systemd_service_content
 # Description: Dynamically generates the complete content for the systemd service file.
 # Arguments:
@@ -119,7 +168,7 @@ Environment="LD_LIBRARY_PATH=/usr/local/cuda/lib64"
 Environment="PATH=/opt/vllm/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="VLLM_USE_FLASHINFER_SAMPLER=1"
 Environment="TORCH_CUDA_ARCH_LIST=12.0"
-ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server ${vllm_args}
+ExecStart=/opt/vllm/bin/python -m vllm.entrypoints.openai.api_server ${vllm_args} --ssl-keyfile ${KEY_FILE} --ssl-certfile ${CERT_FILE}
 Restart=always
 RestartSec=10
 
@@ -172,15 +221,18 @@ deploy_and_start_service() {
 main() {
     parse_arguments "$@"
     parse_vllm_config
-    
+    wait_for_ca
+    bootstrap_step_cli
+    request_vllm_certificate
+
     local vllm_args
     vllm_args=$(build_vllm_cli_args)
-    
+
     local service_content
     service_content=$(generate_systemd_service_content "$vllm_args")
-    
+
     deploy_and_start_service "$service_content"
-    
+
     log_info "vLLM application script completed successfully for CTID $CTID."
     exit_script 0
 }

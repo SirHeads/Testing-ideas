@@ -64,7 +64,7 @@ server {
 # This block acts as the single TLS termination point for the entire internal network.
 server {
     listen 443 ssl http2;
-    server_name nginx.$DOMAIN_NAME portainer.$DOMAIN_NAME; # Handle Nginx and Portainer hostnames
+    server_name *.${DOMAIN_NAME}; # Handle all internal hostnames
 
     # Use the specific certificate for the Nginx gateway.
     ssl_certificate /etc/nginx/ssl/nginx.$DOMAIN_NAME.crt;
