@@ -39,6 +39,7 @@
                 "docker"
             ],
             "portainer_role": "primary",
+            "swarm_role": "manager",
             "dependencies": [
                 "102"
             ],
@@ -89,6 +90,34 @@
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "2377",
+                        "comment": "Allow Docker Swarm manager communication"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "7946",
+                        "comment": "Allow Docker Swarm node-to-node communication (TCP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "port": "7946",
+                        "comment": "Allow Docker Swarm node-to-node communication (UDP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "port": "4789",
+                        "comment": "Allow Docker Swarm overlay network traffic"
                     }
                 ]
             }
@@ -110,6 +139,10 @@
                 "docker"
             ],
             "portainer_role": "agent",
+            "swarm_role": "worker",
+            "node_labels": [
+                "gpu=true"
+            ],
             "portainer_environment_name": "drphoenix",
             "portainer_agent_hostname": "drphoenix-agent.internal.thinkheads.ai",
             "trigger_sync_on_completion": true,
@@ -193,6 +226,34 @@
                         "proto": "tcp",
                         "port": "6334",
                         "comment": "Allow access to Qdrant gRPC API"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "2377",
+                        "comment": "Allow Docker Swarm manager communication"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "7946",
+                        "comment": "Allow Docker Swarm node-to-node communication (TCP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "port": "7946",
+                        "comment": "Allow Docker Swarm node-to-node communication (UDP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "port": "4789",
+                        "comment": "Allow Docker Swarm overlay network traffic"
                     }
                 ]
             }

@@ -8,6 +8,10 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data_nfs:/qdrant/storage
+    deploy:
+      replicas: 1
+      placement:
+        constraints: []
 
 volumes:
   qdrant_data_nfs:

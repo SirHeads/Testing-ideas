@@ -308,49 +308,20 @@ deploy_portainer_instances() {
                 fi
 
                 # --- DYNAMIC CERTIFICATE GENERATION ---
-                # Certificates are still stored on the host for renewal purposes, but are copied into the container.
                 local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
                 local hypervisor_cert_dir="/usr/local/phoenix_hypervisor/persistent-storage/portainer/certs"
                 ensure_portainer_certificates "$VMID" "/usr/local/phoenix_hypervisor/persistent-storage" "$portainer_fqdn"
 
-                # --- PREPARE FILES FOR PUSHING TO VM ---
-                log_info "Preparing Portainer files for deployment to VM..."
-                local temp_deploy_dir=$(mktemp -d)
-                cp "${PHOENIX_BASE_DIR}/stacks/portainer_service/docker-compose.yml" "${temp_deploy_dir}/docker-compose.yml"
-                cp -r "$hypervisor_cert_dir" "${temp_deploy_dir}/certs"
-
-                # Modify the compose file for TLS
-                yq -i -y '.services.portainer.command = "--tlsverify --tlscert /certs/portainer.crt --tlskey /certs/portainer.key" | .services.portainer.volumes += ["./certs:/certs"]' "${temp_deploy_dir}/docker-compose.yml"
-
-                # --- PUSH FILES TO VM ---
-                log_info "Pushing compose file and certificates to VM ${VMID}..."
-                run_qm_command guest exec "$VMID" -- mkdir -p "$(dirname "$compose_file_path")"
-                if ! qm_push_dir "$VMID" "$temp_deploy_dir" "$(dirname "$compose_file_path")"; then
-                    log_fatal "Failed to push Portainer deployment files to VM ${VMID}."
-                fi
-                log_info "Setting correct ownership on deployment directory in VM..."
-                run_qm_command guest exec "$VMID" -- /bin/chown -R phoenix_user:phoenix_user "/home/phoenix_user/portainer"
-                rm -rf "$temp_deploy_dir" # Clean up temp directory
-
-                log_info "Ensuring clean restart for Portainer server on VM $VMID..."
-                local DOCKER_TLS_DIR="/etc/docker/tls"
-                local DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
-                local DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
-                local DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
-                local DOCKER_TLS_FLAGS="--tls --tlscert=${DOCKER_CERT_FILE} --tlskey=${DOCKER_KEY_FILE} --tlscacert=${DOCKER_CA_FILE}"
- 
-                qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker ${DOCKER_TLS_FLAGS} compose down -v --remove-orphans" || log_warn "Portainer server was not running or failed to stop cleanly."
-                qm guest exec "$VMID" -- /bin/bash -c "docker ${DOCKER_TLS_FLAGS} rm -f portainer_server" || log_warn "Portainer server container was not running or failed to remove cleanly."
- 
-                 log_info "Executing docker compose up -d for Portainer server on VM $VMID..."
+                # --- UNIFIED STACK DEPLOYMENT ---
+                log_info "Executing unified swarm stack deploy for Portainer server on VM $VMID..."
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
-                    log_info "DRY-RUN: Would execute 'docker compose up -d' for Portainer server on VM $VMID."
+                    log_info "DRY-RUN: Would execute 'swarm-manager.sh deploy' for portainer_service."
                 else
-                    if ! qm guest exec "$VMID" -- /bin/bash -c "cd $(dirname ${compose_file_path}) && docker compose -f ${compose_file_path} up -d"; then
-                        log_fatal "Failed to deploy Portainer server on VM $VMID."
+                    if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy portainer_service --env prod; then
+                        log_fatal "Failed to deploy Portainer stack via swarm-manager."
                     fi
                 fi
-                log_info "Portainer server deployment initiated on VM $VMID."
+                log_info "Portainer server deployment initiated via Swarm."
                 
                 # --- BEGIN IMMEDIATE ADMIN SETUP ---
                 log_info "Waiting for Portainer API and setting up admin user..."
@@ -503,6 +474,52 @@ setup_portainer_admin_user() {
 }
 
 # =====================================================================================
+# Function: ensure_swarm_cluster_active
+# Description: Checks if the Docker Swarm is active and initializes it if not.
+#              It also ensures all worker nodes are joined to the cluster.
+# =====================================================================================
+ensure_swarm_cluster_active() {
+    log_info "--- Ensuring Docker Swarm Cluster is Active ---"
+    local manager_vmid=$(jq -r '.vms[] | select(.swarm_role == "manager") | .vmid' "$VM_CONFIG_FILE")
+    if [ -z "$manager_vmid" ]; then
+        log_fatal "No VM with swarm_role 'manager' found in vm_configs.json."
+    fi
+
+    # Check if the manager is already part of a swarm
+    local swarm_status=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker info --format '{{.Swarm.LocalNodeState}}'")
+    
+    if [[ "$swarm_status" == "inactive" ]]; then
+        log_info "Swarm is inactive on manager node. Initializing..."
+        if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" init; then
+            log_fatal "Failed to initialize Docker Swarm."
+        fi
+    else
+        log_info "Swarm is already active on manager node."
+    fi
+
+    # Ensure all worker nodes are joined
+    local worker_vmids=$(jq -r '.vms[] | select(.swarm_role == "worker") | .vmid' "$VM_CONFIG_FILE")
+    for worker_vmid in $worker_vmids; do
+        local worker_hostname=$(jq_get_vm_value "$worker_vmid" ".name")
+        log_info "Checking status of worker node ${worker_hostname} (VM ${worker_vmid})..."
+        
+        # Check if the node is already in the swarm
+        local node_status=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker node ls --filter \"name=${worker_hostname}\" --format '{{.Status}}'")
+        
+        if [[ "$node_status" == "Ready" ]]; then
+            log_info "Worker node ${worker_hostname} is already part of the swarm and ready."
+        else
+            log_warn "Worker node ${worker_hostname} is not ready or not in the swarm. Attempting to join..."
+            if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" join "$worker_vmid"; then
+                log_fatal "Failed to join worker node ${worker_hostname} (VM ${worker_vmid}) to the swarm."
+            fi
+        fi
+    done
+
+    log_success "Docker Swarm cluster is active and all nodes are joined."
+}
+
+# =====================================================================================
 # Function: sync_stack_files
 # Description: Synchronizes the local stack definition files to the shared ZFS dataset
 #              so they are available for Portainer to use.
@@ -588,9 +605,12 @@ sync_all() {
     fi
     log_success "Certificate renewal manager completed successfully."
 
+    # --- STAGE 2: ENSURE SWARM CLUSTER IS ACTIVE ---
+    log_info "--- Stage 2: Ensuring Docker Swarm Cluster is Active ---"
+    ensure_swarm_cluster_active
 
-    # --- STAGE 2: DEPLOY & VERIFY UPSTREAM SERVICES ---
-    log_info "--- Stage 2: Deploying and Verifying Portainer ---"
+    # --- STAGE 3: DEPLOY & VERIFY UPSTREAM SERVICES ---
+    log_info "--- Stage 3: Deploying and Verifying Portainer ---"
     local portainer_vmid="1001"
     if qm status "$portainer_vmid" > /dev/null 2>&1; then
         log_info "Portainer VM (1001) is running. Proceeding with deployment."

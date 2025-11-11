@@ -932,12 +932,19 @@ prepare_vm_ca_staging_area() {
 
     # This function is now responsible for pushing the CA cert directly into the VM's /tmp directory.
     # The feature script will then move it to the final destination.
-    local ca_cert_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
-    local vm_temp_path="/tmp/phoenix_root_ca.crt"
+    local root_ca_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
+    local full_chain_ca_source_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+    local vm_temp_root_path="/tmp/phoenix_root_ca.crt"
+    local vm_temp_full_chain_path="/tmp/phoenix_ca.crt"
 
-    log_info "Pushing CA certificate from host to VM's temporary directory..."
-    if ! qm_push_file "$VMID" "$ca_cert_source_path" "$vm_temp_path"; then
-        log_fatal "Failed to push CA certificate to VM ${VMID}."
+    log_info "Pushing Root CA certificate from host to VM's temporary directory..."
+    if ! qm_push_file "$VMID" "$root_ca_source_path" "$vm_temp_root_path"; then
+        log_fatal "Failed to push Root CA certificate to VM ${VMID}."
+    fi
+
+    log_info "Pushing Full-Chain CA certificate from host to VM's temporary directory..."
+    if ! qm_push_file "$VMID" "$full_chain_ca_source_path" "$vm_temp_full_chain_path"; then
+        log_fatal "Failed to push Full-Chain CA certificate to VM ${VMID}."
     fi
 
     log_success "CA staging area for VM ${VMID} is ready."

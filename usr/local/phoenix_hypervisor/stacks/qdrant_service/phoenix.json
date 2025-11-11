@@ -1,37 +1,4 @@
 {
     "description": "Qdrant vector database for RAG.",
-    "environments": {
-        "production": {
-            "variables": [],
-            "files": [],
-            "services": {
-                "qdrant": {
-                    "traefik_labels": [
-                        "traefik.enable=true",
-                        "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)",
-                        "traefik.http.routers.qdrant.entrypoints=websecure",
-                        "traefik.http.routers.qdrant.tls=true",
-                        "traefik.http.routers.qdrant.tls.certresolver=internal-resolver",
-                        "traefik.http.services.qdrant.loadbalancer.server.port=6333"
-                    ]
-                }
-            },
-            "firewall_rules": [
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "6333",
-                    "comment": "Allow access to Qdrant HTTP API"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "6334",
-                    "comment": "Allow access to Qdrant gRPC API"
-                }
-            ]
-        }
-    }
+    "placement_constraints": []
 }

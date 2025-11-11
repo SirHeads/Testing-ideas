@@ -107,7 +107,7 @@ log_info "Docker Engine installed successfully."
 
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
-INTERNAL_DNS_SERVER="10.0.0.1"
+INTERNAL_DNS_SERVER="10.0.0.13"
 CA_URL="https://10.0.0.10:9000"
 PROVISIONER_PASSWORD_FILE="/mnt/persistent/.step-ca/provisioner_password.txt"
 ROOT_CA_CERT_FILE="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
@@ -148,7 +148,7 @@ log_info "Generating TLS certificate for the Docker daemon..."
 mkdir -p "$DOCKER_TLS_DIR"
 fqdn=$(hostname -f)
 /usr/bin/step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
-cp "$ROOT_CA_CERT_FILE" "$DOCKER_CA_FILE"
+cp "/tmp/phoenix_ca.crt" "$DOCKER_CA_FILE"
 
 # Securely remove the temporary files
 log_info "Securely removing temporary CA files..."
@@ -168,6 +168,14 @@ cat <<EOF > /etc/docker/daemon.json
 }
 EOF
 
+# Configure Docker Client for mTLS for the root user
+log_info "Configuring Docker client for root user mTLS..."
+mkdir -p /root/.docker
+cp "$DOCKER_CERT_FILE" /root/.docker/cert.pem
+cp "$DOCKER_KEY_FILE" /root/.docker/key.pem
+cp "$DOCKER_CA_FILE" /root/.docker/ca.pem
+log_info "Docker client for root user configured successfully."
+ 
  # 6. Correct systemd service file and start Docker
  log_info "Step 6: Correcting systemd service file and starting Docker..."
  # Remove the -H fd:// argument to ensure daemon.json is used
@@ -237,5 +245,21 @@ else
     log_info "No dynamic Docker firewall rules to apply."
 fi
 # --- END DYNAMIC IPTABLES CONFIGURATION ---
+
+# --- BEGIN SWARM NETWORKING FIX ---
+log_info "Adding firewall rule to allow established and related connections for Swarm..."
+established_rule="-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
+if ! iptables-save | grep -q -- "-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"; then
+    if ! iptables ${established_rule}; then
+        log_fatal "Failed to apply RELATED,ESTABLISHED iptables rule."
+    fi
+    log_info "Saving iptables rules to make them persistent..."
+    if ! netfilter-persistent save; then
+        log_warn "Failed to save iptables rules. They may not persist after a reboot."
+    fi
+else
+    log_info "RELATED,ESTABLISHED rule already exists. Skipping."
+fi
+# --- END SWARM NETWORKING FIX ---
 
 log_info "--- Docker Installation Complete ---"

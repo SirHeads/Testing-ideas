@@ -371,7 +371,7 @@ main() {
 
     # --- VERB VALIDATION ---
     # Before proceeding, ensure the provided verb is valid.
-    local valid_verbs="setup create delete start stop restart status sync LetsGo converge health-check"
+    local valid_verbs="setup create delete start stop restart status sync LetsGo converge health-check swarm"
     if ! [[ $valid_verbs =~ (^|[[:space:]])"$VERB"($|[[:space:]]) ]]; then
         log_error "Invalid verb '$VERB'."
         print_usage
@@ -464,6 +464,13 @@ main() {
             exit 1
         fi
         "$SCRIPT_DIR/health_checks/check_vm_foundation.sh" "$target_vm"
+        exit $?
+    elif [ "$VERB" == "swarm" ]; then
+        log_info "Swarm command detected. Routing to swarm-manager.sh..."
+        local swarm_action="${TARGETS[0]}"
+        # Shift the swarm_action off the TARGETS array before passing to the manager
+        unset TARGETS[0]
+        "$SCRIPT_DIR/managers/swarm-manager.sh" "$swarm_action" "${TARGETS[@]}"
         exit $?
     else
         log_info "Targets detected. Resolving dependencies for all targets..."

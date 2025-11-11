@@ -388,6 +388,15 @@
                     "source": "10.0.0.111",
                     "dest": "10.0.0.102",
                     "comment": "DEBUG: Allow all traffic from Portainer server to agent"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.13",
+                    "dest": "10.0.0.111",
+                    "proto": "tcp",
+                    "port": "9000",
+                    "comment": "Allow Proxmox host to access Portainer for initial setup"
                 }
             ]
         }

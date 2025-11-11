@@ -2,7 +2,6 @@ services:
   portainer:
     image: portainer/portainer-ce:latest
     command: -H unix:///var/run/docker.sock
-    container_name: portainer_server
     init: true
     dns:
       - 10.0.0.13
@@ -13,7 +12,11 @@ services:
     ports:
       - "9000:9000"
       - "9443:9443"
-    restart: always
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
     networks:
       - portainer_network
 
@@ -21,7 +24,7 @@ services:
 
 networks:
   portainer_network:
-    driver: bridge
+    driver: overlay
 
 volumes:
   portainer_data: {}

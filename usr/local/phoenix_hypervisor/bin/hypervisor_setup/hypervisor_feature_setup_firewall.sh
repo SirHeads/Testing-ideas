@@ -74,6 +74,7 @@ EOF
     # Append the [RULES] section to the temporary file
     echo "" >> "$TMP_FW_CONFIG"
     echo "[RULES]" >> "$TMP_FW_CONFIG"
+    echo "IN ACCEPT -i lo" >> "$TMP_FW_CONFIG"
 
     # 1. Add global rules from hypervisor config
     log_info "Aggregating global firewall rules..."

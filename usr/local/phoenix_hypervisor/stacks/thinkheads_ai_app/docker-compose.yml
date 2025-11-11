@@ -8,6 +8,10 @@ services:
     volumes:
       - thinkheads_ai_app_data_nfs:/app
     restart: unless-stopped
+    deploy:
+      replicas: 1
+      placement:
+        constraints: []
     environment:
       - API_PORT=${API_PORT}
 

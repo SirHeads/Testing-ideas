@@ -171,36 +171,20 @@ install_and_test_vllm() {
     pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --upgrade pip
 
     # --- Core Library Installation ---
-    # vLLM often requires the latest features from PyTorch, necessitating a nightly build.
-    log_info "Installing PyTorch nightly for CUDA 12.8+..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+    # Install the latest test/beta build of PyTorch for cutting-edge hardware support.
+    log_info "Installing PyTorch test build for CUDA 12.8+..."
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu128
 
     # --- vLLM Installation ---
-    log_info "Installing vLLM from pip wheel..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install vllm==0.10.2
+    # Install the latest pre-release of vLLM. This automatically handles dependencies like FlashInfer.
+    log_info "Installing latest pre-release of vLLM..."
+    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre vllm
 
-    # --- FlashInfer Installation ---
-    log_info "Setting TORCH_CUDA_ARCH_LIST for sm_120..."
-    pct_exec "$CTID" -- bash -c "echo 'export TORCH_CUDA_ARCH_LIST=12.0' >> /etc/environment"
-    pct_exec "$CTID" -- bash -c "source /etc/environment"
-    log_info "Installing FlashInfer from source at tag v0.3.1..."
-    local flashinfer_dir="/opt/flashinfer"
-    # Idempotent clone
-    pct_exec "$CTID" -- sh -c "test -d ${flashinfer_dir} || git clone https://github.com/flashinfer-ai/flashinfer.git ${flashinfer_dir}" || true
-    pct_exec "$CTID" -- git -C "${flashinfer_dir}" fetch --all --tags
-    pct_exec "$CTID" -- git -C "${flashinfer_dir}" checkout tags/v0.3.1 -b v0.3.1-branch
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install -e "${flashinfer_dir}"
+    # --- Dependency Harmonization ---
+    # Ensure the correct NVIDIA management library is installed.
+    log_info "Ensuring NVIDIA library compatibility..."
     pct_exec "$CTID" -- "${vllm_dir}/bin/pip" uninstall -y pynvml
     pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install nvidia-ml-py
-
-    # --- Verification ---
-    log_info "Verifying FlashInfer installation..."
-    # Filter only the version number, ignoring warnings
-    version_output=$(pct_exec "$CTID" -- "${vllm_dir}/bin/python" -c "import flashinfer; print(flashinfer.__version__)" 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+$')
-    if [[ "$version_output" != "0.3.1" ]]; then
-        log_fatal "FlashInfer version verification failed. Expected '0.3.1', but found '$version_output'."
-    fi
-    log_success "FlashInfer v0.3.1 verified."
 
     # --- Verification ---
     # This final check confirms that the vLLM library is correctly installed in the virtual environment.
