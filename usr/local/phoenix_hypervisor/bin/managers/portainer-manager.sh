@@ -301,9 +301,11 @@ deploy_portainer_instances() {
                     log_warn "--- RESETTING PORTAINER ---"
                     log_info "Forcefully removing Portainer stack and volumes..."
                     # The '-v' flag removes the named volumes associated with the stack.
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "cd $(dirname "$compose_file_path") && docker compose down -v --remove-orphans" || log_warn "Portainer stack was not running or failed to stop cleanly."
+                    run_qm_command guest exec "$VMID" -- /bin/bash -c "docker stack rm prod_portainer_service" || log_warn "Portainer stack was not running or failed to stop cleanly."
+                    log_info "Waiting for stack removal to complete..."
+                    sleep 10 # Give the stack time to be removed before deleting the volume
                     log_info "Forcefully removing Portainer data volume to ensure a clean slate..."
-                    run_qm_command guest exec "$VMID" -- docker volume rm portainer_portainer_data || log_warn "Portainer data volume did not exist or could not be removed."
+                    run_qm_command guest exec "$VMID" -- docker volume rm prod_portainer_service_portainer_data || log_warn "Portainer data volume did not exist or could not be removed."
                     log_info "--- PORTAINER RESET COMPLETE ---"
                 fi
 

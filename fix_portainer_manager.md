@@ -1,37 +1,29 @@
-# Portainer Manager Timeout Fix
+# Plan to Fix Portainer Service and Certificate Renewal
 
-## Problem
+This document outlines the necessary changes to resolve the `phoenix sync` hang and ensure the long-term stability of the Portainer service.
 
-The `phoenix sync all` command fails with a connection timeout when the `portainer-manager.sh` script attempts to create the initial admin user.
+## 1. The Problem
 
-## Root Cause Analysis
+The `phoenix sync` process is failing because the Portainer service, when deployed to Docker Swarm, is not publishing its ports correctly. This makes the Portainer API inaccessible to the orchestration script, causing it to hang indefinitely. Additionally, the certificate renewal process for Portainer is configured to restart a container by a static name, which is incompatible with a Swarm environment where container names are dynamic.
 
-A systematic investigation has confirmed the following:
-1.  The Portainer service is correctly configured in its `docker-compose.yml` to publish port 9000.
-2.  The Portainer Docker container is running successfully inside VM 1001.
-3.  A process inside VM 1001 is actively listening on port 9000 on all network interfaces.
-4.  The `curl` command from the hypervisor (10.0.0.13) to the Portainer VM (10.0.0.111) on port 9000 times out.
+## 2. Proposed Solution
 
-This definitively isolates the problem to the Proxmox firewall. The cluster-level firewall (`cluster.fw`) has a default `DROP` policy for incoming traffic. The connection is being dropped at the cluster level before it can be evaluated by the more permissive VM-level rules (`1001.fw`).
+I will make the following two changes to fix these issues:
 
-## Solution
+### Change 1: Correct Portainer's Port Mapping
 
-The solution is to add a new global firewall rule that explicitly allows the hypervisor to connect to the Portainer VM on port 9000. This rule will be added to the `global_firewall_rules` array in the `phoenix_hypervisor_config.json` file, ensuring it is applied at the cluster level.
+I will modify the `usr/local/phoenix_hypervisor/stacks/portainer_service/docker-compose.yml` file to move the port definitions under the `deploy` key. This is the correct way to publish ports for a service in a Docker Swarm, and it will make the Portainer API accessible on the network.
 
-### Proposed Change
+### Change 2: Update Certificate Renewal Command
 
-Add the following JSON object to the `shared_volumes.firewall.global_firewall_rules` array in `usr/local/phoenix_hypervisor/etc/phoenix_hypervisor_config.json`:
+I will update the `usr/local/phoenix_hypervisor/etc/certificate-manifest.json` file to change the post-renewal command for the Portainer certificate. The new command will force a service update (`docker service update --force prod_portainer_service_portainer`), which is the correct way to apply a new certificate in a Swarm environment.
 
-```json
-{
-    "type": "in",
-    "action": "ACCEPT",
-    "source": "10.0.0.13",
-    "dest": "10.0.0.111",
-    "proto": "tcp",
-    "port": "9000",
-    "comment": "Allow Proxmox host to access Portainer for initial setup"
-}
-```
+## 3. Expected Outcome
 
-This change is declarative, idempotent, and aligns with the existing design of the firewall management system. The next time `phoenix sync all` is run, the `hypervisor_feature_setup_firewall.sh` script will automatically read this new rule and apply it to the `cluster.fw` file, resolving the timeout issue.
+These changes will:
+
+1.  **Resolve the `phoenix sync` hang:** By correctly publishing the Portainer ports, the orchestration script will be able to connect to the API and complete the setup process.
+2.  **Ensure reliable certificate renewals:** The updated post-renewal command will ensure that new certificates are applied to the Portainer service without any manual intervention.
+3.  **Restore 1001-to-1002 communication:** Once the Portainer service is running correctly, it will be able to manage the agent on VM 1002, resolving the user's concern about the two VMs being unable to communicate.
+
+I am confident that these changes will fully resolve the issues you are experiencing. I am ready to proceed with the implementation as soon as you approve this plan.

@@ -2,25 +2,26 @@ services:
   portainer:
     image: portainer/portainer-ce:latest
     command: -H unix:///var/run/docker.sock
-    init: true
-    dns:
-      - 10.0.0.13
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
       - /mnt/stacks:/stacks
     ports:
-      - "9000:9000"
-      - "9443:9443"
+      - target: 9000
+        published: 9000
+        protocol: tcp
+        mode: ingress
+      - target: 9443
+        published: 9443
+        protocol: tcp
+        mode: ingress
+    networks:
+      - portainer_network
     deploy:
       replicas: 1
       placement:
         constraints:
           - node.role == manager
-    networks:
-      - portainer_network
-
-
 
 networks:
   portainer_network:

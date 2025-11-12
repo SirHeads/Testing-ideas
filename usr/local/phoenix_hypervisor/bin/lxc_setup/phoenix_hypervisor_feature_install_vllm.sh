@@ -127,7 +127,6 @@ install_and_test_vllm() {
     log_info "Starting vLLM source installation and verification in CTID: $CTID"
 
     # --- Dependency Check ---
-    # vLLM requires NVIDIA drivers to function.
     log_info "Verifying 'nvidia' feature dependency..."
     if ! is_feature_present_on_container "$CTID" "nvidia"; then
         log_fatal "The 'vllm' feature requires the 'nvidia' feature, which was not found."
@@ -136,27 +135,25 @@ install_and_test_vllm() {
         log_fatal "NVIDIA driver command 'nvidia-smi' not found. The 'vllm' feature depends on a functional NVIDIA driver."
     fi
 
-    # This is a critical check to ensure the GPU is properly passed through to the container.
     log_info "Verifying NVIDIA GPU access in CTID $CTID..."
     if ! pct_exec "$CTID" -- nvidia-smi; then
         log_fatal "NVIDIA GPU not accessible in CTID $CTID. 'nvidia-smi' command failed."
     fi
     log_success "NVIDIA GPU access verified."
 
-    local vllm_dir="/opt/vllm"
+    local vllm_venv_dir="/opt/vllm"
     local vllm_repo_dir="/opt/vllm_repo"
+    local vllm_commit_hash="" # Phase 1: Empty for main. Phase 2: Populate with a known-good commit hash.
 
     # --- Idempotency Check ---
-    # This check is crucial for template-based deployments where vLLM is pre-installed.
-    log_info "Checking for existing vLLM installation at ${vllm_dir}/bin/python..."
-    if pct_exec "$CTID" -- test -f "${vllm_dir}/bin/python"; then
+    log_info "Checking for existing vLLM installation at ${vllm_venv_dir}/bin/vllm..."
+    if pct_exec "$CTID" -- test -f "${vllm_venv_dir}/bin/vllm"; then
         log_info "Existing vLLM installation found. Skipping feature installation."
         return 0
     fi
     log_info "No existing vLLM installation found. Proceeding with full source installation."
 
     # --- Environment Setup ---
-    # Using a specific Python version (3.11) ensures a consistent and reproducible build environment.
     log_info "Installing Python 3.11, build tools, and git..."
     pct_exec "$CTID" -- apt-get update
     pct_exec "$CTID" -- apt-get install -y software-properties-common
@@ -164,36 +161,57 @@ install_and_test_vllm() {
     pct_exec "$CTID" -- apt-get update
     pct_exec "$CTID" -- apt-get install -y python3.11-full python3.11-dev python3.11-venv python3-pip build-essential cmake git ninja-build
 
-    # A virtual environment is essential for isolating vLLM's dependencies from system packages.
-    log_info "Creating Python virtual environment in ${vllm_dir}..."
-    pct_exec "$CTID" -- mkdir -p "$vllm_dir"
-    pct_exec "$CTID" -- python3.11 -m venv "$vllm_dir"
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --upgrade pip
+    log_info "Creating Python virtual environment in ${vllm_venv_dir}..."
+    pct_exec "$CTID" -- mkdir -p "$vllm_venv_dir"
+    pct_exec "$CTID" -- python3.11 -m venv "$vllm_venv_dir"
+    pct_exec "$CTID" -- "${vllm_venv_dir}/bin/pip" install --upgrade pip
 
-    # --- Core Library Installation ---
-    # Install the latest test/beta build of PyTorch for cutting-edge hardware support.
-    log_info "Installing PyTorch test build for CUDA 12.8+..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/test/cu128
+    # --- PyTorch Nightly Installation ---
+    log_info "Installing PyTorch nightly build for CUDA 12.8+..."
+    pct_exec "$CTID" -- "${vllm_venv_dir}/bin/pip" install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
 
-    # --- vLLM Installation ---
-    # Install the latest pre-release of vLLM. This automatically handles dependencies like FlashInfer.
-    log_info "Installing latest pre-release of vLLM..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install --pre vllm
+    # --- vLLM Build from Source ---
+    # This entire block is executed in a single shell context to maintain environment variables.
+    log_info "Starting vLLM build-from-source process..."
+    local build_script
+    build_script=$(cat <<-EOF
+        set -e
+        echo "--- Cloning vLLM repository ---"
+        git clone https://github.com/vllm-project/vllm.git "${vllm_repo_dir}"
+        cd "${vllm_repo_dir}"
 
-    # --- Dependency Harmonization ---
-    # Ensure the correct NVIDIA management library is installed.
-    log_info "Ensuring NVIDIA library compatibility..."
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" uninstall -y pynvml
-    pct_exec "$CTID" -- "${vllm_dir}/bin/pip" install nvidia-ml-py
+        if [ -n "${vllm_commit_hash}" ]; then
+            echo "--- Checking out specific commit: ${vllm_commit_hash} ---"
+            git checkout "${vllm_commit_hash}"
+        fi
+
+        echo "--- Setting build-time environment variables ---"
+        export TORCH_CUDA_ARCH_LIST="10.0 12.0"
+        export VLLM_FLASH_ATTN_VERSION=2
+        export MAX_JOBS=8
+        export CMAKE_BUILD_PARALLEL_LEVEL=8
+
+        echo "--- Running dependency alignment script ---"
+        "${vllm_venv_dir}/bin/python" use_existing_torch.py
+
+        echo "--- Installing build dependencies ---"
+        "${vllm_venv_dir}/bin/pip" install -r requirements/build.txt
+
+        echo "--- Compiling and installing vLLM ---"
+        "${vllm_venv_dir}/bin/pip" install --no-build-isolation -e .
+
+        echo "--- Build process complete ---"
+EOF
+    )
+    pct_exec "$CTID" -- /bin/bash -c "$build_script"
 
     # --- Verification ---
-    # This final check confirms that the vLLM library is correctly installed in the virtual environment.
     log_info "Verifying vLLM installation by checking the version..."
-    if ! pct_exec "$CTID" -- "${vllm_dir}/bin/python" -c "import vllm; print(vllm.__version__)"; then
+    if ! pct_exec "$CTID" -- "${vllm_venv_dir}/bin/vllm" --version; then
         log_fatal "vLLM installation verification failed."
     fi
     
-    log_success "vLLM source installation and verification complete."
+    log_success "vLLM build-from-source installation and verification complete."
 }
 
 # =====================================================================================
