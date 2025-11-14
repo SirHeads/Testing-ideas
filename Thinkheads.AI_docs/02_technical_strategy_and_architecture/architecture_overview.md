@@ -73,3 +73,33 @@ graph TD
     G -- Issues Certs to --> I
     G -- Issues Certs to --> D
 ```
+
+## `phoenix sync all` Workflow
+
+The `phoenix sync all` command is the master orchestrator responsible for bringing the entire system to its desired state. It performs the following key actions in sequence:
+
+1.  **Host-Level Synchronization**:
+    *   Ensures the Proxmox host's DNS server (`dnsmasq`) is correctly configured with all guest hostnames.
+    *   Applies all global and per-guest firewall rules.
+    *   Runs the `certificate-renewal-manager` to ensure all TLS certificates are valid and up-to-date.
+
+2.  **Swarm Initialization**:
+    *   Initializes the Docker Swarm on the manager node (VM 1001).
+    *   Ensures all designated worker nodes (e.g., VM 1002) are actively joined to the Swarm.
+
+3.  **Portainer Deployment**:
+    *   Deploys the Portainer server stack to the Swarm manager node.
+    *   Sets up the initial admin user and generates an API key for future automation.
+
+4.  **Service Mesh Configuration**:
+    *   Executes `generate_traefik_config.sh` on the host to create a dynamic configuration based on all defined `traefik_service` objects in the system.
+    *   Pushes the generated configuration into the Traefik container (102) and reloads the service.
+
+5.  **Gateway Configuration (Refactored)**:
+    *   Executes `generate_nginx_config.sh` on the host to create the gateway configuration.
+    *   Pushes the generated configuration into the Nginx container (101).
+    *   Reloads the Nginx service to apply the new configuration. This host-based generation process ensures reliability and consistency, avoiding the brittle in-container scripting of the previous implementation.
+
+6.  **Application Stack Deployment**:
+    *   Synchronizes all application stack definitions (e.g., `qdrant_service`, `thinkheads_ai_app`) to the shared volume.
+    *   Deploys all stacks designated in the VM configurations to the appropriate Swarm nodes.

@@ -325,12 +325,8 @@ deploy_portainer_instances() {
                 fi
                 log_info "Portainer server deployment initiated via Swarm."
                 
-                # --- BEGIN IMMEDIATE ADMIN SETUP ---
-                log_info "Waiting for Portainer API and setting up admin user..."
-                local portainer_server_ip=$(get_global_config_value '.network.portainer_server_ip')
-                local PORTAINER_URL="http://${portainer_server_ip}:9000"
-                setup_portainer_admin_user "$PORTAINER_URL"
-                # --- END IMMEDIATE ADMIN SETUP ---
+                # The immediate admin setup has been moved to Stage 6 of the sync_all command
+                # to ensure the network gateway is ready before the API is called.
                 ;;
             agent)
                 log_info "Deploying Portainer agent on VM $VMID..."
@@ -724,40 +720,38 @@ sync_all() {
     fi
 
     # --- STAGE 5: CONFIGURE GATEWAY ---
+    # --- STAGE 5: CONFIGURE GATEWAY ---
     log_info "--- Stage 5: Synchronizing NGINX Gateway ---"
-    log_info "Generating and applying dynamic NGINX gateway configuration..."
-    if ! "${PHOENIX_BASE_DIR}/bin/generate_nginx_gateway_config.sh"; then
-        log_fatal "Failed to generate dynamic NGINX configuration."
-    fi
-    # --- BEGIN ROBUST NGINX CONFIGURATION ---
-    log_info "Attempting to push NGINX gateway config to container 101..."
-    local gateway_config_src="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway"
-    local gateway_config_dest="/etc/nginx/sites-available/gateway"
-    
-    if output=$(pct push 101 "$gateway_config_src" "$gateway_config_dest" 2>&1); then
-        log_success "Successfully pushed NGINX gateway config."
-    else
-        log_fatal "Failed to push NGINX gateway config. Exit code: $?. Output: $output"
-    fi
+    local nginx_ctid="101"
+    if pct status "$nginx_ctid" > /dev/null 2>&1; then
+        log_info "Nginx container (101) is running. Generating and applying configuration."
 
-    log_info "Attempting to create symbolic link for NGINX gateway site..."
-    if output=$(pct exec 101 -- ln -sf "$gateway_config_dest" /etc/nginx/sites-enabled/gateway 2>&1); then
-        log_success "Successfully created NGINX gateway symlink."
-    else
-        log_fatal "Failed to create NGINX gateway symlink. Exit code: $?. Output: $output"
-    fi
+        # 1. Generate the configuration on the host
+        if ! "${PHOENIX_BASE_DIR}/bin/generate_nginx_config.sh"; then
+            log_fatal "Failed to generate Nginx configuration on the host."
+        fi
 
-    log_info "Attempting to reload Nginx in container 101..."
-    if output=$(pct exec 101 -- systemctl reload nginx 2>&1); then
-        log_success "Nginx reloaded successfully."
+        # 2. Push the generated configuration to the container
+        local nginx_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway"
+        local nginx_config_dest="/etc/nginx/sites-available/gateway"
+        if ! pct push "$nginx_ctid" "$nginx_config_source" "$nginx_config_dest"; then
+            log_fatal "Failed to push generated Nginx config to container 101."
+        fi
+
+        # 3. Create the symlink
+        pct exec "$nginx_ctid" -- ln -sf "$nginx_config_dest" /etc/nginx/sites-enabled/gateway || log_fatal "Failed to create symlink in container 101."
+
+        # 4. Test and reload Nginx inside the container
+        if ! pct exec "$nginx_ctid" -- nginx -t; then
+            log_fatal "Nginx configuration test failed inside container 101."
+        fi
+        if ! pct exec "$nginx_ctid" -- systemctl reload nginx; then
+            log_fatal "Failed to reload Nginx inside container 101."
+        fi
+        log_success "NGINX gateway configuration applied and reloaded successfully."
     else
-        log_error "Failed to reload Nginx. Exit code: $?. Output: $output"
-        log_info "Dumping Nginx journal for debugging..."
-        pct exec 101 -- journalctl -u nginx -n 50 --no-pager
-        log_fatal "NGINX reload failed. Please review the logs above."
+        log_warn "Nginx container (101) is not running. Skipping Nginx synchronization."
     fi
-    # --- END ROBUST NGINX CONFIGURATION ---
-    log_success "NGINX gateway configuration applied and reloaded successfully."
 
     # --- BEGIN DEFINITIVE VERIFICATION ---
     log_info "Verifying Nginx listener on port 443 inside container 101..."
@@ -780,27 +774,14 @@ sync_all() {
     # --- END DEFINITIVE VERIFICATION ---
 
     # --- STAGE 6: SETUP PORTAINER ADMIN AND SYNCHRONIZE STACKS ---
+    # --- STAGE 6: SETUP PORTAINER ADMIN AND SYNCHRONIZE STACKS ---
     log_info "--- Stage 6: Setting up Portainer Admin and Synchronizing Stacks ---"
-    # --- FIX: Proactively restart Portainer to avoid security timeout before API calls ---
-    log_info "Proactively restarting Portainer container to reset security timeout..."
-    run_qm_command guest exec "$portainer_vmid" -- /bin/bash -c "docker restart portainer_server" || log_warn "Failed to restart Portainer container. It may not have been running."
-    log_info "Waiting for Portainer to initialize after restart..."
-    sleep 15 # Give Portainer ample time to initialize after restart
-
-    # DEPRECATED: The following block for endpoint and stack synchronization is
-    #             now handled manually via the Portainer UI. See the new
-    #             manual_deployment_guide.md for the updated workflow.
-    #
-    # local API_KEY=$(get_or_create_portainer_api_key)
-    # if [ -z "$API_KEY" ]; then
-    #     log_fatal "Failed to get Portainer API Key. Aborting stack synchronization."
-    # fi
-    #
-    # sync_portainer_endpoints "$API_KEY"
-    #
-    # log_info "Discovering all available Docker stacks..."
-    # ... (rest of the block commented out) ...
-    # log_info "--- Docker stack synchronization complete ---"
+    
+    # With the gateway now confirmed to be active, we can safely set up the admin user.
+    log_info "Setting up Portainer admin user..."
+    local portainer_server_ip=$(get_global_config_value '.network.portainer_server_ip')
+    local PORTAINER_URL="http://${portainer_server_ip}:9000"
+    setup_portainer_admin_user "$PORTAINER_URL"
 
     # --- STAGE 7: SYNCHRONIZE APPLICATION STACKS ---
     sync_application_stacks
