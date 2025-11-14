@@ -63,7 +63,7 @@
                     "10.0.0.111"
                 ],
                 "options": [
-                    "ro",
+                    "rw",
                     "sync",
                     "no_subtree_check"
                 ]
@@ -226,7 +226,7 @@
             {
                 "name": "portainer_stacks",
                 "pool": "quickOS",
-                "properties": "sharenfs=on",
+                "properties": "",
                 "proxmox_storage_type": "dir",
                 "proxmox_content_type": "snippets",
                 "storage_class": "shared"
@@ -366,14 +366,6 @@
                     "comment": "Allow internal guests to access NFS on Host"
                 },
                 {
-                    "type": "out",
-                    "action": "ACCEPT",
-                    "dest": "10.0.0.153",
-                    "proto": "tcp",
-                    "port": "443",
-                    "comment": "Allow Proxmox host to access the Nginx gateway for Portainer API calls"
-                },
-                {
                     "type": "in",
                     "action": "ACCEPT",
                     "source": "10.0.0.111",
@@ -397,6 +389,68 @@
                     "proto": "tcp",
                     "port": "9000",
                     "comment": "Allow Proxmox host to access Portainer for initial setup"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.13",
+                    "dest": "10.0.0.153",
+                    "proto": "tcp",
+                    "port": "443",
+                    "comment": "Allow Proxmox host to connect to the NGINX gateway for API calls"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.12",
+                    "dest": "10.0.0.111",
+                    "proto": "tcp",
+                    "port": "9443",
+                    "comment": "Allow Traefik to proxy to Portainer"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "proto": "tcp",
+                    "port": "2049",
+                    "source": "10.0.0.0/24",
+                    "comment": "Allow internal NFS connections to the host"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.13",
+                    "proto": "tcp",
+                    "port": "111",
+                    "comment": "Allow internal guests to access NFS rpcbind on Host"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.13",
+                    "proto": "udp",
+                    "port": "111",
+                    "comment": "Allow internal guests to access NFS rpcbind on Host"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.13",
+                    "proto": "tcp",
+                    "port": "20048",
+                    "comment": "Allow internal guests to access NFS mountd on Host"
+                },
+                {
+                    "type": "in",
+                    "action": "ACCEPT",
+                    "source": "10.0.0.0/24",
+                    "dest": "10.0.0.13",
+                    "proto": "udp",
+                    "port": "20048",
+                    "comment": "Allow internal guests to access NFS mountd on Host"
                 }
             ]
         }

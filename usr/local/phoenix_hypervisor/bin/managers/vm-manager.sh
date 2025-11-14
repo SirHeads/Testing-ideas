@@ -25,56 +25,68 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 #   0 on success, 1 on failure.
 # =====================================================================================
 run_qm_command() {
-    local cmd_description="qm $*"
+    local args=("$@")
+    local cmd_description="qm ${args[*]}"
     log_info "Executing qm command: $cmd_description"
+
     if [ "$DRY_RUN" = true ]; then
         log_info "Dry-run: Skipping actual qm command execution."
         return 0
     fi
 
     local output
-    local exit_code=0
-    local is_guest_exec=false
+    local host_exit_code=0
 
-    # Check if the command is 'qm guest exec'
-    if [[ "$1" == "guest" && "$2" == "exec" ]]; then
-        is_guest_exec=true
-    fi
+    if [[ "${args[0]}" == "guest" && "${args[1]}" == "exec" ]]; then
+        local vmid="${args[2]}"
+        local guest_cmd_array=("${args[@]:4}")
+        
+        log_debug "Executing guest command in VM ${vmid}: ${guest_cmd_array[*]}"
+        output=$(qm guest exec "$vmid" -- "${guest_cmd_array[@]}" 2>&1) || host_exit_code=$?
 
-    output=$(qm "$@" 2>&1) || exit_code=$?
-
-    if [ $exit_code -ne 0 ]; then
-        log_error "Command failed: $cmd_description (Exit Code: $exit_code)"
-        log_error "Output:\n$output"
-    elif [ "$is_guest_exec" = true ]; then
-        # Check if the output is valid JSON before attempting to parse it.
-        if ! echo "$output" | jq -e . > /dev/null 2>&1; then
-            # If not JSON, print the raw output and assume success if the exit code was 0.
-            echo "$output"
-        else
-            # If it is JSON, parse it for details.
-            local out_data
-            out_data=$(echo "$output" | jq -r '."out-data" // ""')
-            local guest_exitcode
-            guest_exitcode=$(echo "$output" | jq -r '.exitcode // "0"') # Default to "0"
-            local exited_status
-            exited_status=$(echo "$output" | jq -r '.exited // "0"') # Default to "0"
+        # New Logic: Check for JSON output first
+        if echo "$output" | jq -e . > /dev/null 2>&1; then
+            local guest_exitcode=$(echo "$output" | jq -r '.exitcode // 0')
+            local out_data=$(echo "$output" | jq -r '."out-data" // ""')
+            local err_data=$(echo "$output" | jq -r '."err-data" // ""')
 
             if [ -n "$out_data" ]; then
-                echo -e "$out_data"
+                echo "$out_data"
+            fi
+            
+            if [ -n "$err_data" ]; then
+                # Log stderr from the guest as a warning instead of treating it as a fatal error
+                log_warn "Guest command stderr: $err_data"
             fi
 
-            # Proxmox's qm guest exec itself might return 0 even if the guest command failed.
-            # We must check the exitcode from within the JSON payload.
-            if [ "$exited_status" -eq 1 ] && [ "$guest_exitcode" -ne 0 ]; then
+            if [ "$guest_exitcode" -ne 0 ]; then
                 log_error "Guest command exited with non-zero status: $guest_exitcode"
-                exit_code="$guest_exitcode"
+                return "$guest_exitcode"
             fi
+            
+            # If the guest exit code is 0, the command was successful, regardless of qm's exit code.
+            return 0
+        else
+            # Fallback for non-JSON output
+            echo "$output"
+            if [ "$host_exit_code" -ne 0 ]; then
+                log_error "qm command failed with non-JSON output. Exit code: $host_exit_code"
+                return "$host_exit_code"
+            fi
+            return 0
         fi
+    fi
+
+    # Fallback for all other non-'guest exec' qm commands
+    output=$(qm "${args[@]}" 2>&1) || host_exit_code=$?
+
+    if [ "$host_exit_code" -ne 0 ]; then
+        log_error "Command failed: $cmd_description (Exit Code: $host_exit_code)"
+        log_error "Output:\n$output"
     else
         echo "$output"
     fi
-    return $exit_code
+    return "$host_exit_code"
 }
 
 # =====================================================================================
@@ -282,10 +294,7 @@ orchestrate_vm() {
         log_info "Step 6: Completed."
 
 
-        log_info "Step 7: Applying firewall rules for VM $VMID..."
-        apply_vm_firewall_rules "$VMID"
-        log_info "Step 7: Completed."
-        log_info "Step 8: Managing pre-feature snapshots for VM $VMID..."
+        log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
         log_info "Step 8: Completed."
 
@@ -951,125 +960,6 @@ prepare_vm_ca_staging_area() {
 }
 
 
-# =====================================================================================
-# Function: apply_vm_firewall_rules
-# Description: Applies firewall rules to a VM based on its declarative configuration.
-# Arguments:
-#   $1 - The VMID of the VM to configure.
-# =====================================================================================
-apply_vm_firewall_rules() {
-    local VMID="$1"
-    log_info "Configuring firewall for VM $VMID to be managed by the host..."
-
-    local firewall_enabled
-    firewall_enabled=$(jq_get_vm_value "$VMID" ".firewall.enabled" || echo "false")
-    log_info "Firewall enabled status for VM $VMID from config: '$firewall_enabled'"
-    local conf_file="/etc/pve/qemu-server/${VMID}.conf"
-
-    if [ ! -f "$conf_file" ]; then
-        log_fatal "VM config file not found at $conf_file."
-    fi
-
-    if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for VM $VMID in its config. Disabling firewall..."
-        run_qm_command set "$VMID" --firewall 0
-        return 0
-    fi
-
-    # Enable the firewall for the VM itself using the correct qm command
-    # The '--firewall' flag is not a valid option for `qm set`. The correct procedure
-    # is to enable the firewall on the network interface directly, which is handled below.
-    # This line is being removed to prevent fatal errors.
-    # log_info "Enabling firewall for VM $VMID..."
-    # run_qm_command set "$VMID" --firewall 1
-
-    # Enable firewall on the net0 interface
-    log_info "Enabling firewall on net0 interface for VM $VMID..."
-    local current_net0
-    current_net0=$(qm config "$VMID" | grep '^net0:' | sed 's/net0: //')
-    if [[ ! "$current_net0" =~ firewall=1 ]]; then
-        run_qm_command set "$VMID" --net0 "${current_net0},firewall=1"
-    else
-        log_info "Firewall is already enabled on net0 for VM $VMID."
-    fi
-
-    log_info "VM $VMID is now configured for host-level firewall management. Applying specific rules..."
-
-    local firewall_rules_json
-    firewall_rules_json=$(jq_get_vm_value "$VMID" ".firewall.rules")
-    local vm_fw_file="/etc/pve/firewall/${VMID}.fw"
-
-    # Create the firewall config file with default options
-    echo "[OPTIONS]" > "$vm_fw_file"
-    echo "enable: 1" >> "$vm_fw_file"
-    echo "" >> "$vm_fw_file"
-    echo "[RULES]" >> "$vm_fw_file"
-
-    # Append rules from JSON config
-    echo "$firewall_rules_json" | jq -c '.[]' | while read -r rule; do
-        local type=$(echo "$rule" | jq -r '.type')
-        local action=$(echo "$rule" | jq -r '.action')
-        local proto=$(echo "$rule" | jq -r '.proto // ""')
-        local port=$(echo "$rule" | jq -r '.port // ""')
-        local source=$(echo "$rule" | jq -r '.source // ""')
-        local dest=$(echo "$rule" | jq -r '.dest // ""')
-        local comment=$(echo "$rule" | jq -r '.comment // ""')
-
-        local rule_line="${type^^} ${action^^}"
-        [ -n "$proto" ] && rule_line+=" -p $proto"
-        [ -n "$port" ] && rule_line+=" -dport $port"
-        [ -n "$source" ] && rule_line+=" -source $source"
-        [ -n "$dest" ] && rule_line+=" -dest $dest"
-        [ -n "$comment" ] && rule_line+=" # $comment"
-        
-        echo "$rule_line" >> "$vm_fw_file"
-        log_info "  - Added rule: $rule_line"
-    done
-
-    # Add rules from Docker stacks based on the new convention-based structure
-    log_info "Aggregating Docker stack firewall rules for VM $VMID..."
-    jq_get_vm_value "$VMID" ".docker_stacks[]?" | while read -r stack_name; do
-        local stack_name=$(echo "$stack_name" | tr -d '"') # Sanitize stack name
-        local manifest_path="${PHOENIX_BASE_DIR}/stacks/${stack_name}/phoenix.json"
-        
-        if [ ! -f "$manifest_path" ]; then
-            log_warn "Manifest file not found for stack '$stack_name' at: $manifest_path. Skipping firewall rule aggregation for this stack."
-            continue
-        fi
-
-        # Assuming 'production' environment for now. This can be parameterized later if needed.
-        local stack_firewall_rules=$(jq -r '.environments.production.firewall_rules // "[]"' "$manifest_path")
-
-        if [ -z "$stack_firewall_rules" ] || [ "$stack_firewall_rules" == "[]" ]; then
-            log_info "No firewall rules defined in the manifest for stack '$stack_name'. Skipping."
-            continue
-        fi
-
-        echo "$stack_firewall_rules" | jq -c '.[]' | while read -r rule; do
-            local type=$(echo "$rule" | jq -r '.type')
-            local action=$(echo "$rule" | jq -r '.action')
-            local proto=$(echo "$rule" | jq -r '.proto // ""')
-            local port=$(echo "$rule" | jq -r '.port // ""')
-            local source=$(echo "$rule" | jq -r '.source // ""')
-            local dest=$(echo "$rule" | jq -r '.dest // ""')
-            local comment=$(echo "$rule" | jq -r '.comment // ""')
-
-            local rule_line="${type^^} ${action^^}"
-            [ -n "$proto" ] && rule_line+=" -p $proto"
-            [ -n "$port" ] && rule_line+=" -dport $port"
-            [ -n "$source" ] && rule_line+=" -source $source"
-            [ -n "$dest" ] && rule_line+=" -dest $dest"
-            [ -n "$comment" ] && rule_line+=" # $comment"
-            
-            echo "$rule_line" >> "$vm_fw_file"
-            log_info "  - Added rule from stack '$stack_name': $rule_line"
-        done
-    done
-
-    log_info "Firewall rules for VM $VMID have been written to $vm_fw_file."
-    log_info "Reloading Proxmox firewall to apply changes..."
-    pve-firewall restart
-}
 # =====================================================================================
 # Function: main_vm_orchestrator
 # Description: The main entry point for the VM manager script. It parses the

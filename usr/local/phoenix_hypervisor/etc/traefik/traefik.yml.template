@@ -29,3 +29,7 @@ providers:
     directory: /etc/traefik/dynamic
     filename: dynamic_conf.yml
     watch: true
+
+docker:
+  swarmMode: true
+  exposedByDefault: false

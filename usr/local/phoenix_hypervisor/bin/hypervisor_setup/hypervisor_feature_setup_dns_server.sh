@@ -52,7 +52,7 @@ no-resolv
 # Do not forward queries for the internal domain
 local=/internal.thinkheads.ai/
 # Listen on the host's primary IP address
-listen-address=$(get_global_config_value '.network.interfaces.address' | cut -d'/' -f1)
+listen-address=127.0.0.1,$(get_global_config_value '.network.interfaces.address' | cut -d'/' -f1)
 # Include configuration files from /etc/dnsmasq.d
 conf-dir=${DNSMASQ_CONFIG_DIR},*.conf
 EOF
@@ -86,53 +86,34 @@ EOF
         --argjson lxc_config "$(cat "$LXC_CONFIG_FILE")" \
         --argjson vm_config "$(cat "$VM_CONFIG_FILE")" \
         '
+        # Get gateway and traefik IPs
         ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Nginx-Phoenix") | .value.network_config.ip | split("/")[0]) as $gateway_ip |
         ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Traefik-Internal") | .value.network_config.ip | split("/")[0]) as $traefik_ip |
         [
-            # 1. Process Discovered Docker Stacks for Traefik-routed services
-            ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | {
-                "hostname": .hostname,
-                "ip": $gateway_ip
-            }),
-            # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
-            # 2. Add records for all guests (LXC and VM) that have a `traefik_service` defined
-            ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | {
-                "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": $traefik_ip
-            }),
-            ($vm_config.vms[] | select(.traefik_service.name?) | {
-                "hostname": "\(.traefik_service.name).internal.thinkheads.ai",
-                "ip": $traefik_ip
-            }),
-            # 3. Add records for all guests (LXC and VM) that need to be addressed by their own name
+            # --- Public Gateway Services (All point to Nginx) ---
+            # These are the hostnames that are exposed to the outside world (even if "outside" is just the Proxmox host)
+            ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | { "hostname": .hostname, "ip": $gateway_ip }),
+            ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $gateway_ip }),
+            ($vm_config.vms[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $gateway_ip }),
+            { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
+            { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip },
+
+            # --- Internal Services ---
+            # These are for service-to-service communication. Most go through Traefik.
+            # Some critical infrastructure needs to be resolved directly.
             ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
-                "ip": (.network_config.ip | split("/")[0])
+                "ip": (if .name == "Step-CA" or .name == "Nginx-Phoenix" or .name == "Traefik-Internal" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
             }),
             ($vm_config.vms[] | select(.name and .network_config.ip and .network_config.ip != "dhcp") | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
-                "ip": (.network_config.ip | split("/")[0])
+                "ip": $traefik_ip
             }),
-            # --- BEGIN STRATEGIC FIX ---
-            # Add a specific rule to create a DNS record for the portainer_agent_hostname
-            # if it exists. This ensures the scalable, unique hostname is always resolvable.
             ($vm_config.vms[] | select(.portainer_agent_hostname? and .portainer_agent_hostname != "") | {
                 "hostname": .portainer_agent_hostname,
-                "ip": (.network_config.ip | split("/")[0])
-            }),
-            # --- END STRATEGIC FIX ---
-            # 4. Add records from the new declarative dns_records arrays
-            ($lxc_config.lxc_configs | values[] | .dns_records[]? | {
-                "hostname": .hostname,
-                "ip": .ip
-            }),
-            ($vm_config.vms[] | .dns_records[]? | {
-                "hostname": .hostname,
-                "ip": .ip
-            }),
-            # 5. Add static records
-            { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
-            { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip }
+                "ip": $traefik_ip
+            })
+
         ] | unique_by(.hostname)
         '
     )

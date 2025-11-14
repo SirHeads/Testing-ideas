@@ -44,8 +44,7 @@ init_swarm() {
     local manager_ip=$(jq_get_vm_value "$manager_vmid" ".network_config.ip" | cut -d'/' -f1)
     
     log_info "Initializing Swarm on manager node VM ${manager_vmid} (${manager_ip})..."
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} swarm init --advertise-addr ${manager_ip}"
+    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker swarm init --advertise-addr ${manager_ip}"
     log_success "Docker Swarm initialized successfully."
 }
 
@@ -59,8 +58,7 @@ get_join_token() {
     
     log_info "Retrieving ${role} join token from manager VM ${manager_vmid}..."
     local token_output
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    token_output=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} swarm join-token -q ${role}")
+    token_output=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker swarm join-token -q ${role}")
     
     # The join-token command with -q outputs a raw string, not JSON.
     # We need to extract the raw output directly.
@@ -91,8 +89,11 @@ join_swarm() {
     local manager_ip=$(jq_get_vm_value "$manager_vmid" ".network_config.ip" | cut -d'/' -f1)
     
     log_info "Joining VM ${target_vmid} to the swarm as a ${swarm_role}..."
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    run_qm_command guest exec "$target_vmid" -- /bin/bash -c "${DOCKER_COMMAND} swarm join --token ${token} ${manager_ip}:2377"
+    log_info "Ensuring VM ${target_vmid} has left any previous swarm..."
+    run_qm_command guest exec "$target_vmid" -- /bin/bash -c "docker swarm leave --force" || log_warn "Node was not part of a swarm, which is normal."
+    
+    log_info "Joining VM ${target_vmid} to the new swarm as a ${swarm_role}..."
+    run_qm_command guest exec "$target_vmid" -- /bin/bash -c "docker swarm join --token ${token} ${manager_ip}:2377"
     
     log_info "Applying node labels to VM ${target_vmid}..."
     label_node "$target_vmid"
@@ -118,21 +119,41 @@ label_node() {
 
     for label in $node_labels; do
         log_info "Applying label '${label}' to node ${node_hostname}..."
-        local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-        run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} node update --label-add ${label} ${node_hostname}"
+        run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker node update --label-add ${label} ${node_hostname}"
     done
 }
 
 # =====================================================================================
 # FUNCTION: deploy_stack
-# DESCRIPTION: Deploys a Docker stack to the Swarm with environment-specific naming.
+# DESCRIPTION: Deploys a Docker stack to the Swarm, dynamically injecting environment-specific
+#              configurations such as Traefik labels and environment variables from the
+#              stack's phoenix.json manifest.
 # =====================================================================================
 deploy_stack() {
-    local stack_name="$1"
-    local env_name="$3" # expecting --env <name>
+    local stack_name=""
+    local env_name=""
+
+    while [[ "$#" -gt 0 ]]; do
+        case "$1" in
+            --env)
+                env_name="$2"
+                shift 2
+                ;;
+            *)
+                if [ -z "$stack_name" ]; then
+                    stack_name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
 
     if [ -z "$stack_name" ] || [ -z "$env_name" ]; then
         log_fatal "Usage: phoenix swarm deploy <stack_name> --env <environment_name>"
+    fi
+
+    if ! command -v yq &> /dev/null; then
+        log_fatal "'yq' is not installed. Please install it to proceed. (e.g., 'pip install yq')"
     fi
 
     local stack_dir="${PHOENIX_BASE_DIR}/stacks/${stack_name}"
@@ -143,18 +164,56 @@ deploy_stack() {
         log_fatal "Stack '${stack_name}' not found or is missing required files."
     fi
 
+    # --- Definitive Fix, Part 1: JSON Syntax Validation ---
+    if ! jq . "$manifest_file" > /dev/null 2>&1; then
+        log_fatal "Stack manifest file for '${stack_name}' is not valid JSON. Please check the syntax in: ${manifest_file}"
+    fi
+
     local manager_vmid=$(get_manager_vmid)
-    local stack_prefix="${env_name}_"
     local final_stack_name="${env_name}_${stack_name}"
 
-    log_info "Deploying stack '${stack_name}' to environment '${env_name}'..."
-    
-    # We will deploy from the manager node, which has access to the stacks via NFS
-    local nfs_stacks_path="/mnt/stacks"
-    local vm_compose_path="${nfs_stacks_path}/${stack_name}/docker-compose.yml"
+    log_info "Preparing dynamic deployment for stack '${stack_name}' in environment '${env_name}'..."
+    local temp_compose_file=$(mktemp)
+    cp "$compose_file" "$temp_compose_file"
 
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} stack deploy --compose-file ${vm_compose_path} ${final_stack_name}"
+    # --- Definitive Fix, Part 2: Resilient JQ Logic ---
+    # This command is now null-safe. It will only proceed if the entire path to the traefik_labels exists.
+    local services_with_labels=$(jq -r --arg env "$env_name" '.environments[$env].services | to_entries[] | select(.value.traefik_labels? and .value.traefik_labels != null) | .key' "$manifest_file")
+    for service in $services_with_labels; do
+        local labels=$(jq -r --arg env "$env_name" --arg svc "$service" '.environments[$env].services[$svc].traefik_labels[]' "$manifest_file")
+        if [ -n "$labels" ]; then
+            log_info "Injecting Traefik labels for service '${service}'..."
+            local yq_expr=".services.\"$service\".deploy.labels += [$(echo "$labels" | jq -R . | jq -s -c . | sed 's/\[//;s/\]//')]"
+            yq -i -y "$yq_expr" "$temp_compose_file"
+        fi
+    done
+
+    log_info "Deploying stack '${final_stack_name}' using dynamically generated compose file..."
+    local nfs_stacks_path="/mnt/stacks"
+    local temp_vm_compose_path="${nfs_stacks_path}/${stack_name}/docker-compose.tmp.yml"
+    
+    # The 'sync_stack_files' rsyncs the whole stacks dir, so we just need to place the temp file in the correct location on the host.
+    local nfs_share_path="/quickOS/portainer_stacks"
+    local final_temp_path="${nfs_share_path}/${stack_name}/docker-compose.tmp.yml"
+    cp "$temp_compose_file" "$final_temp_path"
+    chmod 644 "$final_temp_path"
+    
+    # The command is executed *inside* the guest, so it uses the local docker socket, not a remote TCP host.
+    # --- Diagnostic Logging ---
+    log_debug "--- BEGIN DYNAMIC COMPOSE FILE ---"
+    log_debug "$(cat "$temp_compose_file")"
+    log_debug "--- END DYNAMIC COMPOSE FILE ---"
+
+    local deploy_command="docker stack deploy --compose-file ${temp_vm_compose_path} --with-registry-auth ${final_stack_name}"
+    
+    # --- Diagnostic Logging ---
+    log_debug "Final deploy command to be executed in guest: ${deploy_command}"
+
+    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "$deploy_command"
+
+    # --- Cleanup ---
+    rm "$temp_compose_file"
+    rm "${nfs_share_path}/${stack_name}/docker-compose.tmp.yml"
 
     log_success "Stack '${final_stack_name}' deployed successfully."
 }
@@ -175,8 +234,7 @@ remove_stack() {
     local final_stack_name="${env_name}_${stack_name}"
 
     log_info "Removing stack '${final_stack_name}'..."
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} stack rm ${final_stack_name}"
+    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker stack rm ${final_stack_name}"
     log_success "Stack '${final_stack_name}' removed successfully."
 }
 
@@ -187,8 +245,7 @@ remove_stack() {
 get_swarm_status() {
     log_info "Getting Docker Swarm status..."
     local manager_vmid=$(get_manager_vmid)
-    local DOCKER_COMMAND="docker -H tcp://127.0.0.1:2376 --tls --tlscert=/etc/docker/tls/cert.pem --tlskey=/etc/docker/tls/key.pem --tlscacert=/etc/docker/tls/ca.pem"
-    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "${DOCKER_COMMAND} node ls"
+    run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker node ls"
 }
 
 # =====================================================================================

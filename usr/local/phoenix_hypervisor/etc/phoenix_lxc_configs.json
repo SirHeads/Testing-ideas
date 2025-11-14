@@ -88,7 +88,11 @@
             ],
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
-            "enable_lifecycle_snapshots": true
+            "enable_lifecycle_snapshots": true,
+            "firewall": {
+                "enabled": false,
+                "rules": []
+            }
         },
         "910": {
             "name": "Copy-VLLM-GPUx2",
@@ -157,7 +161,11 @@
             "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": false,
+                "rules": []
+            }
         },
         "911": {
             "name": "Copy-VLLM-GPU0",
@@ -192,7 +200,11 @@
             "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": false,
+                "rules": []
+            }
         },
         "912": {
             "name": "Copy-VLLM-GPU1",
@@ -259,7 +271,11 @@
             "enable_lifecycle_snapshots": true,
             "lxc_options": [
                 "lxc.apparmor.profile=unconfined"
-            ]
+            ],
+            "firewall": {
+                "enabled": false,
+                "rules": []
+            }
         },
         "801": {
             "name": "granite-embedding",
@@ -542,6 +558,14 @@
                         "comment": "Allow Proxmox host to access the gateway for Portainer API calls"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow Proxmox host to connect to the NGINX gateway"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
@@ -804,6 +828,38 @@
                         "comment": "Allow Nginx to connect to Step CA for certificates"
                     },
                     {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Portainer VM to bootstrap Step CA"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow drphoenix VM to bootstrap Step CA"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Proxmox host to access Step CA for certificate management"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Proxmox host to access Step CA for certificate management"
+                    },
+                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.13",
@@ -884,6 +940,12 @@
                         "proto": "tcp",
                         "port": "80",
                         "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.10",
+                        "comment": "Allow all inbound traffic from Step CA to fix bootstrap timeout"
                     },
                     {
                         "type": "out",

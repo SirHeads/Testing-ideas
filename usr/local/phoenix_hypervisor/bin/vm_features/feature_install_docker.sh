@@ -205,47 +205,6 @@ log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 # Steps 9, 10, and 11 are now obsolete.
 log_info "Step 9, 10, and 11 are now handled directly by this script for robust mTLS configuration."
 
-# --- BEGIN DYNAMIC IPTABLES CONFIGURATION ---
-log_info "Applying dynamic Docker firewall rules..."
-if ! command -v iptables-persistent >/dev/null 2>&1; then
-    log_info "Installing iptables-persistent..."
-    # Pre-seed debconf to avoid interactive prompts
-    echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" | debconf-set-selections
-    echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" | debconf-set-selections
-    apt-get install -y iptables-persistent >/dev/null
-fi
-
-firewall_rules_json=$(jq -r '.docker_firewall_rules // []' "$CONTEXT_FILE")
-if [ -n "$firewall_rules_json" ] && [ "$firewall_rules_json" != "[]" ]; then
-    echo "$firewall_rules_json" | jq -c '.[]' | while read -r rule; do
-        chain=$(echo "$rule" | jq -r '.chain')
-        interface=$(echo "$rule" | jq -r '.interface')
-        protocol=$(echo "$rule" | jq -r '.protocol')
-        port=$(echo "$rule" | jq -r '.port')
-        action=$(echo "$rule" | jq -r '.action')
-
-        iptables_rule="-I ${chain} -i ${interface} -p ${protocol} --dport ${port} -j ${action}"
-        log_info "Applying iptables rule: iptables ${iptables_rule}"
-        
-        # Check if the rule already exists to ensure idempotency
-        if ! iptables -C ${chain} -i ${interface} -p ${protocol} --dport ${port} -j ${action} >/dev/null 2>&1; then
-            if ! iptables ${iptables_rule}; then
-                log_fatal "Failed to apply iptables rule: ${iptables_rule}"
-            fi
-        else
-            log_info "iptables rule already exists. Skipping."
-        fi
-    done
-    
-    log_info "Saving iptables rules to make them persistent..."
-    if ! netfilter-persistent save; then
-        log_warn "Failed to save iptables rules. They may not persist after a reboot."
-    fi
-else
-    log_info "No dynamic Docker firewall rules to apply."
-fi
-# --- END DYNAMIC IPTABLES CONFIGURATION ---
-
 # --- BEGIN SWARM NETWORKING FIX ---
 log_info "Adding firewall rule to allow established and related connections for Swarm..."
 established_rule="-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"

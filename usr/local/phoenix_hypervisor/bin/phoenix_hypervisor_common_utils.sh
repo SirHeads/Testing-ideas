@@ -1842,9 +1842,11 @@ generate_rule_string() {
     local iface=$(echo "$rule_json" | jq -r '.iface // ""')
     local comment=$(echo "$rule_json" | jq -r '.comment // ""')
 
-    local rule_string="${type^^} ${action}"
-    [ -n "$iface" ] && rule_string+=" iface ${iface}"
-    [ -n "$proto" ] && rule_string+=" -p ${proto}"
+    # Proxmox firewall rules are case-insensitive, but uppercase is conventional
+    local rule_string="${type^^} ${action^^}"
+
+    [ -n "$iface" ] && rule_string+=" -iface ${iface}"
+    [ -n "$proto" ] && rule_string+=" -proto ${proto}"
     [ -n "$source" ] && rule_string+=" -source ${source}"
     [ -n "$dest" ] && rule_string+=" -dest ${dest}"
     [ -n "$port" ] && rule_string+=" -dport ${port}"

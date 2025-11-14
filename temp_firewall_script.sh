@@ -16,45 +16,6 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
 # =====================================================================================
-# Function: ensure_bridge_firewall_disabled
-# Description: Ensures that the Proxmox bridge firewall is disabled to prevent it
-#              from interfering with the main pve-firewall rules. This is a critical
-#              fix for host-to-guest communication.
-# =====================================================================================
-ensure_bridge_firewall_disabled() {
-    log_info "Ensuring Proxmox bridge firewall is disabled..."
-    local interfaces_file="/etc/network/interfaces"
-    local bridge_line="iface vmbr0 inet static"
-    local disable_line="        bridge-fw-nf-disable 1"
-
-    # Check if the line already exists
-    if grep -q "bridge-fw-nf-disable 1" "$interfaces_file"; then
-        log_info "Bridge firewall is already disabled. No changes needed."
-        return 0
-    fi
-
-    log_info "Bridge firewall is not disabled. Adding configuration to ${interfaces_file}..."
-    
-    # Use awk to insert the disable line after the bridge definition line
-    awk -v bridge_line="$bridge_line" -v disable_line="$disable_line" '
-    1;
-    $0 == bridge_line {
-        print disable_line;
-    }
-    ' "$interfaces_file" > "${interfaces_file}.tmp"
-
-    if [ $? -eq 0 ]; then
-        mv "${interfaces_file}.tmp" "$interfaces_file"
-        log_info "Successfully added bridge firewall disable setting. Applying network changes..."
-        ifreload -a
-        log_success "Network configuration reloaded successfully."
-    else
-        log_error "Failed to modify ${interfaces_file}. Manual intervention may be required."
-        rm -f "${interfaces_file}.tmp"
-    fi
-}
-
-# =====================================================================================
 # Function: generate_cluster_firewall_config
 # Description: Generates the top-level cluster firewall configuration.
 # =====================================================================================
@@ -124,9 +85,6 @@ EOF
 # Description: Main entry point for the script.
 # =====================================================================================
 main() {
-    # --- New Step: Ensure bridge firewall is disabled ---
-    ensure_bridge_firewall_disabled
-
     log_info "Starting declarative firewall configuration..."
 
     # 1. Generate the cluster-level configuration
@@ -142,16 +100,7 @@ main() {
         generate_guest_firewall_config "vm" "$vmid" "$VM_CONFIG_FILE"
     done
 
-    # 4. Create the host-level firewall configuration file
-    local nodename=$(hostname)
-    local host_fw_file="/etc/pve/firewall/${nodename}.fw"
-    log_info "Ensuring host-level firewall is enabled at ${host_fw_file}..."
-    cat <<EOF > "$host_fw_file"
-[OPTIONS]
-enable: 1
-EOF
-
-    # 5. Reload the firewall to apply all changes
+    # 4. Reload the firewall to apply all changes
     log_info "Reloading Proxmox firewall to apply all generated configurations..."
     pve-firewall restart
 

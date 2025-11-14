@@ -238,6 +238,18 @@ apply_network_configs() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
+
+    # --- BEGIN PHOENIX-20 FIX ---
+    # Check if the firewall is enabled for this container in the JSON config.
+    # If so, append the firewall=1 flag directly to the network configuration string.
+    # This closes the race condition where a container could exist without the flag.
+    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
+    if [ "$firewall_enabled" == "true" ]; then
+        log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0."
+        net0_string+=",firewall=1"
+    fi
+    # --- END PHOENIX-20 FIX ---
+
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
     if [ -n "$nameservers" ]; then
@@ -340,100 +352,6 @@ apply_lxc_configurations() {
     log_info "All configurations applied successfully for CTID $CTID."
 }
 
-
-# =====================================================================================
-# Function: apply_lxc_firewall_rules
-# Description: Configures the firewall for a given container based on the rules
-#              defined in the LXC configuration file.
-# Arguments:
-#   $1 - The CTID of the container.
-# Returns:
-#   None. Exits with a fatal error if firewall configuration fails.
-# =====================================================================================
-apply_lxc_firewall_rules() {
-    local CTID="$1"
-    log_info "Applying firewall rules to LXC $CTID..."
-
-    local firewall_config
-    firewall_config=$(jq_get_value "$CTID" ".firewall" || echo "{}")
-    local firewall_enabled
-    firewall_enabled=$(echo "$firewall_config" | jq -r '.enabled // "false"')
-
-    # Get the current net0 configuration
-    local current_net0
-    current_net0=$(pct config "$CTID" | grep '^net0:' | sed 's/net0: //')
-
-    if [ "$firewall_enabled" != "true" ]; then
-        log_info "Firewall is not enabled for LXC $CTID. Ensuring it is disabled on net0."
-        if [[ "$current_net0" =~ ,firewall=1 ]]; then
-            local new_net0=${current_net0/,firewall=1/}
-            run_pct_command set "$CTID" --net0 "$new_net0"
-        fi
-        return 0
-    fi
-
-    log_info "Enabling firewall for LXC $CTID on net0..."
-    if [[ ! "$current_net0" =~ firewall=1 ]]; then
-        run_pct_command set "$CTID" --net0 "${current_net0},firewall=1"
-    fi
-
-    # Clear existing rules to ensure an idempotent state
-    log_info "Clearing existing firewall rules for LXC $CTID..."
-    local existing_rules_json
-    existing_rules_json=$(pvesh get /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules --output-format=json 2>/dev/null || echo "[]")
-    # Sort positions in reverse numerical order to avoid re-indexing issues during deletion.
-    local positions
-    positions=$(echo "$existing_rules_json" | jq -r '.[].pos' | sort -rn)
-
-    for pos in $positions; do
-        log_info "Deleting existing firewall rule at position $pos for LXC $CTID..."
-        if ! pvesh delete /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules/"${pos}"; then
-            log_warn "Could not delete rule at position $pos. It may have been removed already."
-        fi
-    done
-
-    local rules
-    rules=$(echo "$firewall_config" | jq -c '.rules[]?')
-    if [ -z "$rules" ]; then
-        log_info "No new firewall rules to apply for LXC $CTID."
-        return 0
-    fi
-
-    echo "$rules" | while read -r rule; do
-        local type=$(echo "$rule" | jq -r '.type')
-        local action=$(echo "$rule" | jq -r '.action')
-        local source=$(echo "$rule" | jq -r '.source // ""')
-        local dest=$(echo "$rule" | jq -r '.dest // ""')
-        local proto=$(echo "$rule" | jq -r '.proto // ""')
-        local port=$(echo "$rule" | jq -r '.port // ""')
-        local comment=$(echo "$rule" | jq -r '.comment // ""')
-
-        local cmd_args=(
-            create /nodes/"$(hostname)"/lxc/"${CTID}"/firewall/rules
-            --type "${type}"
-            --action "${action}"
-            --enable 1
-        )
-        [ -n "$source" ] && cmd_args+=(--source "${source}")
-        [ -n "$dest" ] && cmd_args+=(--dest "${dest}")
-        [ -n "$proto" ] && cmd_args+=(--proto "${proto}")
-        [ -n "$port" ] && cmd_args+=(--dport "${port}")
-        [ -n "$comment" ] && cmd_args+=(--comment "${comment}")
-
-        log_info "Executing: pvesh ${cmd_args[*]}"
-        if ! pvesh "${cmd_args[@]}"; then
-            log_fatal "Failed to apply firewall rule for LXC $CTID: $rule"
-        fi
-    done
-
-    log_info "Firewall rules applied successfully for LXC $CTID."
-
-    # Reload the firewall to apply the new rules immediately
-    log_info "Reloading Proxmox firewall to apply changes..."
-    if ! pve-firewall restart; then
-        log_warn "Failed to restart Proxmox firewall. Rules may not be immediately active."
-    fi
-}
 
 # =====================================================================================
 # Function: ensure_container_defined
@@ -1032,9 +950,12 @@ run_application_script() {
             pct exec "$CTID" -- mkdir -p "${temp_dir_in_container}/stream.d"
 
             # Push the files
-            pct push "$CTID" "$nginx_conf_src" "$nginx_conf_dest" || log_fatal "Failed to push nginx.conf"
-            pct push "$CTID" "$gateway_conf_src" "$gateway_conf_dest" || log_fatal "Failed to push gateway config"
-            pct push "$CTID" "$stream_conf_src" "$stream_conf_dest" || log_fatal "Failed to push stream gateway config"
+            if [ ! -f "$nginx_conf_src" ]; then log_fatal "Nginx config source file not found: $nginx_conf_src"; fi
+            pct push "$CTID" "$nginx_conf_src" "$nginx_conf_dest" || log_fatal "Failed to push nginx.conf to CTID $CTID."
+            if [ ! -f "$gateway_conf_src" ]; then log_fatal "Nginx gateway config source file not found: $gateway_conf_src"; fi
+            pct push "$CTID" "$gateway_conf_src" "$gateway_conf_dest" || log_fatal "Failed to push gateway config to CTID $CTID."
+            if [ ! -f "$stream_conf_src" ]; then log_fatal "Nginx stream config source file not found: $stream_conf_src"; fi
+            pct push "$CTID" "$stream_conf_src" "$stream_conf_dest" || log_fatal "Failed to push stream gateway config to CTID $CTID."
             
             log_info "All Nginx configuration files pushed successfully."
             # --- END NEW LOGIC ---
@@ -1544,6 +1465,11 @@ create_container_from_os_template() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
+    if [ "$firewall_enabled" == "true" ]; then
+        log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0 during creation."
+        net0_string+=",firewall=1"
+    fi
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
  
      # --- Build the pct create command array ---
@@ -1589,7 +1515,6 @@ create_container_for_templating() {
 
     create_container_from_os_template "$CTID"
     apply_lxc_configurations "$CTID"
-    apply_lxc_firewall_rules "$CTID"
     apply_zfs_volumes "$CTID"
     apply_secure_permissions "$CTID"
     apply_dedicated_volumes "$CTID"
@@ -1627,7 +1552,6 @@ main_lxc_orchestrator() {
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
                 
                 apply_lxc_configurations "$ctid"
-                apply_lxc_firewall_rules "$ctid"
                 apply_zfs_volumes "$ctid"
                 apply_secure_permissions "$ctid"
                 apply_dedicated_volumes "$ctid"

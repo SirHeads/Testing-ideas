@@ -20,6 +20,10 @@
             },
             "user_config": {
                 "username": "phoenix_user"
+            },
+            "firewall": {
+                "enabled": false,
+                "rules": []
             }
         },
         {
@@ -118,6 +122,154 @@
                         "proto": "udp",
                         "port": "4789",
                         "comment": "Allow Docker Swarm overlay network traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Proxmox host to access Portainer API for setup"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow access to Portainer HTTP API for setup and routing mesh"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "tcp",
+                        "port": "2377",
+                        "comment": "Allow Swarm workers to join the manager"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Traefik to proxy to Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Proxmox host to access Portainer API for health checks"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "comment": "Allow all traffic from Traefik to Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Traefik to proxy to Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "tcp",
+                        "port": "2377",
+                        "comment": "Allow Swarm workers to join the manager"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "tcp",
+                        "port": "7946",
+                        "comment": "Allow Swarm node-to-node communication (TCP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "udp",
+                        "port": "7946",
+                        "comment": "Allow Swarm node-to-node communication (UDP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.102",
+                        "proto": "udp",
+                        "port": "4789",
+                        "comment": "Allow Swarm overlay network traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "icmp",
+                        "source": "10.0.0.13",
+                        "comment": "Allow ICMP from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "111",
+                        "comment": "Allow NFS rpcbind from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "111",
+                        "comment": "Allow NFS rpcbind from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "2049",
+                        "comment": "Allow NFS from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "2049",
+                        "comment": "Allow NFS from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "20048",
+                        "comment": "Allow NFS mountd from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "20048",
+                        "comment": "Allow NFS mountd from hypervisor"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow outbound communication to Step CA for certificate requests"
                     }
                 ]
             }
@@ -141,7 +293,7 @@
             "portainer_role": "agent",
             "swarm_role": "worker",
             "node_labels": [
-                "gpu=true"
+                "gpu=false"
             ],
             "portainer_environment_name": "drphoenix",
             "portainer_agent_hostname": "drphoenix-agent.internal.thinkheads.ai",
@@ -168,15 +320,6 @@
             "docker_stacks": [
                 "qdrant_service",
                 "thinkheads_ai_app"
-            ],
-            "docker_firewall_rules": [
-                {
-                    "chain": "DOCKER-USER",
-                    "interface": "eth0",
-                    "protocol": "tcp",
-                    "port": 9001,
-                    "action": "ACCEPT"
-                }
             ],
             "firewall": {
                 "enabled": true,
@@ -254,6 +397,69 @@
                         "proto": "udp",
                         "port": "4789",
                         "comment": "Allow Docker Swarm overlay network traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "icmp",
+                        "source": "10.0.0.13",
+                        "comment": "Allow ICMP from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "111",
+                        "comment": "Allow NFS rpcbind from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "111",
+                        "comment": "Allow NFS rpcbind from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "2049",
+                        "comment": "Allow NFS from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "2049",
+                        "comment": "Allow NFS from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.13",
+                        "port": "20048",
+                        "comment": "Allow NFS mountd from hypervisor"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "udp",
+                        "source": "10.0.0.13",
+                        "port": "20048",
+                        "comment": "Allow NFS mountd from hypervisor"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.10",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow outbound communication to Step CA for certificate requests"
                     }
                 ]
             }

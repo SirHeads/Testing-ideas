@@ -1,4 +1,42 @@
 {
     "description": "The main Thinkheads.AI web application.",
+    "environments": {
+        "production": {
+            "services": {
+                "thinkheads_ai_app": {
+                    "traefik_labels": [
+                        "traefik.enable=true",
+                        "traefik.http.routers.thinkheads_ai_app.rule=Host(`thinkheads.internal.thinkheads.ai`)",
+                        "traefik.http.routers.thinkheads_ai_app.entrypoints=web",
+                        "traefik.http.services.thinkheads_ai_app.loadbalancer.server.port=${API_PORT}"
+                    ]
+                }
+            }
+        },
+        "testing": {
+            "services": {
+                "thinkheads_ai_app": {
+                    "traefik_labels": [
+                        "traefik.enable=true",
+                        "traefik.http.routers.thinkheads_ai_app_testing.rule=Host(`testing.thinkheads.internal.thinkheads.ai`)",
+                        "traefik.http.routers.thinkheads_ai_app_testing.entrypoints=web",
+                        "traefik.http.services.thinkheads_ai_app_testing.loadbalancer.server.port=${API_PORT}"
+                    ]
+                }
+            }
+        },
+        "development": {
+            "services": {
+                "thinkheads_ai_app": {
+                    "traefik_labels": [
+                        "traefik.enable=true",
+                        "traefik.http.routers.thinkheads_ai_app_dev.rule=Host(`dev.thinkheads.internal.thinkheads.ai`)",
+                        "traefik.http.routers.thinkheads_ai_app_dev.entrypoints=web",
+                        "traefik.http.services.thinkheads_ai_app_dev.loadbalancer.server.port=${API_PORT}"
+                    ]
+                }
+            }
+        }
+    },
     "placement_constraints": []
 }

@@ -1,7 +1,7 @@
 {
     "description": "Portainer management UI.",
     "environments": {
-        "production": {
+        "prod": {
             "variables": [],
             "files": [],
             "services": {
@@ -12,8 +12,9 @@
                         "traefik.http.routers.portainer.entrypoints=websecure",
                         "traefik.http.routers.portainer.tls=true",
                         "traefik.http.routers.portainer.tls.certresolver=internal-resolver",
-                        "traefik.http.services.portainer.loadbalancer.server.port=9000",
-                        "traefik.http.services.portainer.loadbalancer.server.scheme=http"
+                        "traefik.http.services.portainer.loadbalancer.server.port=9443",
+                        "traefik.http.services.portainer.loadbalancer.server.scheme=https",
+                        "traefik.docker.network=prod_portainer_service_portainer_network"
                     ]
                 }
             },

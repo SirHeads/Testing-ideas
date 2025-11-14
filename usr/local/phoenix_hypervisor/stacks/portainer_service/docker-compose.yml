@@ -1,12 +1,22 @@
 services:
   portainer:
     image: portainer/portainer-ce:latest
-    command: -H unix:///var/run/docker.sock
+    command:
+      - "-H"
+      - "unix:///var/run/docker.sock"
+      - "--tlsverify"
+      - "--tlscert=/certs/portainer.crt"
+      - "--tlskey=/certs/portainer.key"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
       - /mnt/stacks:/stacks
+      - /mnt/persistent/portainer/certs:/certs
     ports:
+      - target: 8000
+        published: 8000
+        protocol: tcp
+        mode: ingress
       - target: 9000
         published: 9000
         protocol: tcp
@@ -14,7 +24,7 @@ services:
       - target: 9443
         published: 9443
         protocol: tcp
-        mode: ingress
+        mode: host
     networks:
       - portainer_network
     deploy:
@@ -22,6 +32,7 @@ services:
       placement:
         constraints:
           - node.role == manager
+      labels: []
 
 networks:
   portainer_network:
