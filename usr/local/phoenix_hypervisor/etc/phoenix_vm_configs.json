@@ -157,32 +157,26 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.13",
+                        "source": "10.0.0.12",
                         "proto": "tcp",
                         "port": "9443",
-                        "comment": "Allow Proxmox host to access Portainer API for health checks"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.12",
-                        "comment": "Allow all traffic from Traefik to Portainer"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.12",
-                        "proto": "tcp",
-                        "port": "9000",
                         "comment": "Allow Traefik to proxy to Portainer"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.102",
+                        "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "2377",
-                        "comment": "Allow Swarm workers to join the manager"
+                        "port": "9443",
+                        "comment": "Allow Nginx Gateway to proxy to Portainer"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.13",
+                        "proto": "tcp",
+                        "port": "9443",
+                        "comment": "Allow Proxmox host to access Portainer API for health checks"
                     },
                     {
                         "type": "in",
@@ -331,14 +325,6 @@
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Portainer server to access agent"
-                    },
-                    {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.13",
-                        "proto": "tcp",
-                        "port": "9001",
-                        "comment": "Allow Proxmox host to access agent for health checks"
                     },
                     {
                         "type": "in",

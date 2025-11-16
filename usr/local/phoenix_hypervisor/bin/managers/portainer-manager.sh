@@ -136,7 +136,7 @@ get_or_create_portainer_api_key() {
     if [ -n "$API_KEY" ] && [ "$API_KEY" != "null" ]; then
         log_info "Validating existing Portainer API key..."
         local status_response
-        status_response=$(curl -s -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/system/status")
+        status_response=$(curl -s --cacert "${CENTRALIZED_CA_CERT_PATH}" -H "X-API-Key: ${API_KEY}" "${PORTAINER_URL}/api/system/status")
         if echo "$status_response" | jq -e '.Status == "healthy"' > /dev/null; then
             log_success "Existing Portainer API key is valid."
             key_is_valid=true
@@ -157,7 +157,7 @@ get_or_create_portainer_api_key() {
         local AUTH_PAYLOAD
         AUTH_PAYLOAD=$(jq -n --arg user "$USERNAME" --arg pass "$PASSWORD" '{username: $user, password: $pass}')
         local JWT_RESPONSE
-        JWT_RESPONSE=$(retry_api_call -X POST -H "Content-Type: application/json" -d "$AUTH_PAYLOAD" "${PORTAINER_URL}/api/auth")
+        JWT_RESPONSE=$(retry_api_call --cacert "${CENTRALIZED_CA_CERT_PATH}" -X POST -H "Content-Type: application/json" -d "$AUTH_PAYLOAD" "${PORTAINER_URL}/api/auth")
         local JWT=$(echo "$JWT_RESPONSE" | jq -r '.jwt // ""')
 
         if [ -z "$JWT" ]; then
@@ -169,7 +169,7 @@ get_or_create_portainer_api_key() {
         local API_KEY_PAYLOAD
         API_KEY_PAYLOAD=$(jq -n --arg pass "$PASSWORD" '{description: "phoenix-cli-key", password: $pass}')
         local API_KEY_RESPONSE
-        API_KEY_RESPONSE=$(retry_api_call -X POST -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "$API_KEY_PAYLOAD" "${PORTAINER_URL}/api/users/1/tokens")
+        API_KEY_RESPONSE=$(retry_api_call --cacert "${CENTRALIZED_CA_CERT_PATH}" -X POST -H "Authorization: Bearer ${JWT}" -H "Content-Type: application/json" -d "$API_KEY_PAYLOAD" "${PORTAINER_URL}/api/users/1/tokens")
         API_KEY=$(echo "$API_KEY_RESPONSE" | jq -r '.rawAPIKey // ""')
 
         if [ -z "$API_KEY" ]; then
@@ -258,6 +258,36 @@ ensure_portainer_certificates() {
         log_fatal "Failed to set ownership on Portainer certs directory."
     fi
     log_success "Permissions set successfully."
+
+    # --- BEGIN PHOENIX-23 FIX ---
+    # Concatenate the server certificate and the intermediate CA certificate into the final cert file
+    log_info "Creating full-chain certificate for Portainer..."
+    local intermediate_ca_source="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
+    if [ ! -f "$intermediate_ca_source" ]; then
+        log_fatal "Intermediate CA certificate not found at $intermediate_ca_source. Cannot proceed."
+    fi
+    cat "$intermediate_ca_source" >> "$cert_file"
+    log_success "Full-chain certificate created successfully."
+
+    # Copy the root CA certificate to the Portainer certs directory
+    log_info "Copying root CA certificate to Portainer certs directory..."
+    local root_ca_source="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
+    local ca_dest="${hypervisor_cert_dir}/ca.pem"
+    if [ ! -f "$root_ca_source" ]; then
+        log_fatal "Root CA certificate not found at $root_ca_source. Cannot proceed."
+    fi
+    if ! cp "$root_ca_source" "$ca_dest"; then
+        log_fatal "Failed to copy root CA certificate to $ca_dest."
+    fi
+    log_success "Root CA certificate copied to $ca_dest."
+
+    # Set correct permissions on all certificate files
+    log_info "Setting permissions on all certificate files..."
+    if ! chmod 644 "${hypervisor_cert_dir}"/*; then
+        log_fatal "Failed to set permissions on certificate files."
+    fi
+    log_success "Certificate file permissions set successfully."
+    # --- END PHOENIX-23 FIX ---
 }
 
 # =====================================================================================
@@ -319,7 +349,7 @@ deploy_portainer_instances() {
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'swarm-manager.sh deploy' for portainer_service."
                 else
-                    if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy portainer_service --env prod; then
+                    if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy portainer_service --env prod --host-mode; then
                         log_fatal "Failed to deploy Portainer stack via swarm-manager."
                     fi
                 fi
@@ -449,12 +479,13 @@ setup_portainer_admin_user() {
     local max_wait_attempts=12 # Wait for up to 60 seconds (12 * 5s)
     while [ "$wait_attempts" -lt "$max_wait_attempts" ]; do
         # The 'docker service ps' command is the most reliable way to check the actual state of the task.
-        local service_status=$(run_qm_command guest exec 1001 -- /bin/bash -c "docker service ps ${service_name} --format '{{.CurrentState}}' --no-trunc" | tail -n 1)
-        if [[ "$service_status" == "Running "* ]]; then
-            log_success "Portainer service is stable and running."
+        local service_status_output=$(run_qm_command guest exec 1001 -- /bin/bash -c "docker service ps ${service_name} --format '{{.CurrentState}}' --no-trunc")
+        if echo "$service_status_output" | grep -q "Running"; then
+            log_success "Portainer service has at least one running task. Proceeding."
             break
         fi
-        log_info "Portainer service not yet stable (Current State: ${service_status}). Waiting 5 seconds..."
+        local latest_status=$(echo "$service_status_output" | tail -n 1)
+        log_info "Portainer service not yet stable (Latest Task State: ${latest_status}). Waiting 5 seconds..."
         sleep 5
         wait_attempts=$((wait_attempts + 1))
     done

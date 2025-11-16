@@ -16,42 +16,90 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 
 # =====================================================================================
-# Function: ensure_bridge_firewall_disabled
-# Description: Ensures that the Proxmox bridge firewall is disabled to prevent it
-#              from interfering with the main pve-firewall rules. This is a critical
-#              fix for host-to-guest communication.
+# Function: ensure_bridge_firewall_enabled
+# Description: Ensures that the Proxmox bridge firewall is enabled. This is the
+#              best practice for security as it allows the per-guest firewall
+#              rules to control traffic between guests on the same bridge.
 # =====================================================================================
-ensure_bridge_firewall_disabled() {
-    log_info "Ensuring Proxmox bridge firewall is disabled..."
+ensure_bridge_firewall_enabled() {
+    log_info "Ensuring Proxmox bridge firewall is enabled for vmbr0..."
     local interfaces_file="/etc/network/interfaces"
-    local bridge_line="iface vmbr0 inet static"
-    local disable_line="        bridge-fw-nf-disable 1"
 
-    # Check if the line already exists
-    if grep -q "bridge-fw-nf-disable 1" "$interfaces_file"; then
-        log_info "Bridge firewall is already disabled. No changes needed."
+    # Dynamically discover the primary bridge port.
+    local bridge_port=$(brctl show vmbr0 | awk 'NR>1 {print $NF}' | head -n1)
+    if [ -z "$bridge_port" ]; then
+        log_fatal "Could not dynamically determine the bridge port for vmbr0. Cannot enable bridge firewall."
+    fi
+    log_info "Discovered primary bridge port for vmbr0: ${bridge_port}"
+
+    # Create a backup of the original file, but only if one doesn't already exist
+    if [ ! -f "${interfaces_file}.bak" ]; then
+        cp "$interfaces_file" "${interfaces_file}.bak"
+    fi
+
+    # Use a marker to check if the block is already present
+    local firewall_marker="# PHOENIX_BRIDGE_FIREWALL_ENABLED"
+    if grep -q "$firewall_marker" "$interfaces_file"; then
+        log_info "Bridge firewall configuration already present. No changes needed."
         return 0
     fi
 
-    log_info "Bridge firewall is not disabled. Adding configuration to ${interfaces_file}..."
-    
-    # Use awk to insert the disable line after the bridge definition line
-    awk -v bridge_line="$bridge_line" -v disable_line="$disable_line" '
-    1;
-    $0 == bridge_line {
-        print disable_line;
-    }
-    ' "$interfaces_file" > "${interfaces_file}.tmp"
+    # Create a temporary file to perform operations, ensuring atomicity
+    local temp_file
+    temp_file=$(mktemp)
+    cp "$interfaces_file" "$temp_file"
 
-    if [ $? -eq 0 ]; then
-        mv "${interfaces_file}.tmp" "$interfaces_file"
-        log_info "Successfully added bridge firewall disable setting. Applying network changes..."
-        ifreload -a
-        log_success "Network configuration reloaded successfully."
-    else
-        log_error "Failed to modify ${interfaces_file}. Manual intervention may be required."
-        rm -f "${interfaces_file}.tmp"
+    # Remove any old, conflicting lines from the temporary file
+    sed -i '/bridge-fw-nf-disable 1/d' "$temp_file"
+    sed -i '/bridge-ports/d' "$temp_file"
+    sed -i '/bridge-stp/d' "$temp_file"
+    sed -i '/bridge-fd/d' "$temp_file"
+
+    # Define the full, correct block to be inserted
+    local bridge_config_block
+    bridge_config_block=$(cat <<EOF
+        bridge_ports ${bridge_port}
+        bridge-stp off
+        bridge-fd 0
+        ${firewall_marker}
+EOF
+)
+
+    # Use awk to find the 'iface vmbr0' line and insert the block after it, reading from the cleaned temp file
+    awk -v block="$bridge_config_block" '
+    /iface vmbr0 inet static/ {
+        print;
+        print block;
+        next;
+    }
+    { print }
+    ' "$temp_file" > "$interfaces_file"
+
+    # Clean up the temporary file
+    rm "$temp_file"
+
+    log_info "Successfully updated network configuration to enable bridge firewall. Applying changes..."
+    if ! ifreload -a; then
+        log_error "Failed to reload network configuration. Restoring from backup."
+        mv "${interfaces_file}.bak" "$interfaces_file"
+        log_fatal "Network reload failed. The original configuration has been restored."
     fi
+    
+    log_success "Network configuration reloaded successfully with bridge firewall enabled."
+}
+
+# =====================================================================================
+# Function: clear_existing_firewall_configs
+# Description: Wipes all existing .fw files to ensure a clean slate.
+# =====================================================================================
+clear_existing_firewall_configs() {
+    log_info "Clearing all existing firewall configuration files..."
+    local firewall_dir="/etc/pve/firewall"
+    
+    # Use find to delete all .fw files. This is safe even if none exist.
+    find "$firewall_dir" -type f -name "*.fw" -delete
+    
+    log_success "All .fw files have been removed."
 }
 
 # =====================================================================================
@@ -60,8 +108,8 @@ ensure_bridge_firewall_disabled() {
 # =====================================================================================
 generate_cluster_firewall_config() {
     log_info "Generating cluster-level firewall configuration..."
-    local input_policy=$(get_global_config_value '.shared_volumes.firewall.default_input_policy')
-    local output_policy=$(get_global_config_value '.shared_volumes.firewall.default_output_policy')
+    local input_policy=$(get_global_config_value '.firewall.default_input_policy')
+    local output_policy=$(get_global_config_value '.firewall.default_output_policy')
     local cluster_fw_file="/etc/pve/firewall/cluster.fw"
 
     cat <<EOF > "$cluster_fw_file"
@@ -74,7 +122,7 @@ policy_out: $output_policy
 IN ACCEPT -i lo
 EOF
 
-    get_global_config_value '.shared_volumes.firewall.global_firewall_rules[]?' | jq -c . | while read -r rule; do
+    get_global_config_value '.firewall.global_firewall_rules[]?' | jq -c . | while read -r rule; do
         generate_rule_string "$rule" >> "$cluster_fw_file"
     done
     log_success "Cluster firewall configuration generated at $cluster_fw_file"
@@ -124,25 +172,28 @@ EOF
 # Description: Main entry point for the script.
 # =====================================================================================
 main() {
-    # --- New Step: Ensure bridge firewall is disabled ---
-    ensure_bridge_firewall_disabled
-
     log_info "Starting declarative firewall configuration..."
 
-    # 1. Generate the cluster-level configuration
+    # 1. Ensure the network interfaces and bridge firewall are correctly configured.
+    ensure_bridge_firewall_enabled
+
+    # 2. Wipe all existing .fw files to ensure a clean, idempotent run.
+    clear_existing_firewall_configs
+
+    # 3. Generate the cluster-level configuration.
     generate_cluster_firewall_config
 
-    # 2. Generate guest-level configurations for all LXCs
+    # 4. Generate guest-level configurations for all LXCs.
     jq -r '.lxc_configs | keys[]' "$LXC_CONFIG_FILE" | while read -r ctid; do
         generate_guest_firewall_config "lxc" "$ctid" "$LXC_CONFIG_FILE"
     done
 
-    # 3. Generate guest-level configurations for all VMs
+    # 5. Generate guest-level configurations for all VMs.
     jq -r '.vms[].vmid' "$VM_CONFIG_FILE" | while read -r vmid; do
         generate_guest_firewall_config "vm" "$vmid" "$VM_CONFIG_FILE"
     done
 
-    # 4. Create the host-level firewall configuration file
+    # 6. Create the host-level firewall configuration file.
     local nodename=$(hostname)
     local host_fw_file="/etc/pve/firewall/${nodename}.fw"
     log_info "Ensuring host-level firewall is enabled at ${host_fw_file}..."
@@ -151,7 +202,7 @@ main() {
 enable: 1
 EOF
 
-    # 5. Reload the firewall to apply all changes
+    # 7. Reload the firewall to apply all changes.
     log_info "Reloading Proxmox firewall to apply all generated configurations..."
     pve-firewall restart
 

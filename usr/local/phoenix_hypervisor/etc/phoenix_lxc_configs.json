@@ -347,14 +347,6 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow outbound communication to Step CA for certificate requests"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.10",
-                        "proto": "tcp",
-                        "port": "9000",
-                        "comment": "Allow outbound communication to Step CA for certificate requests"
                     }
                 ]
             },
@@ -574,14 +566,6 @@
                         "comment": "Allow Nginx to proxy to Traefik"
                     },
                     {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.12",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Nginx to proxy ACME challenges to Traefik"
-                    },
-                    {
                         "type": "in",
                         "action": "ACCEPT",
                         "source": "10.0.0.10",
@@ -788,30 +772,6 @@
                         "comment": "Allow Step-CA to perform ACME challenges with Nginx Gateway"
                     },
                     {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
-                    },
-                    {
-                        "type": "out",
-                        "action": "ACCEPT",
-                        "dest": "10.0.0.153",
-                        "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Step-CA to perform ACME http-01 challenges with Nginx Gateway"
-                    },
-                    {
                         "type": "in",
                         "action": "ACCEPT",
                         "source": "10.0.0.12",
@@ -852,20 +812,20 @@
                         "comment": "Allow Proxmox host to access Step CA for certificate management"
                     },
                     {
-                        "type": "in",
-                        "action": "ACCEPT",
-                        "source": "10.0.0.13",
-                        "proto": "tcp",
-                        "port": "9000",
-                        "comment": "Allow Proxmox host to access Step CA for certificate management"
-                    },
-                    {
                         "type": "out",
                         "action": "ACCEPT",
                         "dest": "10.0.0.13",
                         "proto": "udp",
                         "port": "53",
                         "comment": "Allow outbound DNS queries to CoreDNS"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "9000",
+                        "comment": "Allow Traefik (10.0.0.12) to connect for certificate bootstrapping"
                     }
                 ]
             },
@@ -924,6 +884,12 @@
                         "proto": "tcp",
                         "port": "80",
                         "comment": "Allow Nginx (10.0.0.153) to proxy web traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.153",
+                        "comment": "Allow all inbound traffic from Nginx to fix timeout"
                     },
                     {
                         "type": "in",

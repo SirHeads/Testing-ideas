@@ -100,6 +100,8 @@ main() {
             "        passHostHeader: true" +
             (if (.url | startswith("https")) then "\n        serversTransport: \"internal-ca@file\"" else "" end)
         '
+        
+        echo ""
     } > "$OUTPUT_FILE"
 
     # --- APPEND SERVERS TRANSPORT FOR INTERNAL CA ---

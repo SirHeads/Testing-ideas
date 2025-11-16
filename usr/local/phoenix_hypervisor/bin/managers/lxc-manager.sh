@@ -344,7 +344,7 @@ apply_lxc_configurations() {
     apply_resource_configs "$CTID"
     apply_startup_configs "$CTID"
     apply_network_configs "$CTID"
-    apply_apparmor_profile "$CTID"
+    # apply_apparmor_profile "$CTID"
     apply_proxmox_features "$CTID"
     apply_lxc_directives "$CTID"
     apply_gpu_passthrough "$CTID"
@@ -1560,6 +1560,16 @@ main_lxc_orchestrator() {
                 apply_mount_points "$ctid"
                 apply_host_path_permissions "$ctid"
                 start_container "$ctid"
+
+                # --- PHOENIX-20 HOTFIX ---
+                # Re-apply the declarative firewall rules after container creation.
+                # This overwrites the default firewall config created by 'pct create'
+                # and ensures the correct rules are in place before feature installation.
+                log_info "Re-applying declarative firewall configuration to fix PHOENIX-20..."
+                if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh"; then
+                    log_fatal "Failed to re-apply firewall configuration. Halting."
+                fi
+                # --- END PHOENIX-20 HOTFIX ---
 
                 if [ "$ctid" -eq 103 ]; then
                     log_info "Setting final permissions for shared SSL directory on host..."

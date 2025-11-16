@@ -531,6 +531,22 @@ apply_network_configurations() {
     local VMID="$1"
     log_info "Applying network configurations to VM $VMID..."
 
+    # --- Add firewall flag to network interface if enabled ---
+    local net0_config
+    net0_config=$(qm config "$VMID" | grep '^net0:' | sed 's/net0: //')
+    local firewall_enabled
+    firewall_enabled=$(jq_get_vm_value "$VMID" ".firewall.enabled" || echo "false")
+
+    if [ "$firewall_enabled" == "true" ]; then
+        if [[ "$net0_config" != *",firewall=1"* ]]; then
+            log_info "Firewall is enabled for VM $VMID. Adding firewall=1 to net0."
+            net0_config+=",firewall=1"
+            run_qm_command set "$VMID" --net0 "$net0_config"
+        else
+            log_info "Firewall flag already present on net0 for VM $VMID."
+        fi
+    fi
+
     local ip
     ip=$(jq_get_vm_value "$VMID" ".network_config.ip" || echo "")
     ip=$(echo -n "$ip" | tr -d '[:cntrl:]') # Sanitize for hidden characters

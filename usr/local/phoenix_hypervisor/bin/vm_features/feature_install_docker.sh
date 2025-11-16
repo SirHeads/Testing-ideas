@@ -29,6 +29,7 @@ export PHOENIX_DEBUG="true" # Temporarily force debug mode for this script
 # Source common utilities provided by the orchestrator. This script contains helper functions for tasks like reading configuration.
 source "$(dirname "$0")/phoenix_hypervisor_common_utils.sh"
 
+
 # Enable verbose logging if PHOENIX_DEBUG is set to "true"
 if [ "$PHOENIX_DEBUG" == "true" ]; then
     set -x
@@ -160,6 +161,7 @@ mkdir -p /etc/docker
 cat <<EOF > /etc/docker/daemon.json
 {
   "dns": ["$INTERNAL_DNS_SERVER"],
+  "iptables": true,
   "tls": true,
   "tlscert": "$DOCKER_CERT_FILE",
   "tlskey": "$DOCKER_KEY_FILE",
@@ -205,6 +207,7 @@ log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."
 # Steps 9, 10, and 11 are now obsolete.
 log_info "Step 9, 10, and 11 are now handled directly by this script for robust mTLS configuration."
 
+
 # --- BEGIN SWARM NETWORKING FIX ---
 log_info "Adding firewall rule to allow established and related connections for Swarm..."
 established_rule="-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT"
@@ -222,3 +225,5 @@ fi
 # --- END SWARM NETWORKING FIX ---
 
 log_info "--- Docker Installation Complete ---"
+
+# --- Main Execution ---

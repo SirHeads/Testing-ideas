@@ -290,6 +290,13 @@
                             "type": "string",
                             "pattern": "^[0-9]+$"
                         }
+                    },
+                    "iptables_rules": {
+                        "type": "array",
+                        "description": "A list of raw iptables rules to apply inside the guest.",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 },
                 "required": [

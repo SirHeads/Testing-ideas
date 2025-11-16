@@ -318,142 +318,142 @@
                 "950": "/vllm_models",
                 "951": "/vllm_models"
             }
-        },
-        "firewall": {
-            "enabled": true,
-            "default_input_policy": "DROP",
-            "default_output_policy": "ACCEPT",
-            "global_firewall_rules": [
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "80",
-                    "comment": "Allow HTTP for ACME challenges to Nginx"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "443",
-                    "comment": "Allow external HTTPS traffic to the Nginx gateway"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "udp",
-                    "port": "53",
-                    "comment": "Allow internal guests to query DNS on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "tcp",
-                    "port": "53",
-                    "comment": "Allow internal guests to query DNS on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "tcp",
-                    "port": "2049",
-                    "comment": "Allow internal guests to access NFS on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.111",
-                    "dest": "10.0.0.102",
-                    "proto": "tcp",
-                    "port": "9001",
-                    "comment": "Allow Portainer server to connect to agent"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.111",
-                    "dest": "10.0.0.102",
-                    "comment": "DEBUG: Allow all traffic from Portainer server to agent"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.13",
-                    "dest": "10.0.0.111",
-                    "proto": "tcp",
-                    "port": "9000",
-                    "comment": "Allow Proxmox host to access Portainer for initial setup"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.13",
-                    "dest": "10.0.0.153",
-                    "proto": "tcp",
-                    "port": "443",
-                    "comment": "Allow Proxmox host to connect to the NGINX gateway for API calls"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.12",
-                    "dest": "10.0.0.111",
-                    "proto": "tcp",
-                    "port": "9443",
-                    "comment": "Allow Traefik to proxy to Portainer"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "proto": "tcp",
-                    "port": "2049",
-                    "source": "10.0.0.0/24",
-                    "comment": "Allow internal NFS connections to the host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "tcp",
-                    "port": "111",
-                    "comment": "Allow internal guests to access NFS rpcbind on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "udp",
-                    "port": "111",
-                    "comment": "Allow internal guests to access NFS rpcbind on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "tcp",
-                    "port": "20048",
-                    "comment": "Allow internal guests to access NFS mountd on Host"
-                },
-                {
-                    "type": "in",
-                    "action": "ACCEPT",
-                    "source": "10.0.0.0/24",
-                    "dest": "10.0.0.13",
-                    "proto": "udp",
-                    "port": "20048",
-                    "comment": "Allow internal guests to access NFS mountd on Host"
-                }
-            ]
         }
+    },
+    "firewall": {
+        "enabled": true,
+        "default_input_policy": "DROP",
+        "default_output_policy": "ACCEPT",
+        "global_firewall_rules": [
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "proto": "tcp",
+                "port": "80",
+                "comment": "Allow HTTP for ACME challenges to Nginx"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "proto": "tcp",
+                "port": "443",
+                "comment": "Allow external HTTPS traffic to the Nginx gateway"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "udp",
+                "port": "53",
+                "comment": "Allow internal guests to query DNS on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "tcp",
+                "port": "53",
+                "comment": "Allow internal guests to query DNS on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "tcp",
+                "port": "2049",
+                "comment": "Allow internal guests to access NFS on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.111",
+                "dest": "10.0.0.102",
+                "proto": "tcp",
+                "port": "9001",
+                "comment": "Allow Portainer server to connect to agent"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.111",
+                "dest": "10.0.0.102",
+                "comment": "DEBUG: Allow all traffic from Portainer server to agent"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.13",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "9000",
+                "comment": "Allow Proxmox host to access Portainer for initial setup"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.13",
+                "dest": "10.0.0.153",
+                "proto": "tcp",
+                "port": "443",
+                "comment": "Allow Proxmox host to connect to the NGINX gateway for API calls"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.12",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "9443",
+                "comment": "Allow Traefik to proxy to Portainer"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "proto": "tcp",
+                "port": "2049",
+                "source": "10.0.0.0/24",
+                "comment": "Allow internal NFS connections to the host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "tcp",
+                "port": "111",
+                "comment": "Allow internal guests to access NFS rpcbind on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "udp",
+                "port": "111",
+                "comment": "Allow internal guests to access NFS rpcbind on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "tcp",
+                "port": "20048",
+                "comment": "Allow internal guests to access NFS mountd on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.0/24",
+                "dest": "10.0.0.13",
+                "proto": "udp",
+                "port": "20048",
+                "comment": "Allow internal guests to access NFS mountd on Host"
+            }
+        ]
     },
     "portainer_api": {
         "admin_user": "admin",

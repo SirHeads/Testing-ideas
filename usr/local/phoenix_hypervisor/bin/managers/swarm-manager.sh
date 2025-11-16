@@ -132,12 +132,17 @@ label_node() {
 deploy_stack() {
     local stack_name=""
     local env_name=""
+    local host_mode=false
 
     while [[ "$#" -gt 0 ]]; do
         case "$1" in
             --env)
                 env_name="$2"
                 shift 2
+                ;;
+            --host-mode)
+                host_mode=true
+                shift
                 ;;
             *)
                 if [ -z "$stack_name" ]; then
@@ -187,6 +192,22 @@ deploy_stack() {
             yq -i -y "$yq_expr" "$temp_compose_file"
         fi
     done
+
+    if [ "$host_mode" = true ]; then
+        log_info "Applying host mode networking to all services in the stack..."
+        local services=$(yq -r '.services | keys | .[]' "$temp_compose_file")
+        for service in $services; do
+            local ports_expr=".services.\"$service\".ports"
+            if yq -e "$ports_expr" "$temp_compose_file" > /dev/null; then
+                # Read the ports, modify them, and write back
+                local updated_ports=$(yq -r "$ports_expr | .[]" "$temp_compose_file" | while read -r port; do
+                    echo "${port}" | sed 's/ingress/host/'
+                done | yq -s -c '.')
+                yq -i -y "del($ports_expr)" "$temp_compose_file"
+                yq -i -y "$ports_expr = ${updated_ports}" "$temp_compose_file"
+            fi
+        done
+    fi
 
     log_info "Deploying stack '${final_stack_name}' using dynamically generated compose file..."
     local nfs_stacks_path="/mnt/stacks"
