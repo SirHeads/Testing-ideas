@@ -445,115 +445,34 @@ deploy_portainer_instances() {
 }
 
 # =====================================================================================
-# Function: setup_portainer_admin_user
-# Description: Sets up the initial admin user for Portainer if it hasn't been initialized yet.
-# Arguments:
-#   $1 - The Portainer URL (e.g., https://portainer.internal.thinkheads.ai)
-#   $2 - The path to the CA certificate file.
-# Returns:
-#   None. Exits with a fatal error if admin user setup fails.
+# Function: ensure_portainer_admin_secret
+# Description: Ensures the Docker Swarm secret for the Portainer admin password exists.
+#              If it doesn't exist, it creates it using the password from the config file.
 # =====================================================================================
-setup_portainer_admin_user() {
-    local PORTAINER_URL="$1"
-    local ADMIN_USERNAME=$(get_global_config_value '.portainer_api.admin_user')
-    local ADMIN_PASSWORD=$(get_global_config_value '.portainer_api.admin_password')
-    local MAX_RETRIES=5 # Increased retries for robustness
-    local RETRY_DELAY=5
-    local attempt=1
+ensure_portainer_admin_secret() {
+    log_info "--- Ensuring Portainer admin password secret exists in Docker Swarm ---"
+    local secret_name="portainer_admin_password"
+    local manager_vmid=$(jq -r '.vms[] | select(.swarm_role == "manager") | .vmid' "$VM_CONFIG_FILE")
+    local admin_password=$(get_global_config_value '.portainer_api.admin_password')
 
-    if [ -z "$ADMIN_USERNAME" ] || [ "$ADMIN_USERNAME" == "null" ]; then
-        log_fatal "Portainer admin username is not configured or is null in phoenix_hypervisor_config.json."
-    fi
-    if [ -z "$ADMIN_PASSWORD" ] || [ "$ADMIN_PASSWORD" == "null" ]; then
-        log_fatal "Portainer admin password is not configured or is null in phoenix_hypervisor_config.json."
+    if [ -z "$admin_password" ] || [ "$admin_password" == "null" ]; then
+        log_fatal "Portainer admin password is not set in phoenix_hypervisor_config.json."
     fi
 
-    log_info "Attempting to create initial admin user '${ADMIN_USERNAME}'..."
+    # Check if the secret already exists inside the Swarm manager VM
+    local secret_exists_output
+    secret_exists_output=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker secret ls --filter name=${secret_name} -q")
 
-    # --- BEGIN RESILIENT WAIT ---
-    # Add a loop to wait for the Portainer service to be in a 'Running' state.
-    # This prevents a race condition where we try to use the overlay network before it's ready.
-    log_info "Waiting for Portainer service to be stable before creating admin user..."
-    local service_name="prod_portainer_service_portainer"
-    local wait_attempts=0
-    local max_wait_attempts=12 # Wait for up to 60 seconds (12 * 5s)
-    while [ "$wait_attempts" -lt "$max_wait_attempts" ]; do
-        # The 'docker service ps' command is the most reliable way to check the actual state of the task.
-        local service_status_output=$(run_qm_command guest exec 1001 -- /bin/bash -c "docker service ps ${service_name} --format '{{.CurrentState}}' --no-trunc")
-        if echo "$service_status_output" | grep -q "Running"; then
-            log_success "Portainer service has at least one running task. Proceeding."
-            break
+    if [ -z "$secret_exists_output" ]; then
+        log_info "Secret '${secret_name}' not found. Creating it now..."
+        # Create the secret by piping the password directly to the command
+        if ! run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "printf '%s' '${admin_password}' | docker secret create ${secret_name} -"; then
+            log_fatal "Failed to create Docker Swarm secret '${secret_name}'."
         fi
-        local latest_status=$(echo "$service_status_output" | tail -n 1)
-        log_info "Portainer service not yet stable (Latest Task State: ${latest_status}). Waiting 5 seconds..."
-        sleep 5
-        wait_attempts=$((wait_attempts + 1))
-    done
-
-    if [ "$wait_attempts" -ge "$max_wait_attempts" ]; then
-        log_error "Timeout reached while waiting for Portainer service to become stable."
-        log_error "--- Last known service status ---"
-        run_qm_command guest exec 1001 -- /bin/bash -c "docker service ps ${service_name} --no-trunc"
-        log_error "--- Portainer service logs ---"
-        run_qm_command guest exec 1001 -- /bin/bash -c "docker service logs ${service_name}"
-        log_fatal "Portainer service failed to start. Please review the logs above."
+        log_success "Docker Swarm secret '${secret_name}' created successfully."
+    else
+        log_info "Secret '${secret_name}' already exists. Skipping creation."
     fi
-    # --- END RESILIENT WAIT ---
-
-    while [ "$attempt" -le "$MAX_RETRIES" ]; do
-        log_info "Admin user creation attempt ${attempt}/${MAX_RETRIES}..."
-        
-        local response
-        local http_status
-        
-        # --- BEGIN DIRECT HOST EXECUTION (REMEDIATED) ---
-        # The Portainer service exposes port 9000 on the host VM. We can curl it directly
-        # from within the VM. This version uses a heredoc to create a clean, unescaped
-        # command string, which is then executed by bash -c. This is the most robust way
-        # to handle the nested quotes and special characters.
-        local qm_response
-        local container_id=$(run_qm_command guest exec 1001 -- /bin/bash -c "docker ps -q --filter 'name=prod_portainer_service_portainer'")
-        
-        # --- THE DEFINITIVE FIX ---
-        # The API call is now made from the Proxmox host, which has the root CA installed
-        # and can resolve the internal DNS name. This is the correct and simplest approach.
-        local PORTAINER_FQDN=$(get_global_config_value '.portainer_api.portainer_hostname')
-        local API_ENDPOINT="https://${PORTAINER_FQDN}/api/users/admin/init"
-        local PAYLOAD
-        PAYLOAD=$(jq -n --arg user "$ADMIN_USERNAME" --arg pass "$ADMIN_PASSWORD" '{Username: $user, Password: $pass}')
-
-        response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            --data "$PAYLOAD" \
-            --cacert "${CENTRALIZED_CA_CERT_PATH}" \
-            "$API_ENDPOINT")
-        
-        http_status=$(echo -e "$response" | tail -n1 | sed -n 's/.*HTTP_STATUS://p')
-        body=$(echo -e "$response" | sed '$d')
-        # --- END DEFINITIVE FIX ---
-
-        log_debug "Admin creation response body: ${body}"
-        log_debug "Admin creation HTTP status: ${http_status}"
-
-        if [[ "$http_status" -eq 200 ]]; then
-            log_success "Portainer admin user '${ADMIN_USERNAME}' created successfully."
-            log_info "Waiting for 10 seconds for Portainer to fully initialize before proceeding..."
-            sleep 10
-            return 0
-        elif [[ "$http_status" -eq 409 ]]; then
-            log_info "Portainer admin user already exists. Skipping creation."
-            return 0
-        else
-            log_warn "Failed to create Portainer admin user (HTTP: ${http_status}). Retrying in ${RETRY_DELAY} seconds..."
-            log_warn "Response: ${body}"
-        fi
-
-        sleep "$RETRY_DELAY"
-        attempt=$((attempt + 1))
-    done
-
-    log_fatal "Failed to create or verify Portainer admin user after ${MAX_RETRIES} attempts. The service may be unhealthy."
 }
 
 # =====================================================================================
@@ -583,6 +502,15 @@ ensure_swarm_manager_active() {
         # re-asserts leadership over the *existing* cluster.
         run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker swarm init --force-new-cluster --advertise-addr ${manager_ip}"
         log_success "Successfully re-initialized Swarm leadership on VM ${manager_vmid}."
+    fi
+
+    log_info "--- Ensuring Docker socket is exposed over TCP ---"
+    local docker_proxy_script="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_docker_proxy.sh"
+    if [ ! -f "$docker_proxy_script" ]; then
+        log_fatal "Docker proxy feature script not found at $docker_proxy_script."
+    fi
+    if ! run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "$(cat "$docker_proxy_script")"; then
+        log_fatal "Failed to execute Docker proxy feature script on VM $manager_vmid."
     fi
 }
 
@@ -707,14 +635,34 @@ sync_all() {
     
     # --- NEW: Run Certificate Manager ---
     log_info "Running certificate renewal manager to ensure all certificates are up to date..."
+
+    log_info "--- PRE-CERT RENEWAL DOCKER STATUS ---"
+    run_qm_command guest exec 1001 -- /bin/bash -c "docker info" || log_warn "Pre-renewal docker info command failed."
+
     if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
         log_fatal "Certificate renewal manager failed. Aborting."
     fi
+
+    log_info "--- POST-CERT RENEWAL DOCKER STATUS ---"
+    run_qm_command guest exec 1001 -- /bin/bash -c "docker info" || log_warn "Post-renewal docker info command failed."
     log_success "Certificate renewal manager completed successfully."
 
     # --- STAGE 2: ENSURE SWARM CLUSTER IS ACTIVE ---
     log_info "--- Stage 2: Ensuring Docker Swarm Cluster is Active ---"
     ensure_swarm_cluster_active
+
+    log_info "--- Ensuring Traefik overlay network exists ---"
+    local manager_vmid=$(jq -r '.vms[] | select(.swarm_role == "manager") | .vmid' "$VM_CONFIG_FILE")
+    if ! run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker network inspect traefik-public > /dev/null 2>&1"; then
+        log_info "Traefik overlay network not found. Creating it now..."
+        run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker network create --driver overlay --attachable traefik-public" || log_fatal "Failed to create Traefik overlay network."
+        log_success "Traefik overlay network created successfully."
+    else
+        log_info "Traefik overlay network already exists."
+    fi
+
+    # --- STAGE 2.5: ENSURE PORTAINER SECRET EXISTS ---
+    ensure_portainer_admin_secret
 
     # --- STAGE 3: DEPLOY & VERIFY UPSTREAM SERVICES ---
     log_info "--- Stage 3: Deploying and Verifying Portainer ---"
@@ -733,6 +681,17 @@ sync_all() {
     local traefik_ctid="102"
     if pct status "$traefik_ctid" > /dev/null 2>&1; then
         log_info "Traefik container (102) is running. Generating and applying configuration."
+
+        # --- BEGIN PHOENIX-TRAEFIK-FIX ---
+        # Push the corrected static configuration before the dynamic one.
+        log_info "Pushing updated static Traefik configuration..."
+        if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/traefik.yml.template" /etc/traefik/traefik.yml; then
+            log_fatal "Failed to push Traefik static config to container 102."
+        else
+            log_success "Successfully pushed Traefik static config to container 102."
+        fi
+        # --- END PHOENIX-TRAEFIK-FIX ---
+
         if ! "${PHOENIX_BASE_DIR}/bin/generate_traefik_config.sh"; then
             log_fatal "Failed to generate Traefik configuration."
         fi
@@ -742,9 +701,17 @@ sync_all() {
             log_success "Successfully pushed Traefik dynamic config to container 102."
         fi
         pct exec "$traefik_ctid" -- chmod 644 /etc/traefik/dynamic/dynamic_conf.yml
-        if ! pct exec "$traefik_ctid" -- systemctl reload traefik; then
-            log_warn "Failed to reload Traefik service. A restart may be required." "pct exec 102 -- journalctl -u traefik -n 50"
+        
+        # --- BEGIN PHOENIX-TRAEFIK-FIX ---
+        # Use start instead of restart to ensure the service is started for the first time.
+        log_info "Starting Traefik to apply new static configuration..."
+        if ! pct exec "$traefik_ctid" -- systemctl start traefik; then
+            log_warn "Failed to start Traefik service. Check the logs for errors." "pct exec 102 -- journalctl -u traefik -n 50"
+        else
+            log_success "Traefik service started successfully."
         fi
+        # --- END PHOENIX-TRAEFIK-FIX ---
+        
         log_success "Traefik synchronization complete."
     else
         log_warn "Traefik container (102) is not running. Skipping Traefik synchronization."
@@ -812,7 +779,7 @@ sync_all() {
     log_info "Setting up Portainer admin user..."
     local portainer_server_ip=$(get_global_config_value '.network.portainer_server_ip')
     local PORTAINER_URL="http://${portainer_server_ip}:9000"
-    setup_portainer_admin_user "$PORTAINER_URL"
+    # setup_portainer_admin_user "$PORTAINER_URL" - This is now handled by the Docker secret
 
     # --- STAGE 7: SYNCHRONIZE APPLICATION STACKS ---
     sync_application_stacks

@@ -71,42 +71,6 @@ request_traefik_certificate() {
    log_success "Traefik certificate obtained successfully."
 }
 
-# =====================================================================================
-# Function: configure_traefik
-# Description: Configures Traefik with entrypoints and ACME provider.
-# Arguments:
-#   None.
-# Returns:
-#   None. Exits with a fatal error if configuration fails.
-# =====================================================================================
-configure_traefik() {
-    log_info "Configuring Traefik..."
-
-    # Wipe and recreate Traefik dynamic configuration directory
-    log_info "Ensuring Traefik dynamic configuration directory exists and has correct permissions..."
-    mkdir -p /etc/traefik/dynamic || log_fatal "Failed to create /etc/traefik/dynamic."
-    chmod 755 /etc/traefik/dynamic || log_warn "Failed to set permissions on /etc/traefik/dynamic."
-
-    # Copy the Traefik template and replace the CA_URL placeholder
-    log_info "Copying Traefik configuration template..."
-    cp "/tmp/phoenix_run/traefik.yml.template" "/etc/traefik/traefik.yml" || log_fatal "Failed to copy Traefik template."
-
-    log_info "Injecting CA URL into Traefik configuration..."
-    sed -i "s|__CA_URL__|${CA_URL}|g" "/etc/traefik/traefik.yml" || log_fatal "Failed to inject CA URL."
- 
-     # Force a fresh certificate request by deleting the old acme.json
-     log_info "Removing existing acme.json to force fresh certificate request..."
-     rm -f /etc/traefik/acme.json
- 
-     # Set permissions for acme.json
-     touch /etc/traefik/acme.json
-     chmod 600 /etc/traefik/acme.json
- 
-    # Dynamic configuration is now handled by the sync_all command at the host level.
-
-    # Dynamic configuration is now handled by the sync_all command at the host level.
-    log_info "Traefik static configuration complete."
-}
 
 # =====================================================================================
 # Function: setup_traefik_service
@@ -144,7 +108,6 @@ main() {
     wait_for_ca
     bootstrap_step_cli
     request_traefik_certificate
-    configure_traefik
     setup_traefik_service
 
     log_info "Traefik application script completed for CTID $CTID."

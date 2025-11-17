@@ -161,20 +161,12 @@ push_static_config() {
         log_fatal "Traefik configuration template not found at ${template_file}."
     fi
 
-    # Get the Step-CA IP address from the LXC config file
-    local lxc_config_file="${PHOENIX_BASE_DIR}/../etc/phoenix_lxc_configs.json"
-    local step_ca_ip=$(jq -r '.lxc_configs."103".network_config.ip | split("/")[0]' "$lxc_config_file")
-    if [ -z "$step_ca_ip" ] || [ "$step_ca_ip" == "null" ]; then
-        log_fatal "Could not determine Step-CA IP address from LXC configuration."
-    fi
-    local ca_url="https://ca.internal.thinkheads.ai:9000"
-
     # Create a temporary file for the processed config
     local temp_config_file
     temp_config_file=$(mktemp)
 
     # Replace placeholder in the template with the actual CA URL
-    sed "s|__CA_URL__|${ca_url}|g" "$template_file" > "$temp_config_file"
+    cp "$template_file" "$temp_config_file"
 
     log_info "Pushing generated traefik.yml to ${TRAEFIK_CONFIG_DIR}/traefik.yml in container $CTID..."
     if ! pct push "$CTID" "$temp_config_file" "${TRAEFIK_CONFIG_DIR}/traefik.yml"; then
@@ -262,6 +254,8 @@ main() {
     setup_traefik_tls "$@"
     push_static_config
     create_systemd_service
+
+    log_info "Traefik service has been enabled, but will not be started until the 'phoenix sync all' command is run."
 
     log_info "Traefik feature installation completed for CTID $CTID."
 }

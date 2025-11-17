@@ -452,6 +452,60 @@
                 "proto": "udp",
                 "port": "20048",
                 "comment": "Allow internal guests to access NFS mountd on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.12",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "2376",
+                "comment": "Allow Traefik to access the secure Docker API"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.12",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "2375",
+                "comment": "Allow Traefik to access the Docker API"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.102",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "2377",
+                "comment": "Allow Swarm workers to join the manager"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.102",
+                "dest": "10.0.0.111",
+                "proto": "tcp",
+                "port": "7946",
+                "comment": "Allow Swarm node-to-node communication (TCP)"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.102",
+                "dest": "10.0.0.111",
+                "proto": "udp",
+                "port": "7946",
+                "comment": "Allow Swarm node-to-node communication (UDP)"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "10.0.0.102",
+                "dest": "10.0.0.111",
+                "proto": "udp",
+                "port": "4789",
+                "comment": "Allow Swarm overlay network traffic"
             }
         ]
     },

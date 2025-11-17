@@ -880,6 +880,13 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
+                        "proto": "icmp",
+                        "source": "10.0.0.0/24",
+                        "comment": "Allow ICMP from internal network"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
                         "source": "10.0.0.153",
                         "proto": "tcp",
                         "port": "80",
@@ -968,6 +975,22 @@
                         "proto": "tcp",
                         "port": "9001",
                         "comment": "Allow Traefik to proxy to Portainer Agent"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "2376",
+                        "comment": "Allow Traefik to connect to the secure Docker API"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "2375",
+                        "comment": "Allow Traefik to connect to the Docker API"
                     }
                 ]
             },

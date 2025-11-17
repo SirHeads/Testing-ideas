@@ -32,7 +32,7 @@ main() {
         '
         [
             # Process VMs with standard traefik_service definitions
-            ($vms[0].vms[]? | select(.traefik_service? and .traefik_service != null) |
+            ($vms[0].vms[]? | select(.traefik_service? and .traefik_service != null and .traefik_service.name != "portainer") |
                 . as $vm_config |
                 .traefik_service as $service_def |
                 {

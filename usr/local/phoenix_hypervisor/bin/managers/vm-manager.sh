@@ -766,8 +766,17 @@ apply_vm_features() {
  
     # The flawed Docker volume creation logic has been removed from this script.
     # This responsibility is now correctly handled by portainer-manager.sh.
+ 
+    # --- Definitive Fix: Stage the Provisioner Password ---
+    local provisioner_password_file="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
+    if [ -f "$provisioner_password_file" ]; then
+        log_info "Staging Step CA provisioner password for VM features..."
+        cp "$provisioner_password_file" "${hypervisor_scripts_dir}/provisioner_password.txt"
+    else
+        log_warn "Provisioner password file not found at $provisioner_password_file. Certificate generation may fail."
+    fi
 
-    for feature in $features; do
+     for feature in $features; do
         local feature_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_${feature}.sh"
         if [ ! -f "$feature_script_path" ]; then
             log_fatal "Feature script not found: $feature_script_path"

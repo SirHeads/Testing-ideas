@@ -4,6 +4,7 @@ services:
     command:
       - "-H"
       - "unix:///var/run/docker.sock"
+      - "--admin-password-file=/run/secrets/portainer_admin_password"
       - "--tlsverify"
       - "--tlscert=/certs/portainer.crt"
       - "--tlskey=/certs/portainer.key"
@@ -27,18 +28,28 @@ services:
         protocol: tcp
         mode: ingress
     networks:
-      - portainer_network
+      - traefik-public
     deploy:
       replicas: 1
       placement:
         constraints:
           - node.role == manager
-      labels: []
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)"
+        - "traefik.http.routers.portainer.entrypoints=websecure"
+        - "traefik.http.routers.portainer.tls=true"
+        - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    secrets:
+      - portainer_admin_password
 
 networks:
-  portainer_network:
-    driver: overlay
-    attachable: true
+  traefik-public:
+    external: true
 
 volumes:
   portainer_data: {}
+
+secrets:
+  portainer_admin_password:
+    external: true

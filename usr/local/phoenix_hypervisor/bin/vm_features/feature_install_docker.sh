@@ -170,6 +170,7 @@ cat <<EOF > /etc/docker/daemon.json
 }
 EOF
 
+
 # Configure Docker Client for mTLS for the root user
 log_info "Configuring Docker client for root user mTLS..."
 mkdir -p /root/.docker
@@ -179,9 +180,12 @@ cp "$DOCKER_CA_FILE" /root/.docker/ca.pem
 log_info "Docker client for root user configured successfully."
  
  # 6. Correct systemd service file and start Docker
- log_info "Step 6: Correcting systemd service file and starting Docker..."
+ log_info "Step 6: Cleaning up old Docker configurations and starting Docker..."
+ # Clean up any lingering override files from previous failed attempts
+ rm -rf /etc/systemd/system/docker.service.d
+ # Remove the conflicting -H fd:// argument from the main service file
+ sed -i 's|^ExecStart=/usr/bin/dockerd.*|ExecStart=/usr/bin/dockerd|' /usr/lib/systemd/system/docker.service
  # Remove the -H fd:// argument to ensure daemon.json is used
- sed -i 's/ -H fd:\/\///' /usr/lib/systemd/system/docker.service
  systemctl daemon-reload
  if ! systemctl enable docker || ! systemctl restart docker; then
      log_fatal "Failed to enable or restart Docker service."

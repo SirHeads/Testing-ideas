@@ -40,7 +40,8 @@
                 "base_setup",
                 "trusted_ca",
                 "step_cli",
-                "docker"
+                "docker",
+                "docker_proxy"
             ],
             "portainer_role": "primary",
             "swarm_role": "manager",
@@ -206,8 +207,8 @@
                         "type": "in",
                         "action": "ACCEPT",
                         "proto": "icmp",
-                        "source": "10.0.0.13",
-                        "comment": "Allow ICMP from hypervisor"
+                        "source": "10.0.0.0/24",
+                        "comment": "Allow ICMP from internal network"
                     },
                     {
                         "type": "in",
@@ -264,6 +265,22 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow outbound communication to Step CA for certificate requests"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "2376",
+                        "comment": "Allow Traefik to connect to the secure Docker API"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.12",
+                        "proto": "tcp",
+                        "port": "2375",
+                        "comment": "Allow Traefik to access the Docker API"
                     }
                 ]
             }
@@ -312,8 +329,7 @@
                 }
             ],
             "docker_stacks": [
-                "qdrant_service",
-                "thinkheads_ai_app"
+                "qdrant_service"
             ],
             "firewall": {
                 "enabled": true,
@@ -446,6 +462,38 @@
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow outbound communication to Step CA for certificate requests"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "2377",
+                        "comment": "Allow Swarm manager to communicate with worker"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "tcp",
+                        "port": "7946",
+                        "comment": "Allow Swarm node-to-node communication (TCP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "udp",
+                        "port": "7946",
+                        "comment": "Allow Swarm node-to-node communication (UDP)"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "source": "10.0.0.111",
+                        "proto": "udp",
+                        "port": "4789",
+                        "comment": "Allow Swarm overlay network traffic"
                     }
                 ]
             }

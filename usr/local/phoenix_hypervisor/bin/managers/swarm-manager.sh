@@ -125,9 +125,8 @@ label_node() {
 
 # =====================================================================================
 # FUNCTION: deploy_stack
-# DESCRIPTION: Deploys a Docker stack to the Swarm, dynamically injecting environment-specific
-#              configurations such as Traefik labels and environment variables from the
-#              stack's phoenix.json manifest.
+# DESCRIPTION: Deploys a Docker stack to the Swarm. If a phoenix.json manifest is present,
+#              it dynamically injects environment-specific configurations.
 # =====================================================================================
 deploy_stack() {
     local stack_name=""
@@ -161,50 +160,62 @@ deploy_stack() {
         log_fatal "'yq' is not installed. Please install it to proceed. (e.g., 'pip install yq')"
     fi
 
-    local stack_dir="${PHOENIX_BASE_DIR}/stacks/${stack_name}"
+    local stack_dir="/quickOS/portainer_stacks/${stack_name}"
     local compose_file="${stack_dir}/docker-compose.yml"
     local manifest_file="${stack_dir}/phoenix.json"
 
-    if [ ! -f "$compose_file" ] || [ ! -f "$manifest_file" ]; then
-        log_fatal "Stack '${stack_name}' not found or is missing required files."
-    fi
-
-    # --- Definitive Fix, Part 1: JSON Syntax Validation ---
-    if ! jq . "$manifest_file" > /dev/null 2>&1; then
-        log_fatal "Stack manifest file for '${stack_name}' is not valid JSON. Please check the syntax in: ${manifest_file}"
+    if [ ! -f "$compose_file" ]; then
+        log_fatal "Stack '${stack_name}' is missing a docker-compose.yml file."
     fi
 
     local manager_vmid=$(get_manager_vmid)
     local final_stack_name="${env_name}_${stack_name}"
 
-    log_info "Preparing dynamic deployment for stack '${stack_name}' in environment '${env_name}'..."
+    log_info "Preparing deployment for stack '${stack_name}' in environment '${env_name}'..."
     local temp_compose_file=$(mktemp)
     cp "$compose_file" "$temp_compose_file"
 
-    # --- Definitive Fix, Part 2: Resilient JQ Logic ---
-    # This command is now null-safe. It will only proceed if the entire path to the traefik_labels exists.
-    local services_with_labels=$(jq -r --arg env "$env_name" '.environments[$env].services | to_entries[] | select(.value.traefik_labels? and .value.traefik_labels != null) | .key' "$manifest_file")
-    for service in $services_with_labels; do
-        local labels=$(jq -r --arg env "$env_name" --arg svc "$service" '.environments[$env].services[$svc].traefik_labels[]' "$manifest_file")
-        if [ -n "$labels" ]; then
-            log_info "Injecting Traefik labels for service '${service}'..."
-            local yq_expr=".services.\"$service\".deploy.labels += [$(echo "$labels" | jq -R . | jq -s -c . | sed 's/\[//;s/\]//')]"
-            yq -i -y "$yq_expr" "$temp_compose_file"
+    # If a manifest file exists, validate it and perform dynamic substitutions.
+    if [ -f "$manifest_file" ]; then
+        log_info "Manifest file found. Validating and processing..."
+        if ! jq . "$manifest_file" > /dev/null 2>&1; then
+            log_fatal "Stack manifest file for '${stack_name}' is not valid JSON. Please check the syntax in: ${manifest_file}"
         fi
-    done
 
+        # --- Environment Variable Substitution ---
+        log_info "Injecting environment variables..."
+        local env_vars_json=$(jq -c --arg env "$env_name" '.environments[$env].variables // []' "$manifest_file")
+        echo "$env_vars_json" | jq -c '.[]' | while read -r var_obj; do
+            local var_name=$(echo "$var_obj" | jq -r '.name')
+            local var_value=$(echo "$var_obj" | jq -r '.value')
+            log_info "Substituting \${${var_name}} with '${var_value}'"
+            sed -i "s|\${${var_name}}|${var_value}|g" "$temp_compose_file"
+        done
+
+        # --- Traefik Label Injection (Resilient Logic) ---
+        local services_with_labels=$(jq -r --arg env "$env_name" '(.environments[$env].services // {}) | to_entries[] | select(.value.traefik_labels) | .key' "$manifest_file")
+        for service in $services_with_labels; do
+            local labels=$(jq -r --arg env "$env_name" --arg svc "$service" '.environments[$env].services[$svc].traefik_labels[]' "$manifest_file")
+            if [ -n "$labels" ]; then
+                log_info "Injecting Traefik labels for service '${service}'..."
+                local yq_expr=".services.\"$service\".deploy.labels += [$(echo "$labels" | jq -R . | jq -s -c . | sed 's/\[//;s/\]//')]"
+                yq -i -y "$yq_expr" "$temp_compose_file"
+            fi
+        done
+    else
+        log_info "No manifest file found. Proceeding with standard docker-compose.yml."
+    fi
+
+    # --- Host Mode Networking (Resilient Logic) ---
     if [ "$host_mode" = true ]; then
         log_info "Applying host mode networking to all services in the stack..."
         local services=$(yq -r '.services | keys | .[]' "$temp_compose_file")
         for service in $services; do
             local ports_expr=".services.\"$service\".ports"
             if yq -e "$ports_expr" "$temp_compose_file" > /dev/null; then
-                # Read the ports, modify them, and write back
-                local updated_ports=$(yq -r "$ports_expr | .[]" "$temp_compose_file" | while read -r port; do
-                    echo "${port}" | sed 's/ingress/host/'
-                done | yq -s -c '.')
-                yq -i -y "del($ports_expr)" "$temp_compose_file"
-                yq -i -y "$ports_expr = ${updated_ports}" "$temp_compose_file"
+                yq -i -y "$ports_expr.[].mode = \"host\"" "$temp_compose_file"
+            else
+                log_info "Service '${service}' has no ports defined. Skipping host mode modification."
             fi
         done
     fi

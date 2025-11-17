@@ -8,10 +8,22 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data_nfs:/qdrant/storage
+    networks:
+      - traefik-public
     deploy:
       replicas: 1
       placement:
         constraints: []
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)"
+        - "traefik.http.routers.qdrant.entrypoints=websecure"
+        - "traefik.http.routers.qdrant.tls=true"
+        - "traefik.http.services.qdrant.loadbalancer.server.port=6333"
+
+networks:
+  traefik-public:
+    external: true
 
 volumes:
   qdrant_data_nfs:
