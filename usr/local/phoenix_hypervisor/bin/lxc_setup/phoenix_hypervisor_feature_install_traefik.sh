@@ -21,7 +21,7 @@ source "${PHOENIX_BASE_DIR}/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-TRAEFIK_VERSION="v3.0.0"
+TRAEFIK_VERSION="v3.6.2"
 TRAEFIK_DOWNLOAD_URL="https://github.com/traefik/traefik/releases/download/${TRAEFIK_VERSION}/traefik_${TRAEFIK_VERSION}_linux_amd64.tar.gz"
 TRAEFIK_INSTALL_DIR="/usr/local/bin"
 TRAEFIK_CONFIG_DIR="/etc/traefik"
@@ -201,7 +201,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-Environment="DOCKER_HOST=ssh://root@10.0.0.111"
 ExecStart=${TRAEFIK_INSTALL_DIR}/traefik --configfile=${TRAEFIK_CONFIG_DIR}/traefik.yml
 ExecReload=/usr/bin/pkill -HUP traefik
 Restart=always
