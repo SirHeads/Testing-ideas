@@ -52,6 +52,19 @@ fi
 log_info "Context file set to $CONTEXT_FILE."
 
 
+# --- NEW: Wait for NFS mount ---
+log_info "Waiting for the persistent storage mount at /mnt/persistent..."
+mount_timeout=300 # 5 minutes
+mount_start_time=$SECONDS
+while ! mountpoint -q /mnt/persistent; do
+    if (( SECONDS - mount_start_time > mount_timeout )); then
+        log_fatal "Timeout reached while waiting for /mnt/persistent to be mounted."
+    fi
+    log_info "/mnt/persistent not yet mounted. Waiting 5 seconds..."
+    sleep 5
+done
+log_success "/mnt/persistent is mounted. Proceeding with Docker installation."
+
 # Idempotency Check: Check if Docker is already installed and running.
 log_info "Checking for existing Docker installation..."
 if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
@@ -109,51 +122,36 @@ log_info "Docker Engine installed successfully."
 # Step 5.5: Configure Docker Daemon with Internal DNS
 log_info "Step 5.5: Configuring Docker daemon with internal DNS..."
 INTERNAL_DNS_SERVER="10.0.0.13"
-CA_URL="https://10.0.0.10:9000"
-PROVISIONER_PASSWORD_FILE="/mnt/persistent/.step-ca/provisioner_password.txt"
-ROOT_CA_CERT_FILE="/usr/local/share/ca-certificates/phoenix_root_ca.crt"
 DOCKER_TLS_DIR="/etc/docker/tls"
 DOCKER_CERT_FILE="${DOCKER_TLS_DIR}/cert.pem"
 DOCKER_KEY_FILE="${DOCKER_TLS_DIR}/key.pem"
 DOCKER_CA_FILE="${DOCKER_TLS_DIR}/ca.pem"
 
-# --- BEGIN BOOTSTRAP FIX ---
-# This is a temporary fix to allow the VM to resolve the CA during initial creation.
-# The centralized dnsmasq service on the hypervisor will not have the CA's record
-# until a 'phoenix sync all' is run. This static entry bridges that gap.
-log_info "Temporarily adding static host entry for Step CA to bridge bootstrap DNS gap..."
-CA_IP="10.0.0.10" # This is the static IP of the Step-CA container from phoenix_lxc_configs.json
-CA_HOSTNAME="ca.internal.thinkheads.ai"
-# Idempotently add the hosts entry
-sed -i "/${CA_HOSTNAME}/d" /etc/hosts
-echo "${CA_IP} ${CA_HOSTNAME}" >> /etc/hosts
-log_info "Static host entry for ${CA_HOSTNAME} added to /etc/hosts."
-# --- END BOOTSTRAP FIX ---
+# --- NEW ARCHITECTURE: Move Certificates from /tmp ---
+log_info "Moving Docker daemon certificates from /tmp to final destination..."
+vm_temp_docker_cert_path="/tmp/docker-server-cert.pem"
+vm_temp_docker_key_path="/tmp/docker-server-key.pem"
 
-# Bootstrap Step CLI
-log_info "Waiting for DNS resolution of ca.internal.thinkheads.ai..."
-while ! getent hosts ca.internal.thinkheads.ai > /dev/null; do
-    log_info "DNS not ready yet. Retrying in 5 seconds..."
-    sleep 5
-done
-log_info "DNS resolution successful. Proceeding with Step CLI bootstrap..."
-
-log_info "Bootstrapping Step CLI to trust the internal CA..."
-if [ ! -f "$ROOT_CA_CERT_FILE" ]; then
-    log_fatal "Root CA certificate not found at $ROOT_CA_CERT_FILE. The 'trusted_ca' feature must run first."
+if [ ! -f "$vm_temp_docker_cert_path" ] || [ ! -f "$vm_temp_docker_key_path" ]; then
+    log_fatal "Docker daemon certificate or key not found in /tmp. Aborting."
 fi
-/usr/bin/step ca bootstrap --ca-url "$CA_URL" --fingerprint "$(/usr/bin/step certificate fingerprint "$ROOT_CA_CERT_FILE")" --force
 
-# Generate Docker Client Certificate
-log_info "Generating TLS certificate for the Docker daemon..."
 mkdir -p "$DOCKER_TLS_DIR"
-fqdn=$(hostname -f)
-/usr/bin/step ca certificate "$fqdn" "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" --provisioner "admin@thinkheads.ai" --provisioner-password-file "$PROVISIONER_PASSWORD_FILE" --force
-cp "/tmp/phoenix_ca.crt" "$DOCKER_CA_FILE"
+mv "$vm_temp_docker_cert_path" "$DOCKER_CERT_FILE"
+mv "$vm_temp_docker_key_path" "$DOCKER_KEY_FILE"
 
-# Securely remove the temporary files
-log_info "Securely removing temporary CA files..."
-# No longer need to remove files from /tmp, as we are using the mounted directory
+# The root CA is installed by the 'trusted_ca' feature, so we copy it from the system trust store.
+cp "/usr/local/share/ca-certificates/phoenix_root_ca.crt" "$DOCKER_CA_FILE"
+log_info "Docker TLS certificates placed successfully in ${DOCKER_TLS_DIR}."
+
+log_info "Setting ownership and permissions for Docker TLS certificates..."
+if ! chown nobody:nogroup "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" "$DOCKER_CA_FILE"; then
+    log_warn "Failed to set ownership on Docker TLS certificates."
+fi
+if ! chmod 644 "$DOCKER_CERT_FILE" "$DOCKER_KEY_FILE" "$DOCKER_CA_FILE"; then
+    log_warn "Failed to set permissions on Docker TLS certificates."
+fi
+log_success "Permissions set for Docker TLS certificates."
 
 # Configure Docker Daemon for mTLS
 log_info "Configuring Docker daemon for mTLS..."
@@ -170,7 +168,6 @@ cat <<EOF > /etc/docker/daemon.json
 }
 EOF
 
-
 # Configure Docker Client for mTLS for the root user
 log_info "Configuring Docker client for root user mTLS..."
 mkdir -p /root/.docker
@@ -184,7 +181,7 @@ log_info "Docker client for root user configured successfully."
  # Clean up any lingering override files from previous failed attempts
  rm -rf /etc/systemd/system/docker.service.d
  # Remove the conflicting -H fd:// argument from the main service file
- sed -i 's|^ExecStart=/usr/bin/dockerd.*|ExecStart=/usr/bin/dockerd|' /usr/lib/systemd/system/docker.service
+ sed -i 's|^ExecStart=/usr/bin/dockerd.*|ExecStart=/usr/bin/dockerd --config-file /etc/docker/daemon.json|' /usr/lib/systemd/system/docker.service
  # Remove the -H fd:// argument to ensure daemon.json is used
  systemctl daemon-reload
  if ! systemctl enable docker || ! systemctl restart docker; then
@@ -204,6 +201,21 @@ if ! usermod -aG docker "$USERNAME"; then
     log_fatal "Failed to add user '$USERNAME' to the docker group."
 fi
 log_info "User '$USERNAME' added to the docker group successfully."
+
+# --- NEW: Configure Docker Client Environment ---
+log_info "Configuring Docker client environment for user '$USERNAME'..."
+bashrc_path="/home/${USERNAME}/.bashrc"
+docker_host_export="export DOCKER_HOST=tcp://10.0.0.111:2376"
+if [ -f "$bashrc_path" ]; then
+    if ! grep -qF -- "$docker_host_export" "$bashrc_path"; then
+        echo -e "\n# Set Docker Host for Phoenix Swarm\n${docker_host_export}" >> "$bashrc_path"
+        log_success "Added DOCKER_HOST to ${bashrc_path}."
+    else
+        log_info "DOCKER_HOST is already set in ${bashrc_path}."
+    fi
+else
+    log_warn "Could not find .bashrc for user '$USERNAME' at ${bashrc_path}. Skipping DOCKER_HOST configuration."
+fi
 
 # Step 8 is now obsolete as docker-compose-plugin is installed with the main packages.
 log_info "Step 8: Docker Compose plugin is installed as part of Docker Engine."

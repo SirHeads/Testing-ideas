@@ -45,7 +45,10 @@ check_renewal_needed() {
     fi
 
     # Check SANs if required SANs are provided
-    if [ ${#required_sans[@]} -gt 0 ]; then
+    # If the manifest specifies no SANs, we don't enforce a match.
+    # An empty required_sans array after cleaning up will have a length of 1
+    # because of how readarray works with empty results.
+    if [ ${#required_sans[@]} -gt 1 ] || [ -n "${required_sans[0]}" ]; then
         local existing_sans
         existing_sans=$(openssl x509 -in "$cert_path" -noout -text | grep "DNS:" | sed 's/DNS://g' | tr -d ' ' | tr ',' '\n' | sort)
         local required_sans_sorted
@@ -87,7 +90,10 @@ renew_certificate() {
     log_info "Attempting to renew certificate for '${common_name}'..."
 
     # Ensure the target directory exists
-    mkdir -p "$(dirname "$cert_path")" || { log_error "Failed to create directory $(dirname "$cert_path")"; return 1; }
+    if ! mkdir -p "$(dirname "$cert_path")"; then
+        log_error "Failed to create directory $(dirname "$cert_path")"
+        return 1
+    fi
 
     local provisioner_password_file="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt"
     if [ ! -f "$provisioner_password_file" ]; then
@@ -141,19 +147,68 @@ renew_certificate() {
 }
 
 # =====================================================================================
+# Function: push_certificate_to_guest
+# Description: Pushes a certificate and key to a guest (VM or LXC).
+# =====================================================================================
+push_certificate_to_guest() {
+    local guest_id="$1"
+    local guest_type="$2"
+    local common_name="$3"
+    local source_cert_path="$4"
+    local source_key_path="$5"
+    local dest_cert_name="cert.pem"
+    local dest_key_name="key.pem"
+
+    log_info "Pushing certificate for '${common_name}' to ${guest_type} ${guest_id}..."
+
+    case "$guest_type" in
+        vm)
+            local cert_content=$(cat "$source_cert_path")
+            local key_content=$(cat "$source_key_path")
+            qm guest exec "$guest_id" -- /bin/bash -c "echo '${cert_content}' > /tmp/${dest_cert_name}" || log_fatal "Failed to write cert to VM ${guest_id}"
+            qm guest exec "$guest_id" -- /bin/bash -c "echo '${key_content}' > /tmp/${dest_key_name}" || log_fatal "Failed to write key to VM ${guest_id}"
+            ;;
+        lxc)
+            pct push "$guest_id" "$source_cert_path" "/tmp/${dest_cert_name}" || log_fatal "Failed to push cert to LXC ${guest_id}"
+            pct push "$guest_id" "$source_key_path" "/tmp/${dest_key_name}" || log_fatal "Failed to push key to LXC ${guest_id}"
+            ;;
+        *)
+            log_error "Unknown guest type: ${guest_type}"
+            return 1
+            ;;
+    esac
+    log_success "Successfully pushed certificate and key to ${guest_type} ${guest_id}."
+}
+
+# =====================================================================================
 # Function: main
 # Description: Main entry point for the script.
 # =====================================================================================
 main() {
     local force_renewal=false
-    if [[ "$1" == "--force" ]]; then
-        force_renewal=true
-        log_info "Forcing renewal of all certificates."
-    fi
+    local generate_only=false
+    for arg in "$@"; do
+        case "$arg" in
+            --force)
+                force_renewal=true
+                log_info "Forcing renewal of all certificates."
+                ;;
+            --generate-only)
+                generate_only=true
+                log_info "Generate-only mode enabled. Post-renewal commands will be skipped."
+                ;;
+        esac
+    done
 
     log_info "--- Starting Certificate Renewal Manager ---"
 
-    # Ensure the Step CLI is bootstrapped before trying to use it
+    local step_ca_ctid="103"
+    if ! pct status "$step_ca_ctid" > /dev/null 2>&1; then
+        log_warn "Step CA container (${step_ca_ctid}) is not running. Skipping certificate renewal."
+        log_info "--- Certificate Renewal Manager Finished (Skipped) ---"
+        exit 0
+    fi
+
     source "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_bootstrap_step_cli.sh"
 
     if [ ! -f "$CERT_MANIFEST_FILE" ]; then
@@ -162,39 +217,62 @@ main() {
 
     jq -c '.[]' "$CERT_MANIFEST_FILE" | while read -r cert_config; do
         local common_name=$(echo "$cert_config" | jq -r '.common_name')
+        local guest_id=$(echo "$cert_config" | jq -r '.guest_id')
+        local guest_type=$(echo "$cert_config" | jq -r '.guest_type')
         local cert_path=$(echo "$cert_config" | jq -r '.cert_path')
         local key_path=$(echo "$cert_config" | jq -r '.key_path')
-        local owner=$(echo "$cert_config" | jq -r '.owner')
-        local permissions=$(echo "$cert_config" | jq -r '.permissions')
         local post_renewal_command=$(echo "$cert_config" | jq -r '.post_renewal_command')
-        
-        # Read SANs from the manifest
+        local include_ca=$(echo "$cert_config" | jq -r '.include_ca // false')
         local sans_array
         readarray -t sans_array < <(echo "$cert_config" | jq -r '.sans[]? // ""')
 
         log_info "Processing certificate for: ${common_name}"
 
         if [ "$force_renewal" = true ] || check_renewal_needed "$cert_path" "${sans_array[@]}"; then
-            if renew_certificate "$common_name" "$cert_path" "$key_path" "$owner" "$permissions" "${sans_array[@]}"; then
-                log_info "Executing post-renewal command: ${post_renewal_command}"
-                if ! eval "$post_renewal_command"; then
-                    log_error "Post-renewal command failed for '${common_name}'."
-                else
-                    log_success "Post-renewal command executed successfully."
-                fi
+            if ! renew_certificate "$common_name" "$cert_path" "$key_path" "root:root" "640" "${sans_array[@]}"; then
+                log_warn "Failed to renew certificate for '${common_name}'. Skipping post-renewal steps."
+                continue
             fi
-        else
-            # If not forcing, still run the post-renewal for nginx to ensure permissions
-            if [ "$common_name" == "nginx.internal.thinkheads.ai" ]; then
-                log_info "Forcing post-renewal command for Nginx to ensure correct permissions..."
-                if ! eval "$post_renewal_command"; then
-                    log_error "Post-renewal command failed for '${common_name}'."
-                else
-                    log_success "Post-renewal command executed successfully."
+
+            if [ "$generate_only" = false ]; then
+                local guest_running=false
+                if [ "$guest_type" == "vm" ] && qm status "$guest_id" > /dev/null 2>&1; then
+                    guest_running=true
+                elif [ "$guest_type" == "lxc" ] && pct status "$guest_id" > /dev/null 2>&1; then
+                    guest_running=true
                 fi
+
+                if [ "$guest_running" = true ]; then
+                    push_certificate_to_guest "$guest_id" "$guest_type" "$common_name" "$cert_path" "$key_path"
+                    
+                    if [ "$include_ca" = true ]; then
+                        log_info "Pushing root CA for ${common_name} as requested by manifest..."
+                        local root_ca_path="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
+                        if [ -f "$root_ca_path" ]; then
+                            local ca_content=$(cat "$root_ca_path")
+                            case "$guest_type" in
+                                vm) qm guest exec "$guest_id" -- /bin/bash -c "echo '${ca_content}' > /tmp/ca.pem" || log_warn "Failed to write CA to VM" ;;
+                                lxc) pct push "$guest_id" "$root_ca_path" "/tmp/ca.pem" || log_warn "Failed to push CA to LXC" ;;
+                            esac
+                        else
+                            log_warn "Root CA certificate not found at ${root_ca_path}. Skipping push."
+                        fi
+                    fi
+
+                    log_info "Executing post-renewal command for '${common_name}'..."
+                    if ! eval "$post_renewal_command"; then
+                        log_error "Post-renewal command failed for '${common_name}'."
+                    else
+                        log_success "Post-renewal command executed successfully."
+                    fi
+                else
+                    log_warn "Guest ${guest_id} is not running. Skipping certificate push and post-renewal command for '${common_name}'."
+                fi
+            else
+                log_info "Skipping certificate push and post-renewal command due to --generate-only flag."
             fi
         fi
-        echo # Add a newline for cleaner log output
+        echo
     done
 
     log_info "--- Certificate Renewal Manager Finished ---"

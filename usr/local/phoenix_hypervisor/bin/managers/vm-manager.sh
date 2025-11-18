@@ -293,18 +293,17 @@ orchestrate_vm() {
         apply_volumes "$VMID"
         log_info "Step 6: Completed."
 
-
         log_info "Step 7: Managing pre-feature snapshots for VM $VMID..."
         manage_snapshots "$VMID" "pre-features"
+        log_info "Step 7: Completed."
+
+        log_info "Step 8: Preparing CA staging area for VM $VMID..."
+        prepare_vm_ca_staging_area "$VMID"
         log_info "Step 8: Completed."
 
-        log_info "Step 9: Preparing CA staging area for VM $VMID..."
-        prepare_vm_ca_staging_area "$VMID"
-        log_info "Step 9: Completed."
-
-        log_info "Step 10: Applying features to VM $VMID..."
+        log_info "Step 9: Applying features to VM $VMID..."
         apply_vm_features "$VMID"
-        log_info "Step 10: Completed."
+        log_info "Step 9: Completed."
 
 
         log_info "Step 10: Managing post-feature snapshots for VM $VMID..."
@@ -981,6 +980,25 @@ prepare_vm_ca_staging_area() {
         log_fatal "Failed to push Full-Chain CA certificate to VM ${VMID}."
     fi
 
+    # --- NEW: Push Docker Daemon Certificates ---
+    log_info "Pushing Docker daemon certificates to VM's temporary directory..."
+    local docker_cert_source_path="/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-cert.pem"
+    local docker_key_source_path="/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-key.pem"
+    local vm_temp_docker_cert_path="/tmp/docker-server-cert.pem"
+    local vm_temp_docker_key_path="/tmp/docker-server-key.pem"
+
+    if [ -f "$docker_cert_source_path" ] && [ -f "$docker_key_source_path" ]; then
+        if ! qm_push_file "$VMID" "$docker_cert_source_path" "$vm_temp_docker_cert_path"; then
+            log_fatal "Failed to push Docker daemon certificate to VM ${VMID}."
+        fi
+        if ! qm_push_file "$VMID" "$docker_key_source_path" "$vm_temp_docker_key_path"; then
+            log_fatal "Failed to push Docker daemon key to VM ${VMID}."
+        fi
+        log_success "Docker daemon certificates pushed successfully."
+    else
+        log_warn "Docker daemon certificate or key not found on hypervisor. Skipping push."
+    fi
+
     log_success "CA staging area for VM ${VMID} is ready."
 }
 
@@ -1033,6 +1051,31 @@ main_vm_orchestrator() {
     case "$action" in
         create)
             log_info "Starting 'create' workflow for VMID $vmid..."
+            
+            # --- Pre-create persistent directories ---
+            ensure_persistent_dirs_exist "$vmid"
+
+            # --- NEW: Proactively create and permission Docker certs directory on hypervisor ---
+            local persistent_volume_path
+            persistent_volume_path=$(jq_get_vm_value "$vmid" "(.volumes // [])[] | select(.type == \"nfs\") | .path" | head -n 1 || echo "")
+            if [ -n "$persistent_volume_path" ]; then
+                local docker_certs_dir="${persistent_volume_path}/docker/certs"
+                if [ ! -d "$docker_certs_dir" ]; then
+                    log_info "Proactively creating Docker certs directory at: $docker_certs_dir"
+                    mkdir -p "$docker_certs_dir" || log_fatal "Failed to create Docker certs directory."
+                fi
+                log_info "Setting ownership and permissions for persistent volume..."
+                chown -R nobody:nogroup "$persistent_volume_path" || log_warn "Failed to set ownership on persistent volume."
+                chmod -R 777 "$persistent_volume_path" || log_warn "Failed to set permissions on persistent volume."
+            fi
+
+            # --- Centralized Certificate Generation (Generate-Only Mode) ---
+            log_info "Pre-generating certificates in generate-only mode before VM creation..."
+            if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --generate-only; then
+                log_fatal "Certificate pre-generation failed. Aborting create workflow."
+            fi
+            log_success "Certificate pre-generation complete."
+
             orchestrate_vm "$vmid"
             log_info "'create' workflow completed for VMID $vmid."
             ;;
@@ -1068,6 +1111,32 @@ main_vm_orchestrator() {
             exit 1
             ;;
     esac
+}
+
+# =====================================================================================
+# Function: ensure_persistent_dirs_exist
+# Description: Parses the configuration for a given VMID and creates any host-side
+#              directories required for its NFS volumes before the VM is created.
+# =====================================================================================
+ensure_persistent_dirs_exist() {
+    local VMID="$1"
+    log_info "Ensuring persistent directories exist for VMID: $VMID..."
+
+    local volumes_json
+    volumes_json=$(jq_get_vm_value "$VMID" "(.volumes // [])[] | select(.type == \"nfs\")" || echo "")
+
+    if [ -z "$volumes_json" ]; then
+        log_info "No NFS volumes defined for VM $VMID. Skipping directory creation."
+        return 0
+    fi
+
+    echo "$volumes_json" | jq -c '.' | while read -r volume; do
+        local host_path=$(echo "$volume" | jq -r '.path')
+        if [ -n "$host_path" ] && [ ! -d "$host_path" ]; then
+            log_info "Creating host path directory for NFS volume: $host_path"
+            mkdir -p "$host_path" || log_fatal "Failed to create host path directory '$host_path'."
+        fi
+    done
 }
 
 # If the script is executed directly, call the main orchestrator

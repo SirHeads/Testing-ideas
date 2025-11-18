@@ -1,29 +1,29 @@
-# Diagnostic Commands
+# Diagnostic Commands for Certificate Renewal Issue
 
-This document provides the necessary commands to check the status and logs of the core proxy services.
+Please run the following commands on your Proxmox host to diagnose the file permission issues within the guest VMs.
 
-## Traefik (LXC 102)
+## VM 1002 (drphoenix-agent)
 
-### Check Status
+### 1. Check the contents and permissions of the /etc/docker/tls directory
 ```bash
-pct exec 102 -- systemctl status traefik
+qm guest exec 1002 -- /bin/ls -la /etc/docker/tls
 ```
 
-### View Logs
+### 2. Check the permissions of the /etc/docker/tls directory itself
 ```bash
-pct exec 102 -- journalctl -u traefik -n 40
-```
-*(Use `-f` to follow the logs in real-time)*
-
-## Nginx (LXC 101)
-
-### Check Status
-```bash
-pct exec 101 -- systemctl status nginx
+qm guest exec 1002 -- /bin/ls -ld /etc/docker/tls
 ```
 
-### View Logs
+## VM 1001 (docker-daemon)
+
+### 1. Check the contents and permissions of the /etc/docker/tls directory
 ```bash
-pct exec 101 -- journalctl -u nginx -n 40
+qm guest exec 1001 -- /bin/ls -la /etc/docker/tls
 ```
-*(Use `-f` to follow the logs in real-time)*
+
+### 2. Check the permissions of the /etc/docker/tls directory itself
+```bash
+qm guest exec 1001 -- /bin/ls -ld /etc/docker/tls
+```
+
+Please paste the full output of these commands.

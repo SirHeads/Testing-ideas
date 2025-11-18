@@ -107,7 +107,8 @@ main() {
 
     wait_for_ca
     bootstrap_step_cli
-    request_traefik_certificate
+    # Certificate request is now handled by the centralized certificate-renewal-manager
+    # request_traefik_certificate
     setup_traefik_service
 
     log_info "Traefik application script completed for CTID $CTID."

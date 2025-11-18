@@ -4,53 +4,61 @@
         "sans": [
             "*.internal.thinkheads.ai"
         ],
+        "guest_id": 101,
+        "guest_type": "lxc",
         "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.crt",
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx.internal.thinkheads.ai.key",
         "owner": "root:www-data",
-        "permissions": "640",
-        "post_renewal_command": "pct exec 101 -- systemctl reload nginx"
+        "post_renewal_command": "pct exec 101 -- /bin/bash -c 'mkdir -p /etc/nginx/ssl && mv /tmp/cert.pem /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt && mv /tmp/key.pem /etc/nginx/ssl/nginx.internal.thinkheads.ai.key && chown root:www-data /etc/nginx/ssl/* && chmod 644 /etc/nginx/ssl/*.crt && chmod 640 /etc/nginx/ssl/*.key && systemctl reload nginx'"
     },
     {
         "common_name": "portainer.internal.thinkheads.ai",
+        "guest_id": 1001,
+        "guest_type": "vm",
         "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt",
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key",
-        "owner": "nobody:nogroup",
-        "permissions": "600",
-        "post_renewal_command": "qm guest exec 1001 -- docker service update --force prod_portainer_service_portainer"
+        "owner": "root:root",
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c 'mkdir -p /var/lib/docker/volumes/portainer_data/_data/certs && mv /tmp/cert.pem /var/lib/docker/volumes/portainer_data/_data/certs/portainer.crt && mv /tmp/key.pem /var/lib/docker/volumes/portainer_data/_data/certs/portainer.key && chown 100000:100000 /var/lib/docker/volumes/portainer_data/_data/certs/* && chmod 644 /var/lib/docker/volumes/portainer_data/_data/certs/*.crt && chmod 600 /var/lib/docker/volumes/portainer_data/_data/certs/*.key && docker service update --force prod_portainer_service_portainer'"
     },
     {
         "common_name": "traefik.internal.thinkheads.ai",
+        "guest_id": 102,
+        "guest_type": "lxc",
         "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/traefik.internal.thinkheads.ai.crt",
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/traefik.internal.thinkheads.ai.key",
         "owner": "root:root",
-        "permissions": "644",
-        "post_renewal_command": "pct exec 102 -- /bin/bash -c 'while [ ! -f /etc/traefik/certs/traefik.internal.thinkheads.ai.crt ]; do sleep 1; done; systemctl reload traefik'"
+        "post_renewal_command": "pct exec 102 -- /bin/bash -c 'mkdir -p /etc/traefik/certs && mv /tmp/cert.pem /etc/traefik/certs/traefik.internal.thinkheads.ai.crt && mv /tmp/key.pem /etc/traefik/certs/traefik.internal.thinkheads.ai.key && chown root:root /etc/traefik/certs/traefik.internal.thinkheads.ai.crt /etc/traefik/certs/traefik.internal.thinkheads.ai.key && chmod 644 /etc/traefik/certs/traefik.internal.thinkheads.ai.crt && chmod 600 /etc/traefik/certs/traefik.internal.thinkheads.ai.key && systemctl restart traefik'"
     },
     {
         "common_name": "drphoenix-agent.internal.thinkheads.ai",
+        "guest_id": 1002,
+        "guest_type": "vm",
         "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1002/docker/certs/cert.pem",
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1002/docker/certs/key.pem",
         "owner": "root:root",
-        "permissions": "600",
-        "post_renewal_command": "qm guest exec 1002 -- systemctl restart docker"
+        "post_renewal_command": "qm guest exec 1002 -- /bin/bash -c 'mkdir -p /etc/docker/tls && mv /tmp/cert.pem /etc/docker/tls/cert.pem && mv /tmp/key.pem /etc/docker/tls/key.pem && chown root:root /etc/docker/tls/* && chmod 644 /etc/docker/tls/cert.pem && chmod 600 /etc/docker/tls/key.pem && (systemctl is-active --quiet docker && systemctl reload docker || systemctl start docker)'"
     },
     {
         "common_name": "docker-daemon.internal.thinkheads.ai",
         "sans": [
-            "10.0.0.111"
+            "10.0.0.111",
+            "127.0.0.1"
         ],
+        "guest_id": 1001,
+        "guest_type": "vm",
         "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-cert.pem",
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-key.pem",
         "owner": "root:root",
-        "permissions": "600",
-        "post_renewal_command": "qm guest exec 1001 -- systemctl restart docker"
+        "include_ca": true,
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c 'mkdir -p /etc/docker/tls && mv /tmp/cert.pem /etc/docker/tls/cert.pem && mv /tmp/key.pem /etc/docker/tls/key.pem && mv /tmp/ca.pem /etc/docker/tls/ca.pem && chown root:root /etc/docker/tls/* && chmod 644 /etc/docker/tls/cert.pem /etc/docker/tls/ca.pem && chmod 600 /etc/docker/tls/key.pem && (systemctl is-active --quiet docker && systemctl reload docker || systemctl start docker)'"
     },
     {
         "common_name": "traefik-client.internal.thinkheads.ai",
+        "guest_id": 102,
+        "guest_type": "lxc",
         "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/client-cert.pem",
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/client-key.pem",
         "owner": "root:root",
-        "permissions": "644",
-        "post_renewal_command": "echo \"Certificate renewed, Traefik will be restarted by the sync script.\""
+        "post_renewal_command": "pct exec 102 -- /bin/bash -c 'mkdir -p /etc/traefik/certs && mv /tmp/cert.pem /etc/traefik/certs/client-cert.pem && mv /tmp/key.pem /etc/traefik/certs/client-key.pem && chown root:root /etc/traefik/certs/client-cert.pem /etc/traefik/certs/client-key.pem && chmod 644 /etc/traefik/certs/client-cert.pem && chmod 600 /etc/traefik/certs/client-key.pem && systemctl restart traefik'"
     }
 ]

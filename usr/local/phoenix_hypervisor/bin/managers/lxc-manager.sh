@@ -1570,6 +1570,16 @@ main_lxc_orchestrator() {
             validate_inputs "$ctid"
             log_info "Starting 'create' workflow for CTID $ctid..."
 
+            # --- Pre-create persistent directories ---
+            ensure_persistent_dirs_exist "$ctid"
+
+            # --- Centralized Certificate Generation ---
+            log_info "Ensuring all certificates are generated before container creation..."
+            if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh"; then
+                log_fatal "Certificate generation failed. Aborting create workflow."
+            fi
+            log_success "Certificate warehouse is up to date."
+
             if ensure_container_defined "$ctid"; then
                 run_pct_command stop "$ctid" || log_info "Container $ctid was not running. Proceeding with configuration."
                 
@@ -1696,6 +1706,31 @@ main_lxc_orchestrator() {
             exit 1
             ;;
     esac
+}
+
+# =====================================================================================
+# Function: ensure_persistent_dirs_exist
+# Description: Parses the configuration for a given CTID and creates any host-side
+#              directories required for its mount points before the container is created.
+# =====================================================================================
+ensure_persistent_dirs_exist() {
+    local CTID="$1"
+    log_info "Ensuring persistent directories exist for CTID: $CTID..."
+
+    local mounts
+    mounts=$(jq_get_array "$CTID" "(.mount_points // [])[]" || echo "")
+
+    if [ -n "$mounts" ]; then
+        for mount_config in $(echo "$mounts" | jq -c '.'); do
+            local host_path=$(echo "$mount_config" | jq -r '.host_path')
+            if [ -n "$host_path" ] && [ ! -d "$host_path" ]; then
+                log_info "Creating host path directory for mount point: $host_path"
+                mkdir -p "$host_path" || log_fatal "Failed to create host path directory '$host_path'."
+            fi
+        done
+    else
+        log_info "No host path mount points to create for CTID $CTID."
+    fi
 }
 
 # If the script is executed directly, call the main orchestrator

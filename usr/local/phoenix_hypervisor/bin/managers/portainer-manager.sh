@@ -19,7 +19,18 @@ PHOENIX_BASE_DIR=$(cd "${SCRIPT_DIR}/../.." &> /dev/null && pwd)
 
 # --- Source common utilities ---
 source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
-source "${PHOENIX_BASE_DIR}/bin/managers/vm-manager.sh" # Source vm-manager.sh for run_qm_command
+source "${PHOENIX_BASE_DIR}/bin/managers/vm-manager.sh"
+
+# --- NEW: Wrapper for Docker commands in VM 1001 ---
+run_docker_command_in_vm() {
+    local vmid="$1"
+    shift
+    local docker_command="$@"
+    # The DOCKER_HOST export has been removed.
+    # The command will now rely on the default Docker context ('phoenix') inside the VM,
+    # which is configured for secure mTLS communication.
+    run_qm_command guest exec "$vmid" -- /bin/bash -c "${docker_command}"
+}
 
 # --- Load external configurations ---
 # Rely on HYPERVISOR_CONFIG_FILE exported from phoenix_hypervisor_common_utils.sh
@@ -192,103 +203,6 @@ get_or_create_portainer_api_key() {
 }
 
 
-# =====================================================================================
-# Function: ensure_portainer_certificates
-# Description: Ensures that a valid TLS certificate for Portainer is generated and
-#              in place before the service starts.
-# Arguments:
-#   $1 - The VMID of the Portainer server.
-#   $2 - The persistent volume path on the hypervisor.
-#   $3 - The FQDN for the Portainer service.
-# Returns:
-#   None. Exits with a fatal error if certificate generation fails.
-# =====================================================================================
-ensure_portainer_certificates() {
-    local VMID="$1"
-    local persistent_volume_path="$2"
-    local portainer_fqdn="$3"
-    
-    log_info "Ensuring TLS certificates are in place for Portainer on VM ${VMID}..."
-
-    local hypervisor_cert_dir="${persistent_volume_path}/portainer/certs"
-    mkdir -p "$hypervisor_cert_dir" || log_fatal "Failed to create Portainer cert directory on hypervisor."
-
-    local cert_file="${hypervisor_cert_dir}/portainer.crt"
-    local key_file="${hypervisor_cert_dir}/portainer.key"
-
-    # Idempotency Check: If certs exist and are valid, do nothing.
-    if [ -f "$cert_file" ] && [ -f "$key_file" ]; then
-        if openssl x509 -in "$cert_file" -checkend 86400 >/dev/null 2>&1; then
-            log_info "Existing Portainer certificate is valid for more than 24 hours. Skipping generation."
-            return 0
-        else
-            log_warn "Existing Portainer certificate is expiring soon or has expired. Generating a new one."
-        fi
-    fi
-
-    log_info "Requesting new Portainer certificate for ${portainer_fqdn}..."
-    
-    # Ensure the host's step-cli is bootstrapped
-    step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(cat /mnt/pve/quickOS/lxc-persistent-data/103/ssl/root_ca.fingerprint)" --force
-
-    # Dynamically get the IP address for the SAN
-    local vm_ip=$(jq_get_vm_value "$VMID" ".network_config.ip" | cut -d'/' -f1)
-    if [ -z "$vm_ip" ]; then
-        log_fatal "Could not determine IP address for VM ${VMID} to include in certificate SAN."
-    fi
-
-    log_info "Generating certificate with SANs for both FQDN (${portainer_fqdn}) and IP (${vm_ip})..."
-    if ! step ca certificate "$portainer_fqdn" "$cert_file" "$key_file" --provisioner "admin@thinkheads.ai" --provisioner-password-file "/mnt/pve/quickOS/lxc-persistent-data/103/ssl/provisioner_password.txt" --force --san "$vm_ip"; then
-        log_fatal "Failed to obtain Portainer certificate from Step CA."
-    fi
-
-    # --- User Requested Validation ---
-    log_info "Validating newly generated certificate..."
-    openssl x509 -in "$cert_file" -noout -text | grep -A 2 "Validity"
-    if ! openssl x509 -in "$cert_file" -checkend 0 >/dev/null 2>&1; then
-        log_fatal "Newly generated certificate is already expired!"
-    fi
-    log_success "Certificate validation passed."
-    # --- End Validation ---
-
-    log_success "Portainer TLS certificate generated and placed in ${hypervisor_cert_dir}."
-
-    log_info "Setting ownership of certs directory to root:root for Docker bind mount access..."
-    if ! chown -R root:root "$hypervisor_cert_dir"; then
-        log_fatal "Failed to set ownership on Portainer certs directory."
-    fi
-    log_success "Permissions set successfully."
-
-    # --- BEGIN PHOENIX-23 FIX ---
-    # Concatenate the server certificate and the intermediate CA certificate into the final cert file
-    log_info "Creating full-chain certificate for Portainer..."
-    local intermediate_ca_source="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_ca.crt"
-    if [ ! -f "$intermediate_ca_source" ]; then
-        log_fatal "Intermediate CA certificate not found at $intermediate_ca_source. Cannot proceed."
-    fi
-    cat "$intermediate_ca_source" >> "$cert_file"
-    log_success "Full-chain certificate created successfully."
-
-    # Copy the root CA certificate to the Portainer certs directory
-    log_info "Copying root CA certificate to Portainer certs directory..."
-    local root_ca_source="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
-    local ca_dest="${hypervisor_cert_dir}/ca.pem"
-    if [ ! -f "$root_ca_source" ]; then
-        log_fatal "Root CA certificate not found at $root_ca_source. Cannot proceed."
-    fi
-    if ! cp "$root_ca_source" "$ca_dest"; then
-        log_fatal "Failed to copy root CA certificate to $ca_dest."
-    fi
-    log_success "Root CA certificate copied to $ca_dest."
-
-    # Set correct permissions on all certificate files
-    log_info "Setting permissions on all certificate files..."
-    if ! chmod 644 "${hypervisor_cert_dir}"/*; then
-        log_fatal "Failed to set permissions on certificate files."
-    fi
-    log_success "Certificate file permissions set successfully."
-    # --- END PHOENIX-23 FIX ---
-}
 
 # =====================================================================================
 # Function: deploy_portainer_instances
@@ -331,18 +245,16 @@ deploy_portainer_instances() {
                     log_warn "--- RESETTING PORTAINER ---"
                     log_info "Forcefully removing Portainer stack and volumes..."
                     # The '-v' flag removes the named volumes associated with the stack.
-                    run_qm_command guest exec "$VMID" -- /bin/bash -c "docker stack rm prod_portainer_service" || log_warn "Portainer stack was not running or failed to stop cleanly."
+                    run_docker_command_in_vm "$VMID" "docker stack rm prod_portainer_service" || log_warn "Portainer stack was not running or failed to stop cleanly."
                     log_info "Waiting for stack removal to complete..."
                     sleep 10 # Give the stack time to be removed before deleting the volume
                     log_info "Forcefully removing Portainer data volume to ensure a clean slate..."
-                    run_qm_command guest exec "$VMID" -- docker volume rm prod_portainer_service_portainer_data || log_warn "Portainer data volume did not exist or could not be removed."
+                    run_docker_command_in_vm "$VMID" "docker volume rm prod_portainer_service_portainer_data" || log_warn "Portainer data volume did not exist or could not be removed."
                     log_info "--- PORTAINER RESET COMPLETE ---"
                 fi
 
                 # --- DYNAMIC CERTIFICATE GENERATION ---
-                local portainer_fqdn=$(get_global_config_value '.portainer_api.portainer_hostname')
-                local hypervisor_cert_dir="/quickOS/vm-persistent-data/1001/portainer/certs"
-                ensure_portainer_certificates "$VMID" "/quickOS/vm-persistent-data/1001" "$portainer_fqdn"
+                # This is now handled by the centralized certificate-renewal-manager
 
                 # --- UNIFIED STACK DEPLOYMENT ---
                 log_info "Executing unified swarm stack deploy for Portainer server on VM $VMID..."
@@ -428,7 +340,7 @@ deploy_portainer_instances() {
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute TLS-enabled 'docker run' for Portainer agent on VM $VMID."
                 else
-                    if ! run_qm_command guest exec "$VMID" -- /bin/bash -c "$docker_command"; then
+                    if ! run_docker_command_in_vm "$VMID" "$docker_command"; then
                         log_fatal "Failed to deploy Portainer agent on VM $VMID."
                     fi
                 fi
@@ -461,12 +373,12 @@ ensure_portainer_admin_secret() {
 
     # Check if the secret already exists inside the Swarm manager VM
     local secret_exists_output
-    secret_exists_output=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker secret ls --filter name=${secret_name} -q")
+    secret_exists_output=$(run_docker_command_in_vm "$manager_vmid" "docker secret ls --filter name=${secret_name} -q")
 
     if [ -z "$secret_exists_output" ]; then
         log_info "Secret '${secret_name}' not found. Creating it now..."
         # Create the secret by piping the password directly to the command
-        if ! run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "printf '%s' '${admin_password}' | docker secret create ${secret_name} -"; then
+        if ! run_docker_command_in_vm "$manager_vmid" "printf '%s' '${admin_password}' | docker secret create ${secret_name} -"; then
             log_fatal "Failed to create Docker Swarm secret '${secret_name}'."
         fi
         log_success "Docker Swarm secret '${secret_name}' created successfully."
@@ -489,7 +401,7 @@ ensure_swarm_manager_active() {
     fi
 
     # Check the node's self-reported status.
-    local is_manager=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker info --format '{{.Swarm.ControlAvailable}}'")
+    local is_manager=$(run_docker_command_in_vm "$manager_vmid" "docker info --format '{{.Swarm.ControlAvailable}}'")
 
     if [[ "$is_manager" == "true" ]]; then
         log_info "VM ${manager_vmid} correctly identifies as an active Swarm manager."
@@ -500,7 +412,7 @@ ensure_swarm_manager_active() {
         # The --force-new-cluster flag is critical. It tells the node to become the manager
         # of a new cluster, but because the Swarm state is preserved on disk, it effectively
         # re-asserts leadership over the *existing* cluster.
-        run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker swarm init --force-new-cluster --advertise-addr ${manager_ip}"
+        run_docker_command_in_vm "$manager_vmid" "docker swarm init --force-new-cluster --advertise-addr ${manager_ip}"
         log_success "Successfully re-initialized Swarm leadership on VM ${manager_vmid}."
     fi
 
@@ -537,7 +449,7 @@ ensure_swarm_cluster_active() {
         log_info "Checking status of worker node ${worker_hostname} (VM ${worker_vmid})..."
         
         # Check if the node is already in the swarm
-        local node_status=$(run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker node ls --filter \"name=${worker_hostname}\" --format '{{.Status}}'")
+        local node_status=$(run_docker_command_in_vm "$manager_vmid" "docker node ls --filter \"name=${worker_hostname}\" --format '{{.Status}}'")
         
         if [[ "$node_status" == "Ready" ]]; then
             log_info "Worker node ${worker_hostname} is already part of the swarm and ready."
@@ -593,13 +505,20 @@ sync_all() {
     export PHOENIX_RESET_PORTAINER=${1:-false}
     log_info "--- Starting Full System State Synchronization ---"
 
-    # --- NEW STAGE 0: Sync Stack Files & Ensure Permissions ---
+    # --- STAGE 0: Centralized Certificate Generation ---
+    log_info "--- Stage 0: Generating all certificates from manifest ---"
+    if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
+        log_fatal "Centralized certificate generation failed. Aborting sync."
+    fi
+    log_success "All certificates generated/validated successfully."
+
+    # --- STAGE 1: Sync Stack Files & Ensure Permissions ---
     sync_stack_files
     log_info "Ensuring correct permissions on stacks directory..."
     chmod -R 777 /quickOS/portainer_stacks/ || log_fatal "Failed to set permissions on /quickOS/portainer_stacks/"
 
-    # --- STAGE 1: CERTIFICATE GENERATION & CORE INFRASTRUCTURE ---
-    log_info "--- Stage 1: Synchronizing Certificates, DNS, and Firewall ---"
+    # --- STAGE 2: CERTIFICATE GENERATION & CORE INFRASTRUCTURE ---
+    log_info "--- Stage 2: Synchronizing DNS, and Firewall ---"
 
     # Ensure the Proxmox host trusts our internal CA before proceeding
     log_info "Ensuring Step-CA root certificate is present on the Proxmox host..."
@@ -637,14 +556,28 @@ sync_all() {
     log_info "Running certificate renewal manager to ensure all certificates are up to date..."
 
     log_info "--- PRE-CERT RENEWAL DOCKER STATUS ---"
-    run_qm_command guest exec 1001 -- /bin/bash -c "docker info" || log_warn "Pre-renewal docker info command failed."
+    run_docker_command_in_vm 1001 "docker info" || log_warn "Pre-renewal docker info command failed."
 
     if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
         log_fatal "Certificate renewal manager failed. Aborting."
     fi
 
+    # --- NEW: Re-apply Docker client context to use renewed certs ---
+    log_info "Re-applying Docker client context to ensure it uses the latest certificates..."
+    local docker_proxy_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_docker_proxy.sh"
+    if [ -f "$docker_proxy_script_path" ]; then
+        # Update context on all Docker hosts (manager and workers)
+        local docker_vmids=$(jq -r '.vms[] | select(.swarm_role) | .vmid' "$VM_CONFIG_FILE")
+        for vmid in $docker_vmids; do
+            log_info "Updating Docker context on VM ${vmid}..."
+            run_qm_command guest exec "$vmid" -- /bin/bash -c "$(cat "$docker_proxy_script_path")" || log_warn "Failed to re-apply Docker client context in VM ${vmid}."
+        done
+    else
+        log_warn "Docker proxy script not found at ${docker_proxy_script_path}. Skipping context update."
+    fi
+
     log_info "--- POST-CERT RENEWAL DOCKER STATUS ---"
-    run_qm_command guest exec 1001 -- /bin/bash -c "docker info" || log_warn "Post-renewal docker info command failed."
+    run_docker_command_in_vm 1001 "docker info" || log_warn "Post-renewal docker info command failed."
     log_success "Certificate renewal manager completed successfully."
 
     # --- STAGE 2: ENSURE SWARM CLUSTER IS ACTIVE ---
@@ -653,9 +586,9 @@ sync_all() {
 
     log_info "--- Ensuring Traefik overlay network exists ---"
     local manager_vmid=$(jq -r '.vms[] | select(.swarm_role == "manager") | .vmid' "$VM_CONFIG_FILE")
-    if ! run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker network inspect traefik-public > /dev/null 2>&1"; then
+    if ! run_docker_command_in_vm "$manager_vmid" "docker network inspect traefik-public > /dev/null 2>&1"; then
         log_info "Traefik overlay network not found. Creating it now..."
-        run_qm_command guest exec "$manager_vmid" -- /bin/bash -c "docker network create --driver overlay --attachable traefik-public" || log_fatal "Failed to create Traefik overlay network."
+        run_docker_command_in_vm "$manager_vmid" "docker network create --driver overlay --attachable traefik-public" || log_fatal "Failed to create Traefik overlay network."
         log_success "Traefik overlay network created successfully."
     else
         log_info "Traefik overlay network already exists."
