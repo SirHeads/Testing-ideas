@@ -201,6 +201,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment="DOCKER_HOST=ssh://root@10.0.0.111"
 ExecStart=${TRAEFIK_INSTALL_DIR}/traefik --configfile=${TRAEFIK_CONFIG_DIR}/traefik.yml
 ExecReload=/usr/bin/pkill -HUP traefik
 Restart=always

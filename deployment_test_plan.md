@@ -1,80 +1,83 @@
-# Portainer Admin User Creation - Firewall Troubleshooting Plan
+# Phoenix Post-Sync Verification Plan
 
-This document outlines a comprehensive test plan to diagnose the suspected firewall issue preventing the successful creation of the Portainer admin user during the `phoenix sync all` process.
+This document provides a step-by-step guide to verify the health and functionality of the Phoenix environment after the initial `phoenix sync all` command has been executed.
 
-## Phase 1: Declarative Firewall Configuration Review
+## 1. Core Component Health Check
 
-The first step is to conduct a thorough review of all declarative firewall rules defined in the project's JSON configuration files. This will establish a baseline of the intended firewall posture.
+First, ensure all the core infrastructure components are running.
 
-### 1.1. Hypervisor Firewall Rules (`phoenix_hypervisor_config.json`)
-- **Objective:** Verify that the Proxmox host firewall is configured to allow the initial outbound request from the `portainer-manager.sh` script to the Nginx gateway.
-- **Key Rule to Verify:**
-  - `OUT ACCEPT from 10.0.0.13 to 10.0.0.153 on TCP port 443`
+**Command:**
+```bash
+phoenix status 101 102 103 1001 1002
+```
 
-### 1.2. Nginx Gateway (LXC 101) Firewall Rules (`phoenix_lxc_configs.json`)
-- **Objective:** Verify that the Nginx container allows the inbound request from the host and is permitted to make an outbound request to the Traefik container.
-- **Key Rules to Verify:**
-  - `IN ACCEPT from 10.0.0.13 on TCP port 443`
-  - `OUT ACCEPT to 10.0.0.12 on TCP port 80`
+**Expected Outcome:**
+You should see a "status: running" message for each of the LXC containers and VMs.
 
-### 1.3. Traefik (LXC 102) Firewall Rules (`phoenix_lxc_configs.json`)
-- **Objective:** Verify that the Traefik container allows the inbound request from Nginx and is permitted to make an outbound request to the Portainer VM.
-- **Key Rules to Verify:**
-  - `IN ACCEPT from 10.0.0.153 on TCP port 80`
-  - `OUT ACCEPT to 10.0.0.111 on TCP port 9443`
+## 2. Gateway and Routing Verification
 
-### 1.4. Portainer VM (VM 1001) Firewall Rules (`phoenix_vm_configs.json`)
-- **Objective:** Verify that the Portainer VM allows the inbound request from the Traefik container.
-- **Key Rule to Verify:**
-  - `IN ACCEPT from 10.0.0.12 on TCP port 9443`
+Check that the Nginx gateway and Traefik service discovery are functioning correctly.
 
-## Phase 2: Live Network Path Validation
+**Commands:**
+```bash
+# Check Nginx logs for errors
+pct exec 101 -- journalctl -u nginx -n 50
 
-This phase involves executing a series of commands on the live system to test the actual network path and validate that the declarative rules have been correctly applied.
+# Check Traefik logs for errors and service discovery
+pct exec 102 -- journalctl -u traefik -n 100
+```
 
-### 2.1. Proxmox Host to Nginx Gateway (LXC 101)
-- **Objective:** Confirm DNS resolution and basic connectivity from the host to the Nginx gateway.
-- **Test Commands:**
-  ```bash
-  # 1. Test DNS Resolution
-  nslookup portainer.internal.thinkheads.ai
+**Expected Outcome:**
+- Nginx logs should show no critical errors and indicate that it has successfully loaded the configuration.
+- Traefik logs should show that it has detected the Docker Swarm provider and is discovering services (like Portainer).
 
-  # 2. Test Connectivity (should fail handshake but prove connectivity)
-  curl -v --insecure https://10.0.0.153
-  ```
+## 3. Certificate Validation
 
-### 2.2. Nginx Gateway (LXC 101) to Traefik (LXC 102)
-- **Objective:** Confirm connectivity from the Nginx container to the Traefik container.
-- **Test Command (to be run inside LXC 101):**
-  ```bash
-  pct exec 101 -- curl -v http://10.0.0.12
-  ```
+Verify that the Step-CA has successfully issued certificates for the core services.
 
-### 2.3. Traefik (LXC 102) to Portainer VM (VM 1001)
-- **Objective:** Confirm connectivity from the Traefik container to the Portainer VM.
-- **Test Command (to be run inside LXC 102):**
-  ```bash
-  pct exec 102 -- curl -v --insecure https://10.0.0.111:9443
-  ```
+**Commands:**
+```bash
+# Check the Nginx certificate
+ls -l /mnt/pve/quickOS/lxc-persistent-data/101/ssl/
 
-## Phase 3: Certificate and TLS Validation
+# Check the Portainer certificate
+ls -l /mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/
 
-This phase will verify that the TLS certificates are correctly issued and presented at each hop, which is a common point of failure in secure communication chains.
+# Check the Traefik certificate
+ls -l /mnt/pve/quickOS/lxc-persistent-data/102/certs/
+```
 
-### 3.1. Nginx Gateway Certificate
-- **Objective:** Verify the certificate presented by Nginx.
-- **Test Command (from Proxmox Host):**
-  ```bash
-  openssl s_client -connect 10.0.0.153:443 -servername portainer.internal.thinkheads.ai
-  ```
+**Expected Outcome:**
+Each directory should contain the relevant `.crt` and `.key` files, indicating that the certificates were generated and placed correctly.
 
-### 3.2. Portainer Certificate
-- **Objective:** Verify the certificate presented by the Portainer service.
-- **Test Command (from inside LXC 102):**
-  ```bash
-  pct exec 102 -- openssl s_client -connect 10.0.0.111:9443 -servername portainer.internal.thinkheads.ai
-  ```
+## 4. Docker Swarm and Portainer Status
 
-## Summary
+Ensure the Docker Swarm is active and that the Portainer service is running.
 
-By executing this plan, we will have a clear and definitive answer as to where the communication breakdown is occurring. The results of these tests will guide the necessary remediation steps, whether they involve correcting a firewall rule, fixing a DNS entry, or reissuing a certificate.
+**Commands:**
+```bash
+# Check the status of all nodes in the Swarm
+phoenix swarm status
+
+# List the services running on the Swarm
+qm guest exec 1001 -- docker service ls
+```
+
+**Expected Outcome:**
+- `phoenix swarm status` should show both the manager (VM 1001) and the worker (VM 1002) with a status of "Ready" and "Active".
+- `docker service ls` should show the `prod_portainer_service_portainer` service with `1/1` replicas running.
+
+## 5. Application Stack Verification
+
+Finally, check that the application stacks defined in your configuration have been deployed.
+
+**Command:**
+```bash
+# List all deployed stacks on the Swarm
+qm guest exec 1001 -- docker stack ls
+```
+
+**Expected Outcome:**
+You should see a list of the stacks that were deployed by the `sync all` command, such as `prod_qdrant_service`.
+
+By following these steps, you can be confident that your Phoenix environment is fully operational.

@@ -1,36 +1,24 @@
-# Comprehensive Firewall Trace Plan
+# Firewall and Network Trace Plan
 
-This plan provides a single, powerful command to trace the path of a packet from the Proxmox host to the Traefik container (LXC 102) and inspect the firewall rules at each layer.
+**Objective:** Diagnose the persistent connection issue between Traefik (LXC 102) and the Docker Swarm manager (VM 1001) by capturing and analyzing network traffic.
 
-## The Command
+This plan will use `tcpdump` to monitor the packets flowing between the two components, which will give us a definitive answer as to why the connection is failing.
 
-Please execute the following command on your Proxmox host. It will:
+## Plan
 
-1.  Display the host-level firewall rules.
-2.  Display the firewall rules for LXC 102.
-3.  Use `pve-firewall trace` to simulate a `ping` request from the host to the Traefik container and show a detailed, step-by-step log of how the firewall processes the packet.
+1.  **Install `tcpdump` on the Proxmox Host**:
+    *   The `tcpdump` utility is required to capture the network traffic.
 
-```bash
-echo "--- Host Firewall Rules ---"; \
-cat /etc/pve/firewall/$(hostname).fw; \
-echo "\n--- LXC 102 Firewall Rules ---"; \
-cat /etc/pve/firewall/102.fw; \
-echo "\n--- Firewall Trace: Host to LXC 102 ---"; \
-pve-firewall trace -i vmbr0 -s 10.0.0.13 -d 10.0.0.12 -p icmp
-```
+2.  **Start the Network Capture**:
+    *   We will start `tcpdump` on the Proxmox host, filtering for traffic between the IP addresses of the Traefik container (`10.0.0.12`) and the Docker Swarm manager (`10.0.0.111`) on port `2375`.
 
-## Analysis of Expected Output
+3.  **Restart the Traefik Service**:
+    *   While the capture is running, we will restart the Traefik service in LXC 102. This will trigger a new connection attempt.
 
-The output of the `pve-firewall trace` command will be a series of lines, each representing a step in the firewall's decision-making process. We are looking for a line that ends in `DROP`. This will be the exact point where the connection is being blocked.
+4.  **Stop the Capture and Analyze the Results**:
+    *   We will stop the `tcpdump` capture and examine the output file. The results will show us one of three things:
+        *   **No packets:** This would indicate a routing or firewall issue at the Proxmox level.
+        *   **SYN packets with no reply:** This would point to a firewall on the Docker host (VM 1001) that is blocking the connection.
+        *   **A full TCP handshake:** This would indicate that the problem is at the application layer, within the Traefik binary itself.
 
-For example, you might see something like:
-
-```
-chain INPUT (policy DROP);
-...
-rule 123 ... DROP
-```
-
-This would indicate that rule 123 in the `INPUT` chain is responsible for dropping the packet.
-
-Please execute this command and provide the full output. It will give us the precise information we need to identify the problematic rule or configuration.
+This plan will provide the final piece of evidence needed to solve this problem.

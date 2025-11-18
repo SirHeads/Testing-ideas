@@ -986,6 +986,37 @@ prepare_vm_ca_staging_area() {
 
 
 # =====================================================================================
+# Function: sync_vm_configurations
+# Description: Syncs configurations for a specific VM.
+# =====================================================================================
+sync_vm_configurations() {
+    local VMID="$1"
+    log_info "Starting 'sync' workflow for VMID $VMID..."
+
+    if [ "$VMID" -eq 1001 ]; then
+        log_info "Running Docker certificate sync for VMID 1001..."
+        local cert_sync_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_sync_docker_certs.sh"
+        if [ ! -f "$cert_sync_script_path" ]; then
+            log_fatal "Docker cert sync script not found at $cert_sync_script_path."
+        fi
+        if ! "$cert_sync_script_path" "$VMID"; then
+            log_fatal "Docker certificate sync failed for VMID $VMID."
+        fi
+
+        log_info "Running Docker proxy sync for VMID 1001..."
+        local proxy_sync_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_sync_docker_proxy.sh"
+        if [ ! -f "$proxy_sync_script_path" ]; then
+            log_fatal "Docker proxy sync script not found at $proxy_sync_script_path."
+        fi
+        if ! "$proxy_sync_script_path" "$VMID"; then
+            log_fatal "Docker proxy sync failed for VMID $VMID."
+        fi
+    fi
+
+    log_info "'sync' workflow completed for VMID $VMID."
+}
+
+# =====================================================================================
 # Function: main_vm_orchestrator
 # Description: The main entry point for the VM manager script. It parses the
 #              action and VMID, and then executes the appropriate lifecycle
@@ -1004,6 +1035,11 @@ main_vm_orchestrator() {
             log_info "Starting 'create' workflow for VMID $vmid..."
             orchestrate_vm "$vmid"
             log_info "'create' workflow completed for VMID $vmid."
+            ;;
+        sync)
+            log_info "Starting 'sync' workflow for VMID $vmid..."
+            sync_vm_configurations "$vmid"
+            log_info "'sync' workflow completed for VMID $vmid."
             ;;
         start)
             log_info "Starting 'start' workflow for VMID $vmid..."

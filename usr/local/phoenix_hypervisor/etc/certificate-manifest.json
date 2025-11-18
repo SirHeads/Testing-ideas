@@ -37,23 +37,20 @@
     {
         "common_name": "docker-daemon.internal.thinkheads.ai",
         "sans": [
-            "portainer.internal.thinkheads.ai",
-            "10.0.0.111",
-            "localhost",
-            "docker-daemon.internal.thinkheads.ai"
+            "10.0.0.111"
         ],
-        "cert_path": "/etc/docker/certs.d/server-cert.pem",
-        "key_path": "/etc/docker/certs.d/server-key.pem",
+        "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-cert.pem",
+        "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-key.pem",
         "owner": "root:root",
         "permissions": "600",
         "post_renewal_command": "qm guest exec 1001 -- systemctl restart docker"
     },
     {
         "common_name": "traefik-client.internal.thinkheads.ai",
-        "cert_path": "/etc/traefik/certs/cert.pem",
-        "key_path": "/etc/traefik/certs/key.pem",
+        "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/client-cert.pem",
+        "key_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/client-key.pem",
         "owner": "root:root",
-        "permissions": "600",
-        "post_renewal_command": "pct exec 102 -- systemctl restart traefik"
+        "permissions": "644",
+        "post_renewal_command": "echo \"Certificate renewed, Traefik will be restarted by the sync script.\""
     }
 ]

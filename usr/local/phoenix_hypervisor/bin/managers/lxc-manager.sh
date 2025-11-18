@@ -1336,6 +1336,28 @@ apply_apparmor_profile() {
     log_info "Reloading AppArmor profiles..."
     systemctl reload apparmor || log_warn "Failed to reload AppArmor profiles."
 }
+
+# =====================================================================================
+# Function: sync_lxc_configurations
+# Description: Syncs configurations for a specific LXC container.
+# =====================================================================================
+sync_lxc_configurations() {
+    local CTID="$1"
+    log_info "Starting 'sync' workflow for CTID $CTID..."
+
+    if [ "$CTID" -eq 102 ]; then
+        log_info "Running Traefik certificate sync for CTID 102..."
+        local sync_script_path="${PHOENIX_BASE_DIR}/bin/lxc_setup/phoenix_hypervisor_feature_sync_traefik_certs.sh"
+        if [ ! -f "$sync_script_path" ]; then
+            log_fatal "Traefik sync script not found at $sync_script_path."
+        fi
+        if ! "$sync_script_path" "$CTID"; then
+            log_fatal "Traefik certificate sync failed for CTID $CTID."
+        fi
+    fi
+
+    log_info "'sync' workflow completed for CTID $CTID."
+}
 # =====================================================================================
 # Function: create_lxc_templates
 # Description: Idempotently creates LXC templates based on the `lxc_templates` object
@@ -1638,6 +1660,10 @@ main_lxc_orchestrator() {
                 log_info "Ensuring NGINX container (101) is correctly configured..."
                 run_application_script "$ctid"
             fi
+            ;;
+        sync)
+            validate_inputs "$ctid"
+            sync_lxc_configurations "$ctid"
             ;;
         start)
             validate_inputs "$ctid"

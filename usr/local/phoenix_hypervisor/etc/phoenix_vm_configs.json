@@ -211,52 +211,52 @@
                         "comment": "Allow ICMP from internal network"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "111",
-                        "comment": "Allow NFS rpcbind from hypervisor"
+                        "comment": "Allow NFS rpcbind to hypervisor"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "udp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "111",
-                        "comment": "Allow NFS rpcbind from hypervisor"
+                        "comment": "Allow NFS rpcbind to hypervisor"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "2049",
-                        "comment": "Allow NFS from hypervisor"
+                        "comment": "Allow NFS to hypervisor"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "udp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "2049",
-                        "comment": "Allow NFS from hypervisor"
+                        "comment": "Allow NFS to hypervisor"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "20048",
-                        "comment": "Allow NFS mountd from hypervisor"
+                        "comment": "Allow NFS mountd to hypervisor"
                     },
                     {
-                        "type": "in",
+                        "type": "out",
                         "action": "ACCEPT",
                         "proto": "udp",
-                        "source": "10.0.0.13",
+                        "dest": "10.0.0.13",
                         "port": "20048",
-                        "comment": "Allow NFS mountd from hypervisor"
+                        "comment": "Allow NFS mountd to hypervisor"
                     },
                     {
                         "type": "out",
@@ -279,8 +279,8 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "2375",
-                        "comment": "Allow Traefik to access the Docker API"
+                        "port": "2376",
+                        "comment": "Allow Traefik to access the secure Docker API"
                     }
                 ]
             }

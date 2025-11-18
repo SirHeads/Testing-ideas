@@ -21,7 +21,7 @@ server {
 
 # Map block to dynamically route to the correct upstream service
 map $host $upstream_service {
-    default http://10.0.0.12;
+    default https://10.0.0.12;
 }
 
 

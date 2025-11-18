@@ -562,8 +562,8 @@
                         "action": "ACCEPT",
                         "dest": "10.0.0.12",
                         "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Nginx to proxy to Traefik"
+                        "port": "443",
+                        "comment": "Allow Nginx to proxy to Traefik over HTTPS"
                     },
                     {
                         "type": "in",
@@ -889,8 +889,8 @@
                         "action": "ACCEPT",
                         "source": "10.0.0.153",
                         "proto": "tcp",
-                        "port": "80",
-                        "comment": "Allow Nginx (10.0.0.153) to proxy web traffic"
+                        "port": "443",
+                        "comment": "Allow Nginx (10.0.0.153) to proxy HTTPS web traffic"
                     },
                     {
                         "type": "in",
@@ -989,8 +989,8 @@
                         "action": "ACCEPT",
                         "dest": "10.0.0.111",
                         "proto": "tcp",
-                        "port": "2375",
-                        "comment": "Allow Traefik to connect to the Docker API"
+                        "port": "2376",
+                        "comment": "Allow Traefik to connect to the secure Docker API"
                     }
                 ]
             },

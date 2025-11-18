@@ -15,6 +15,8 @@ api:
 entryPoints:
   web:
     address: ":80"
+  websecure:
+    address: ":443"
   traefik:
     address: ":8080"
 
@@ -24,8 +26,12 @@ providers:
     filename: dynamic_conf.yml
     watch: true
   docker:
-    endpoint: "tcp://10.0.0.111:2375"
-    apiVersion: "1.52"
+    endpoint: "tcp://10.0.0.111:2376"
     exposedByDefault: false
     network: traefik-public
     watch: true
+    tls:
+      ca: "/etc/traefik/certs/ca.pem"
+      cert: "/etc/traefik/certs/client-cert.pem"
+      key: "/etc/traefik/certs/client-key.pem"
+      insecureSkipVerify: false

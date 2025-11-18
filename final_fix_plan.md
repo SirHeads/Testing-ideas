@@ -1,36 +1,83 @@
-# Traefik Swarm Discovery Fix Plan (v2)
+# Project Plan: Secure Traefik and Docker Swarm Integration
 
-## Root Cause Analysis
+**Objective:** Transition the connection between Traefik (LXC 102) and the Docker Swarm manager (VM 1001) from an insecure TCP socket to a secure, TLS-encrypted endpoint managed by the internal Step-CA.
 
-The Docker daemon on the Swarm Manager VM (1001) is failing to start due to a configuration conflict. Logs confirm that the `hosts` directive is being specified in two places simultaneously:
-1.  As a command-line flag (`-H fd://`) in the default systemd service file.
-2.  As a `hosts` array in the `/etc/docker/daemon.json` configuration file.
+This plan details every required change, providing a clear roadmap for this strategic transition.
 
-Docker cannot start with these conflicting instructions. The previous fixes were insufficient because they did not remove the default command-line flag from the main service file.
+---
 
-## The Definitive Fix Plan
+## Phase 1: Centralized Certificate Management
 
-The solution is to establish the `/etc/docker/daemon.json` file as the single source of truth for Docker's configuration. This will be achieved by modifying the installation script to be more robust and idempotent.
+**Goal:** Integrate the Docker TLS certificates into the existing Step-CA infrastructure.
 
-### 1. Update the Docker Installation Script
+### 1.1. `usr/local/phoenix_hypervisor/etc/certificate-manifest.json`
 
-The script at `usr/local/phoenix_hypervisor/bin/vm_features/feature_install_docker.sh` will be modified to perform the following actions in sequence:
+*   **Action:** Add two new entries to the manifest: one for the Docker server certificate and one for the client certificate that Traefik will use.
+*   **Details:**
+    *   **Server Certificate:**
+        *   `common_name`: `docker-daemon.internal.thinkheads.ai`
+        *   `sans`: `10.0.0.111`
+        *   `cert_path`: `/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-cert.pem`
+        *   `key_path`: `/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-key.pem`
+        *   `post_renewal_command`: `qm guest exec 1001 -- systemctl restart docker`
+    *   **Client Certificate:**
+        *   `common_name`: `traefik-client.internal.thinkheads.ai`
+        *   `cert_path`: `/mnt/pve/quickOS/lxc-persistent-data/102/traefik/certs/client-cert.pem`
+        *   `key_path`: `/mnt/pve/quickOS/lxc-persistent-data/102/traefik/certs/client-key.pem`
+        *   `post_renewal_command`: `pct exec 102 -- systemctl restart traefik`
 
-1.  **Clean Up Conflicting Overrides:** Add a step to forcefully remove the systemd override directory (`/etc/systemd/system/docker.service.d`) to ensure no old, conflicting configurations are present from previous failed runs.
-2.  **Remove Conflicting Flag:** Add a `sed` command to directly edit the main service file (`/usr/lib/systemd/system/docker.service`) and remove the `-H fd://` argument from the `ExecStart` line. This eliminates the source of the conflict.
-3.  **Apply Correct Configuration:** The script will then proceed as it does now, creating the `daemon.json` file, which will now be the sole authority for the Docker host configuration.
+---
 
-### 2. Re-Converge the Swarm Manager VM
+## Phase 2: Automated Certificate Deployment
 
-Once the installation script is corrected, the configuration on the Swarm Manager VM must be reapplied.
+**Goal:** Modify the feature scripts to automatically request and deploy the new certificates.
 
-- **Action:** Execute the command `phoenix converge 1001`.
-- **Justification:** This will run the updated script, which will first clean the environment of any bad state and then apply the single, correct configuration, allowing the Docker service to start successfully.
+### 2.1. `usr/local/phoenix_hypervisor/bin/vm_features/feature_install_docker_proxy.sh`
 
-### 3. Verify Functionality
+*   **Action:** Remove the OpenSSL-based self-signed certificate generation.
+*   **Action:** Add a call to the `certificate-renewal-manager.sh` script to request the `docker-daemon.internal.thinkheads.ai` certificate from Step-CA.
+*   **Action:** Update the `daemon.json` creation to reference the new certificate paths and configure the Docker daemon for TLS on port `2376`.
 
-After the convergence, we will confirm that the fix is successful.
+### 2.2. `usr/local/phoenix_hypervisor/bin/lxc_setup/phoenix_hypervisor_feature_install_traefik.sh`
 
-- **Action 1:** Check the status of the Docker service on VM 1001.
-- **Action 2:** Inspect the Traefik dashboard to confirm the Swarm provider is connected.
-- **Action 3:** Deploy a test service and verify it is discovered and accessible.
+*   **Action:** Add a step to copy the `ca.pem`, `client-cert.pem`, and `client-key.pem` from the shared certificate store to the Traefik container's `/etc/traefik/certs` directory.
+*   **Action:** Add a step to set `chmod 600` on the copied certificate files.
+
+---
+
+## Phase 3: Service Reconfiguration
+
+**Goal:** Update the Traefik and Docker configurations to use the new secure endpoint.
+
+### 3.1. `usr/local/phoenix_hypervisor/etc/traefik/traefik.yml.template`
+
+*   **Action:** Change the `endpoint` in the `docker` provider to `tcp://10.0.0.111:2376`.
+*   **Action:** Add the `tls` section to the `docker` provider, referencing the paths to the new client certificates.
+
+---
+
+## Phase 4: Network Security Hardening
+
+**Goal:** Update the firewall rules to reflect the new secure communication channel.
+
+### 4.1. `usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json`
+
+*   **Action:** In the firewall rules for VM 1001, locate the rule that allows inbound traffic on port `2375`.
+*   **Action:** Change the port to `2376`.
+
+### 4.2. `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`
+
+*   **Action:** In the firewall rules for LXC 102, locate the rule that allows outbound traffic to port `2375`.
+*   **Action:** Change the port to `2376`.
+
+---
+
+## Phase 5: Execution and Verification
+
+**Goal:** Apply all changes and verify the successful implementation.
+
+1.  **Execute `phoenix sync all`:** This will trigger the updated scripts, generate the new certificates, and reconfigure all services.
+2.  **Verify Traefik Logs:** Check the logs in LXC 102 to confirm that Traefik starts without errors and establishes a successful connection to the Docker Swarm.
+3.  **Verify Portainer UI:** Access the Portainer web interface to confirm that it is accessible and that all Swarm services are correctly displayed.
+
+This comprehensive plan ensures a seamless and secure transition, fully integrating the Docker and Traefik components with your existing PKI infrastructure.
