@@ -1,83 +1,39 @@
-# Project Plan: Secure Traefik and Docker Swarm Integration
+# Final Fix Plan: Resolving the Nginx to Traefik Routing Issue
 
-**Objective:** Transition the connection between Traefik (LXC 102) and the Docker Swarm manager (VM 1001) from an insecure TCP socket to a secure, TLS-encrypted endpoint managed by the internal Step-CA.
+## 1. Problem Diagnosis
 
-This plan details every required change, providing a clear roadmap for this strategic transition.
+After a thorough review of the system status and live configurations, we have identified the root cause of the `404 page not found` error when trying to access services like the Portainer and Traefik dashboards.
 
----
+- **Core Issue:** A protocol mismatch exists between the Nginx gateway (LXC 101) and the Traefik service mesh (LXC 102).
+- **Nginx Behavior:** Nginx is configured to terminate the external SSL connection and then re-encrypt the traffic before forwarding it to Traefik (`proxy_pass https://10.0.0.12:443`).
+- **Traefik Expectation:** Traefik's routers are configured to use the `web` entrypoint, which is set up to listen for unencrypted HTTP traffic on port 80, not HTTPS on port 443.
 
-## Phase 1: Centralized Certificate Management
+This conflict means that Traefik receives an encrypted request on a port where it expects plain text, causing it to reject the connection, which results in Nginx returning a `404`.
 
-**Goal:** Integrate the Docker TLS certificates into the existing Step-CA infrastructure.
+## 2. Proposed Solution
 
-### 1.1. `usr/local/phoenix_hypervisor/etc/certificate-manifest.json`
+The correct architectural pattern is for Nginx to handle all SSL termination and then forward decrypted traffic to the internal service mesh. To implement this, we will modify the Nginx configuration generator script.
 
-*   **Action:** Add two new entries to the manifest: one for the Docker server certificate and one for the client certificate that Traefik will use.
-*   **Details:**
-    *   **Server Certificate:**
-        *   `common_name`: `docker-daemon.internal.thinkheads.ai`
-        *   `sans`: `10.0.0.111`
-        *   `cert_path`: `/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-cert.pem`
-        *   `key_path`: `/mnt/pve/quickOS/vm-persistent-data/1001/docker/certs/server-key.pem`
-        *   `post_renewal_command`: `qm guest exec 1001 -- systemctl restart docker`
-    *   **Client Certificate:**
-        *   `common_name`: `traefik-client.internal.thinkheads.ai`
-        *   `cert_path`: `/mnt/pve/quickOS/lxc-persistent-data/102/traefik/certs/client-cert.pem`
-        *   `key_path`: `/mnt/pve/quickOS/lxc-persistent-data/102/traefik/certs/client-key.pem`
-        *   `post_renewal_command`: `pct exec 102 -- systemctl restart traefik`
+**The Fix:**
 
----
+The change will be applied to the `generate_nginx_config.sh` script. We will modify the `proxy_pass` directive to:
 
-## Phase 2: Automated Certificate Deployment
+1.  Use the `http` protocol instead of `https`.
+2.  Target port `80` on the Traefik container, which corresponds to the `web` entrypoint.
 
-**Goal:** Modify the feature scripts to automatically request and deploy the new certificates.
+**Example Change (to be applied to all generated `server` blocks):**
 
-### 2.1. `usr/local/phoenix_hypervisor/bin/vm_features/feature_install_docker_proxy.sh`
+```diff
+-        proxy_pass https://10.0.0.12:443;
++        proxy_pass http://10.0.0.12:80;
+```
 
-*   **Action:** Remove the OpenSSL-based self-signed certificate generation.
-*   **Action:** Add a call to the `certificate-renewal-manager.sh` script to request the `docker-daemon.internal.thinkheads.ai` certificate from Step-CA.
-*   **Action:** Update the `daemon.json` creation to reference the new certificate paths and configure the Docker daemon for TLS on port `2376`.
+This ensures that Nginx forwards a plain HTTP request, which Traefik's `web` entrypoint can correctly process and route to the appropriate backend service based on the `Host` header.
 
-### 2.2. `usr/local/phoenix_hypervisor/bin/lxc_setup/phoenix_hypervisor_feature_install_traefik.sh`
+## 3. Implementation and Verification
 
-*   **Action:** Add a step to copy the `ca.pem`, `client-cert.pem`, and `client-key.pem` from the shared certificate store to the Traefik container's `/etc/traefik/certs` directory.
-*   **Action:** Add a step to set `chmod 600` on the copied certificate files.
+The implementation will be carried out by the **Code** mode, which will:
 
----
-
-## Phase 3: Service Reconfiguration
-
-**Goal:** Update the Traefik and Docker configurations to use the new secure endpoint.
-
-### 3.1. `usr/local/phoenix_hypervisor/etc/traefik/traefik.yml.template`
-
-*   **Action:** Change the `endpoint` in the `docker` provider to `tcp://10.0.0.111:2376`.
-*   **Action:** Add the `tls` section to the `docker` provider, referencing the paths to the new client certificates.
-
----
-
-## Phase 4: Network Security Hardening
-
-**Goal:** Update the firewall rules to reflect the new secure communication channel.
-
-### 4.1. `usr/local/phoenix_hypervisor/etc/phoenix_vm_configs.json`
-
-*   **Action:** In the firewall rules for VM 1001, locate the rule that allows inbound traffic on port `2375`.
-*   **Action:** Change the port to `2376`.
-
-### 4.2. `usr/local/phoenix_hypervisor/etc/phoenix_lxc_configs.json`
-
-*   **Action:** In the firewall rules for LXC 102, locate the rule that allows outbound traffic to port `2375`.
-*   **Action:** Change the port to `2376`.
-
----
-
-## Phase 5: Execution and Verification
-
-**Goal:** Apply all changes and verify the successful implementation.
-
-1.  **Execute `phoenix sync all`:** This will trigger the updated scripts, generate the new certificates, and reconfigure all services.
-2.  **Verify Traefik Logs:** Check the logs in LXC 102 to confirm that Traefik starts without errors and establishes a successful connection to the Docker Swarm.
-3.  **Verify Portainer UI:** Access the Portainer web interface to confirm that it is accessible and that all Swarm services are correctly displayed.
-
-This comprehensive plan ensures a seamless and secure transition, fully integrating the Docker and Traefik components with your existing PKI infrastructure.
+1.  Modify the [`usr/local/phoenix_hypervisor/bin/generate_nginx_config.sh`](usr/local/phoenix_hypervisor/bin/generate_nginx_config.sh) script to implement the change described above.
+2.  Execute `phoenix sync all` to regenerate the Nginx configuration with the fix and reload the service.
+3.  Run the [`get_system_status.sh`](get_system_status.sh) script again to verify that the `curl` command now succeeds and the system is fully operational.

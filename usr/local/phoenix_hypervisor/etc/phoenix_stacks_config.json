@@ -26,6 +26,9 @@
         "portainer_service": {
             "description": "Portainer management UI.",
             "compose_file_path": "persistent-storage/portainer/docker-compose.yml",
+            "nginx_proxy": {
+                "hostname": "portainer.internal.thinkheads.ai"
+            },
             "environments": {
                 "production": {
                     "variables": [],

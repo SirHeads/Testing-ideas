@@ -25,7 +25,7 @@ providers:
     directory: /etc/traefik/dynamic
     filename: dynamic_conf.yml
     watch: true
-  docker:
+  swarm:
     endpoint: "tcp://10.0.0.111:2376"
     exposedByDefault: false
     network: "traefik-public"
