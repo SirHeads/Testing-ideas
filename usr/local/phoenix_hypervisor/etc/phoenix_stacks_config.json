@@ -13,10 +13,10 @@
                             "traefik_labels": [
                                 "traefik.enable=true",
                                 "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)",
-                                "traefik.http.routers.qdrant.entrypoints=websecure",
+                                "traefik.http.routers.qdrant.entrypoints=mesh",
                                 "traefik.http.routers.qdrant.tls=true",
-                                "traefik.http.routers.qdrant.tls.certresolver=internal-resolver",
-                                "traefik.http.services.qdrant.loadbalancer.server.port=6333"
+                                "traefik.http.services.qdrant.loadbalancer.server.port=6333",
+                                "traefik.http.services.qdrant.loadbalancer.server.scheme=http"
                             ]
                         }
                     }
@@ -37,10 +37,11 @@
                         "portainer": {
                             "traefik_labels": [
                                 "traefik.enable=true",
-                                "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)",
-                                "traefik.http.routers.portainer.entrypoints=web",
-                                "traefik.http.services.portainer.loadbalancer.server.port=9000",
-                                "traefik.http.services.portainer.loadbalancer.server.scheme=http"
+                                "traefik.tcp.routers.portainer.rule=HostSNI(`portainer.internal.thinkheads.ai`)",
+                                "traefik.tcp.routers.portainer.entrypoints=mesh",
+                                "traefik.tcp.routers.portainer.tls=true",
+                                "traefik.tcp.routers.portainer.tls.passthrough=true",
+                                "traefik.tcp.services.portainer.loadbalancer.server.port=9443"
                             ]
                         }
                     }

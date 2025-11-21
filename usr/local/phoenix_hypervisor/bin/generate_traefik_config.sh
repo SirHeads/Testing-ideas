@@ -79,6 +79,8 @@ main() {
     # --- GENERATE YAML FROM JSON ---
     {
         echo "http:"
+        
+        # Routers
         echo "  routers:"
         echo "$traefik_services_json" | jq -r '
             .[] |
@@ -86,9 +88,10 @@ main() {
             "      rule: \"\(.rule)\"\n" +
             "      service: \"\(if .is_api then "api@internal" else "\(.name)-service" end)\"\n" +
             "      entryPoints:\n" +
-            "        - web"
+            "        - mesh"
         '
         
+        # Services
         echo ""
         echo "  services:"
         echo "$traefik_services_json" | jq -r '
@@ -98,21 +101,29 @@ main() {
             "        servers:\n" +
             "          - url: \"\(.url)\"\n" +
             "        passHostHeader: true" +
-            (if (.url | startswith("https")) then "\n        serversTransport: \"internal-ca@file\"" else "" end)
+            (if (.url | startswith("https")) then "\n        serversTransport: \"internal-ca\"" else "" end)
         '
         
+        # ServersTransports and TLS Options
         echo ""
+        echo "  serversTransports:"
+        echo "    internal-ca:"
+        echo "      insecureSkipVerify: false"
+        echo "      rootCAs:"
+        echo "        - /etc/step-ca/ssl/phoenix_root_ca.crt"
+        echo ""
+
+        # --- Add TLS Options for mTLS ---
+        echo "tls:"
+        echo "  options:"
+        echo "    mesh-mtls:"
+        echo "      clientAuth:"
+        echo "        caFiles:"
+        echo "          - /etc/step-ca/ssl/phoenix_root_ca.crt"
+        echo "        clientAuthType: RequireAndVerifyClientCert"
+        echo ""
+
     } > "$OUTPUT_FILE"
-
-    # --- APPEND SERVERS TRANSPORT FOR INTERNAL CA ---
-    cat >> "$OUTPUT_FILE" <<EOF
-
-  serversTransports:
-    internal-ca:
-      insecureSkipVerify: false
-      rootCAs:
-        - /etc/step-ca/ssl/phoenix_root_ca.crt
-EOF
 
     log_success "Traefik dynamic configuration generated successfully at ${OUTPUT_FILE}"
     

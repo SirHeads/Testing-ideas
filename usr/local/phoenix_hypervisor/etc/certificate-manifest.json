@@ -13,12 +13,19 @@
     },
     {
         "common_name": "portainer.internal.thinkheads.ai",
+        "sans": [
+            "portainer.internal.thinkheads.ai",
+            "localhost",
+            "127.0.0.1",
+            "10.0.1.3"
+        ],
         "guest_id": 1001,
         "guest_type": "vm",
         "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.crt",
         "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/portainer.key",
         "owner": "root:root",
-        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c 'mkdir -p /var/lib/docker/volumes/portainer_data/_data/certs && mv /tmp/cert.pem /var/lib/docker/volumes/portainer_data/_data/certs/portainer.crt && mv /tmp/key.pem /var/lib/docker/volumes/portainer_data/_data/certs/portainer.key && chown 100000:100000 /var/lib/docker/volumes/portainer_data/_data/certs/* && chmod 644 /var/lib/docker/volumes/portainer_data/_data/certs/*.crt && chmod 600 /var/lib/docker/volumes/portainer_data/_data/certs/*.key && docker service update --force prod_portainer_service_portainer'"
+        "include_ca": true,
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c 'SECRET_CERT=\"portainer_tls_cert.pem\"; SECRET_KEY=\"portainer_tls_key.pem\"; SECRET_CA=\"portainer_tls_ca.pem\"; SERVICE_NAME=\"production_portainer_service_portainer\"; if docker secret inspect $SECRET_CERT >/dev/null 2>&1; then docker secret rm $SECRET_CERT; fi; docker secret create $SECRET_CERT /tmp/cert.pem; if docker secret inspect $SECRET_KEY >/dev/null 2>&1; then docker secret rm $SECRET_KEY; fi; docker secret create $SECRET_KEY /tmp/key.pem; if docker secret inspect $SECRET_CA >/dev/null 2>&1; then docker secret rm $SECRET_CA; fi; docker secret create $SECRET_CA /tmp/ca.pem; if docker service inspect $SERVICE_NAME >/dev/null 2>&1; then docker service update --force $SERVICE_NAME; fi'"
     },
     {
         "common_name": "traefik.internal.thinkheads.ai",
@@ -60,5 +67,28 @@
         "key_path": "/mnt/pve/quickOS/lxc-persistent-data/102/certs/client-key.pem",
         "owner": "root:root",
         "post_renewal_command": "pct exec 102 -- /bin/bash -c 'mkdir -p /etc/traefik/certs && mv /tmp/cert.pem /etc/traefik/certs/client-cert.pem && mv /tmp/key.pem /etc/traefik/certs/client-key.pem && chown root:root /etc/traefik/certs/client-cert.pem /etc/traefik/certs/client-key.pem && chmod 644 /etc/traefik/certs/client-cert.pem && chmod 600 /etc/traefik/certs/client-key.pem && systemctl restart traefik'"
+    },
+    {
+        "common_name": "nginx-gateway-client",
+        "sans": [
+            "nginx.internal.thinkheads.ai"
+        ],
+        "guest_id": 101,
+        "guest_type": "lxc",
+        "cert_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx-client.crt",
+        "key_path": "/mnt/pve/quickOS/lxc-persistent-data/101/ssl/nginx-client.key",
+        "owner": "root:root",
+        "cert_type": "client",
+        "post_renewal_command": "pct exec 101 -- /bin/bash -c 'mkdir -p /etc/nginx/ssl && mv /tmp/cert.pem /etc/nginx/ssl/nginx-client.crt && mv /tmp/key.pem /etc/nginx/ssl/nginx-client.key && chown root:www-data /etc/nginx/ssl/nginx-client.* && chmod 644 /etc/nginx/ssl/nginx-client.crt && chmod 640 /etc/nginx/ssl/nginx-client.key'"
+    },
+    {
+        "common_name": "portainer-client.internal.thinkheads.ai",
+        "cert_type": "client",
+        "guest_id": 1001,
+        "guest_type": "vm",
+        "cert_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/client.crt",
+        "key_path": "/mnt/pve/quickOS/vm-persistent-data/1001/portainer/certs/client.key",
+        "owner": "root:root",
+        "post_renewal_command": "qm guest exec 1001 -- /bin/bash -c 'SECRET_CERT=\"portainer_client_cert\"; SECRET_KEY=\"portainer_client_key\"; if docker secret inspect $SECRET_CERT >/dev/null 2>&1; then docker secret rm $SECRET_CERT; fi; docker secret create $SECRET_CERT /tmp/cert.pem; if docker secret inspect $SECRET_KEY >/dev/null 2>&1; then docker secret rm $SECRET_KEY; fi; docker secret create $SECRET_KEY /tmp/key.pem;'"
     }
 ]

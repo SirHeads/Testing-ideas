@@ -524,6 +524,15 @@
                 "proto": "tcp",
                 "port": "443",
                 "comment": "Allow Nginx to proxy to Traefik"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "proto": "tcp",
+                "source": "10.0.0.153",
+                "dest": "10.0.0.12",
+                "port": "8443",
+                "comment": "Allow Nginx to proxy to Traefik mTLS mesh"
             }
         ]
     },

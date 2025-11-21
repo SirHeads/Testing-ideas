@@ -1,53 +1,30 @@
-# Phoenix Infrastructure Component Overview
-
-This document outlines the roles and interactions of the core components within the Phoenix Hypervisor infrastructure.
-
-## Core Components
-
-| ID   | Name             | Type | Purpose                               |
-| ---- | ---------------- | ---- | ------------------------------------- |
-| 101  | Nginx-Phoenix    | LXC  | External gateway and reverse proxy    |
-| 102  | Traefik-Internal | LXC  | Internal service discovery and proxy  |
-| 103  | Step-CA          | LXC  | Internal Certificate Authority        |
-| 1001 | Portainer        | VM   | Docker Swarm manager & Portainer UI   |
-| 1002 | drphoenix        | VM   | Docker Swarm worker & Portainer agent |
-
-## Interactions
-
-The components work together to provide a secure, dynamic, and manageable environment for running containerized applications.
+# Component Overview
 
 ```mermaid
 graph TD
-    subgraph "User Request"
-        direction LR
-        A[External User]
+    subgraph Hypervisor
+        LXC101[LXC 101: Nginx Gateway]
+        LXC102[LXC 102: Traefik]
+        LXC103[LXC 103: Step-CA]
+        VM1001[VM 1001: Portainer]
+        VM1002[VM 1002: drphoenix]
     end
 
-    subgraph "Gateway & Service Discovery"
-        direction TB
-        B(LXC 101: Nginx) --> C(LXC 102: Traefik);
-        C --> D{Docker Swarm Services};
+    subgraph Docker Swarm
+        VM1001 --> Swarm_Manager
+        VM1002 --> Swarm_Worker
     end
 
-    subgraph "Certificate Authority"
-        direction TB
-        E(LXC 103: Step-CA) --> B;
-        E --> C;
-        E --> F;
+    subgraph Network Traffic
+        Internet --> LXC101
+        LXC101 --> LXC102
+        LXC102 --> VM1001
+        LXC102 --> VM1002
     end
 
-    subgraph "Docker Swarm"
-        direction TB
-        F(VM 1001: Portainer/Swarm Manager) --> G(VM 1002: Swarm Worker);
-        G --> D;
+    subgraph Certificate Authority
+        LXC103 --> LXC101
+        LXC103 --> LXC102
+        LXC103 --> VM1001
+        LXC103 --> VM1002
     end
-
-    A --> B;
-```
-
-1.  **External Traffic**: All incoming traffic first hits **LXC 101 (Nginx)**, which acts as the primary gateway. It handles SSL termination and forwards requests to the internal network.
-2.  **Internal Routing**: Nginx forwards requests to **LXC 102 (Traefik)**, which is responsible for dynamic service discovery. Traefik automatically discovers and routes traffic to the appropriate Docker Swarm services.
-3.  **Certificate Management**: **LXC 103 (Step-CA)** provides automated TLS certificate management for all internal services, ensuring secure communication throughout the environment.
-4.  **Container Orchestration**: **VM 1001 (Portainer)** serves as the Docker Swarm manager, orchestrating the deployment and scaling of services. **VM 1002 (drphoenix)** is a worker node that runs the actual application containers.
-
-In essence, **Phoenix** is a declarative, GitOps-style framework for managing a complete Proxmox-based hypervisor environment, from network and storage configuration to automated deployment of containerized applications.

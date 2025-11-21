@@ -1059,10 +1059,10 @@ main_vm_orchestrator() {
             local persistent_volume_path
             persistent_volume_path=$(jq_get_vm_value "$vmid" "(.volumes // [])[] | select(.type == \"nfs\") | .path" | head -n 1 || echo "")
             if [ -n "$persistent_volume_path" ]; then
-                local docker_certs_dir="${persistent_volume_path}/docker/certs"
+                local docker_certs_dir="${persistent_volume_path}/portainer/certs"
                 if [ ! -d "$docker_certs_dir" ]; then
-                    log_info "Proactively creating Docker certs directory at: $docker_certs_dir"
-                    mkdir -p "$docker_certs_dir" || log_fatal "Failed to create Docker certs directory."
+                    log_info "Proactively creating Portainer certs directory at: $docker_certs_dir"
+                    mkdir -p "$docker_certs_dir" || log_fatal "Failed to create Portainer certs directory."
                 fi
                 log_info "Setting ownership and permissions for persistent volume..."
                 chown -R nobody:nogroup "$persistent_volume_path" || log_warn "Failed to set ownership on persistent volume."

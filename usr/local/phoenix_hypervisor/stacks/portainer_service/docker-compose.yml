@@ -2,18 +2,18 @@ services:
   portainer:
     image: portainer/portainer-ce:latest
     command:
-      - "-H"
-      - "unix:///var/run/docker.sock"
-      - "--admin-password-file=/run/secrets/portainer_admin_password"
-      - "--tlsverify"
-      - "--tlscert=/certs/portainer.crt"
-      - "--tlskey=/certs/portainer.key"
-      - "--tlscacert=/certs/ca.pem"
+      - --tlscacert=/certs/ca.pem
+      - --tlscert=/certs/tls-cert.pem
+      - --tlskey=/certs/tls-key.pem
+      - --tlsverify
+      - --http-disabled
+    environment:
+      - HTTPS_PROXY_CLIENT_CERT=/run/secrets/portainer_client_cert
+      - HTTPS_PROXY_CLIENT_KEY=/run/secrets/portainer_client_key
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
       - /mnt/stacks:/stacks
-      - /mnt/persistent/portainer/certs:/certs
     ports:
       - target: 8000
         published: 8000
@@ -34,19 +34,20 @@ services:
       placement:
         constraints:
           - node.role == manager
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)"
-        - "traefik.http.routers.portainer.entrypoints=websecure"
-        - "traefik.http.routers.portainer.tls=true"
-        - "traefik.http.services.portainer.loadbalancer.server.scheme=https"
-        - "traefik.http.services.portainer.loadbalancer.server.port=9443"
-        - "traefik.http.services.portainer.loadbalancer.serverstransport=portainer-transport@docker"
-        - "traefik.http.serverstransports.portainer-transport.rootcas=/etc/traefik/certs/ca.pem@docker"
-        - "traefik.http.serverstransports.portainer-transport.certificates[0].certfile=/etc/traefik/certs/client-cert.pem@docker"
-        - "traefik.http.serverstransports.portainer-transport.certificates[0].keyfile=/etc/traefik/certs/client-key.pem@docker"
+      labels: {}
     secrets:
       - portainer_admin_password
+      - source: portainer_tls_ca.pem
+        target: /certs/ca.pem
+        mode: 0644
+      - source: portainer_tls_cert.pem
+        target: /certs/tls-cert.pem
+        mode: 0644
+      - source: portainer_tls_key.pem
+        target: /certs/tls-key.pem
+        mode: 0600
+      - portainer_client_cert
+      - portainer_client_key
 
 networks:
   traefik-public:
@@ -57,4 +58,14 @@ volumes:
 
 secrets:
   portainer_admin_password:
+    external: true
+  portainer_tls_ca.pem:
+    external: true
+  portainer_tls_cert.pem:
+    external: true
+  portainer_tls_key.pem:
+    external: true
+  portainer_client_cert:
+    external: true
+  portainer_client_key:
     external: true

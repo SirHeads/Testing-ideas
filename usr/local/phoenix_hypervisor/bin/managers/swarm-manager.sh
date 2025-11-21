@@ -162,7 +162,7 @@ deploy_stack() {
 
     local stack_dir="/quickOS/portainer_stacks/${stack_name}"
     local compose_file="${stack_dir}/docker-compose.yml"
-    local manifest_file="${stack_dir}/phoenix.json"
+    local manifest_file="${PHOENIX_BASE_DIR}/etc/phoenix_stacks_config.json"
 
     if [ ! -f "$compose_file" ]; then
         log_fatal "Stack '${stack_name}' is missing a docker-compose.yml file."
@@ -172,6 +172,7 @@ deploy_stack() {
     local final_stack_name="${env_name}_${stack_name}"
 
     log_info "Preparing deployment for stack '${stack_name}' in environment '${env_name}'..."
+    
     local temp_compose_file=$(mktemp)
     cp "$compose_file" "$temp_compose_file"
 
@@ -184,7 +185,7 @@ deploy_stack() {
 
         # --- Environment Variable Substitution ---
         log_info "Injecting environment variables..."
-        local env_vars_json=$(jq -c --arg env "$env_name" '.environments[$env].variables // []' "$manifest_file")
+        local env_vars_json=$(jq -c --arg stack "$stack_name" --arg env "$env_name" '.docker_stacks[$stack].environments[$env].variables // []' "$manifest_file")
         echo "$env_vars_json" | jq -c '.[]' | while read -r var_obj; do
             local var_name=$(echo "$var_obj" | jq -r '.name')
             local var_value=$(echo "$var_obj" | jq -r '.value')
@@ -193,31 +194,17 @@ deploy_stack() {
         done
 
         # --- Traefik Label Injection (Resilient Logic) ---
-        local services_with_labels=$(jq -r --arg env "$env_name" '(.environments[$env].services // {}) | to_entries[] | select(.value.traefik_labels) | .key' "$manifest_file")
+        local services_with_labels=$(jq -r --arg stack "$stack_name" --arg env "$env_name" '(.docker_stacks[$stack]? | .environments[$env]? | .services? // {}) | keys | .[]' "$manifest_file")
         for service in $services_with_labels; do
-            local labels=$(jq -r --arg env "$env_name" --arg svc "$service" '.environments[$env].services[$svc].traefik_labels[]' "$manifest_file")
+            local labels=$(jq -r --arg stack "$stack_name" --arg env "$env_name" --arg svc "$service" '.docker_stacks[$stack].environments[$env].services[$svc].traefik_labels[]? // ""' "$manifest_file")
             if [ -n "$labels" ]; then
                 log_info "Injecting Traefik labels for service '${service}'..."
-                local yq_expr=".services.\"$service\".deploy.labels += [$(echo "$labels" | jq -R . | jq -s -c . | sed 's/\[//;s/\]//')]"
+                local yq_expr=".services.\"$service\".deploy.labels = [$(echo "$labels" | jq -R . | jq -s -c . | sed 's/\[//;s/\]//')]"
                 yq -i -y "$yq_expr" "$temp_compose_file"
             fi
         done
     else
         log_info "No manifest file found. Proceeding with standard docker-compose.yml."
-    fi
-
-    # --- Host Mode Networking (Resilient Logic) ---
-    if [ "$host_mode" = true ]; then
-        log_info "Applying host mode networking to all services in the stack..."
-        local services=$(yq -r '.services | keys | .[]' "$temp_compose_file")
-        for service in $services; do
-            local ports_expr=".services.\"$service\".ports"
-            if yq -e "$ports_expr" "$temp_compose_file" > /dev/null; then
-                yq -i -y "$ports_expr.[].mode = \"host\"" "$temp_compose_file"
-            else
-                log_info "Service '${service}' has no ports defined. Skipping host mode modification."
-            fi
-        done
     fi
 
     log_info "Deploying stack '${final_stack_name}' using dynamically generated compose file..."

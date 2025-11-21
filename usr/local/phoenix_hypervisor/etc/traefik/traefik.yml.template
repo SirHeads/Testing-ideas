@@ -17,13 +17,17 @@ entryPoints:
     address: ":80"
   websecure:
     address: ":443"
+  mesh:
+    address: ":8443"
+    http:
+      tls:
+        options: mesh-mtls
   traefik:
     address: ":8080"
 
 providers:
   file:
     directory: /etc/traefik/dynamic
-    filename: dynamic_conf.yml
     watch: true
   swarm:
     endpoint: "tcp://10.0.0.111:2376"

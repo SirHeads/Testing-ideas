@@ -566,6 +566,14 @@
                         "comment": "Allow Nginx to proxy to Traefik over HTTPS"
                     },
                     {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "dest": "10.0.0.12",
+                        "port": "8443",
+                        "comment": "Allow Nginx to proxy to Traefik mTLS mesh"
+                    },
+                    {
                         "type": "in",
                         "action": "ACCEPT",
                         "source": "10.0.0.10",
@@ -891,6 +899,14 @@
                         "proto": "tcp",
                         "port": "443",
                         "comment": "Allow Nginx (10.0.0.153) to proxy HTTPS web traffic"
+                    },
+                    {
+                        "type": "in",
+                        "action": "ACCEPT",
+                        "proto": "tcp",
+                        "source": "10.0.0.153",
+                        "port": "8443",
+                        "comment": "Allow Nginx to proxy to Traefik mTLS mesh"
                     },
                     {
                         "type": "in",

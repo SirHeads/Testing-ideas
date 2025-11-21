@@ -1,33 +1,11 @@
-# Phoenix Hypervisor CLI Architecture Overview
+# Architecture Overview
 
-This document provides a high-level overview of the Phoenix Hypervisor CLI, detailing how its components interact to manage the hypervisor environment.
+- **LXC 103 (Step-CA):** The root of all trust in the system. It is responsible for issuing and managing all internal TLS certificates, ensuring secure communication between all components.
 
-## Core Components
+- **VM 1001 (Portainer):** The primary management interface for the Docker Swarm environment. It runs the Portainer server and is responsible for deploying and managing all Docker stacks.
 
-The system is comprised of three main types of components:
+- **VM 1002 (drphoenix):** The primary worker node in the Docker Swarm. It runs the Portainer agent and is responsible for executing the Docker containers that make up the ThinkTanks.AI services.
 
-1.  **Dispatcher (`phoenix-cli`)**: The single entry point for all commands.
-2.  **Manager Scripts**: A collection of scripts, each responsible for a specific domain (e.g., LXC, VM, Swarm).
-3.  **Configuration Files**: A set of JSON files that define the desired state of the system.
+- **LXC 102 (Traefik):** The internal reverse proxy and load balancer. It is responsible for routing traffic to the appropriate services based on their DNS names and for providing automatic service discovery.
 
-## Workflow
-
-The following diagram illustrates the typical workflow when a command is executed:
-
-```mermaid
-graph TD
-    A[User] -- executes --> B(phoenix-cli);
-    B -- parses command --> C{Verb/Target};
-    C -- routes to --> D[Manager Script];
-    D -- reads from --> E[JSON Config Files];
-    E -- defines state for --> F[Proxmox/Docker];
-    D -- executes actions on --> F;
-```
-
-1.  A **User** executes a command using the `phoenix-cli` script (e.g., `phoenix create 101`).
-2.  The **`phoenix-cli`** script acts as a **dispatcher**. It parses the command to identify the action (verb) and the target (e.g., a VM or LXC ID).
-3.  Based on the verb and target, the dispatcher routes the command to the appropriate **Manager Script**. For example, a command targeting an LXC container is routed to `lxc-manager.sh`.
-4.  The **Manager Script** reads the relevant **JSON Configuration Files** to get the specific parameters for the target (e.g., memory, CPU, network settings).
-5.  The manager script then executes the necessary commands (e.g., `pct`, `qm`, `docker`) to bring the system to the desired state as defined in the configuration files.
-
-This architecture creates a declarative, idempotent system where the JSON files represent the single source of truth for the entire environment.
+- **LXC 101 (Nginx):** The external-facing reverse proxy and gateway. It is responsible for terminating all external TLS connections and for routing traffic to the appropriate internal services.

@@ -14,12 +14,7 @@ services:
       replicas: 1
       placement:
         constraints: []
-      labels:
-        - "traefik.enable=true"
-        - "traefik.http.routers.qdrant.rule=Host(`qdrant.internal.thinkheads.ai`)"
-        - "traefik.http.routers.qdrant.entrypoints=websecure"
-        - "traefik.http.routers.qdrant.tls=true"
-        - "traefik.http.services.qdrant.loadbalancer.server.port=6333"
+      labels: {}
 
 networks:
   traefik-public:

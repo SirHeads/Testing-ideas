@@ -261,7 +261,7 @@ deploy_portainer_instances() {
                 if [ "$PHOENIX_DRY_RUN" = "true" ]; then
                     log_info "DRY-RUN: Would execute 'swarm-manager.sh deploy' for portainer_service."
                 else
-                    if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy portainer_service --env prod --host-mode; then
+                    if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy portainer_service --env production; then
                         log_fatal "Failed to deploy Portainer stack via swarm-manager."
                     fi
                 fi
@@ -505,100 +505,52 @@ sync_all() {
     export PHOENIX_RESET_PORTAINER=${1:-false}
     log_info "--- Starting Full System State Synchronization ---"
 
-    # --- STAGE 0: Centralized Certificate Generation ---
-    log_info "--- Stage 0: Generating all certificates from manifest ---"
-    if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
-        log_fatal "Centralized certificate generation failed. Aborting sync."
-    fi
-    log_success "All certificates generated/validated successfully."
-
-    # --- STAGE 1: Sync Stack Files & Ensure Permissions ---
+    # --- STAGE 1: INFRASTRUCTURE PREPARATION ---
+    log_info "--- Stage 1: Preparing Infrastructure (Files, DNS, Firewall) ---"
     sync_stack_files
     log_info "Ensuring correct permissions on stacks directory..."
     chmod -R 777 /quickOS/portainer_stacks/ || log_fatal "Failed to set permissions on /quickOS/portainer_stacks/"
 
-    # --- STAGE 2: CERTIFICATE GENERATION & CORE INFRASTRUCTURE ---
-    log_info "--- Stage 2: Synchronizing DNS, and Firewall ---"
-
-    # Ensure the Proxmox host trusts our internal CA before proceeding
     log_info "Ensuring Step-CA root certificate is present on the Proxmox host..."
-    local step_ca_ctid="103"
-    if pct status "$step_ca_ctid" > /dev/null 2>&1; then
-        if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_install_trusted_ca.sh"; then
-            log_fatal "Failed to install trusted CA on the host. Aborting."
-        fi
-    else
-        log_warn "Step-CA container (${step_ca_ctid}) not found. Skipping host trust installation."
+    if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_install_trusted_ca.sh"; then
+        log_fatal "Failed to install trusted CA on the host. Aborting."
     fi
 
-
-    # Sync DNS server configuration
+    log_info "Synchronizing DNS server configuration..."
     if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_dns_server.sh"; then
         log_fatal "DNS synchronization failed. Aborting."
     fi
-    log_success "DNS server configuration synchronized."
 
-    # --- FIX: Ensure firewall rules are always synchronized ---
     log_info "Synchronizing firewall configuration..."
     if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh" "$HYPERVISOR_CONFIG_FILE"; then
         log_fatal "Firewall synchronization failed. Aborting."
     fi
-    log_success "Firewall configuration synchronized."
+    log_success "Infrastructure preparation complete."
 
-    # --- FIX: Ensure firewall rules are always synchronized ---
-    log_info "Synchronizing firewall configuration..."
-    if ! "${PHOENIX_BASE_DIR}/bin/hypervisor_setup/hypervisor_feature_setup_firewall.sh" "$HYPERVISOR_CONFIG_FILE"; then
-        log_fatal "Firewall synchronization failed. Aborting."
-    fi
-    log_success "Firewall configuration synchronized."
-    
-    # --- NEW: Run Certificate Manager ---
-    log_info "Running certificate renewal manager to ensure all certificates are up to date..."
 
-    log_info "--- PRE-CERT RENEWAL DOCKER STATUS ---"
-    run_docker_command_in_vm 1001 "docker info" || log_warn "Pre-renewal docker info command failed."
-
-    if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
-        log_fatal "Certificate renewal manager failed. Aborting."
-    fi
-
-    # --- NEW: Re-apply Docker client context to use renewed certs ---
-    log_info "Re-applying Docker client context to ensure it uses the latest certificates..."
-    local docker_proxy_script_path="${PHOENIX_BASE_DIR}/bin/vm_features/feature_install_docker_proxy.sh"
-    if [ -f "$docker_proxy_script_path" ]; then
-        # Update context on all Docker hosts (manager and workers)
-        local docker_vmids=$(jq -r '.vms[] | select(.swarm_role) | .vmid' "$VM_CONFIG_FILE")
-        for vmid in $docker_vmids; do
-            log_info "Updating Docker context on VM ${vmid}..."
-            run_qm_command guest exec "$vmid" -- /bin/bash -c "$(cat "$docker_proxy_script_path")" || log_warn "Failed to re-apply Docker client context in VM ${vmid}."
-        done
-    else
-        log_warn "Docker proxy script not found at ${docker_proxy_script_path}. Skipping context update."
-    fi
-
-    log_info "--- POST-CERT RENEWAL DOCKER STATUS ---"
-    run_docker_command_in_vm 1001 "docker info" || log_warn "Post-renewal docker info command failed."
-    log_success "Certificate renewal manager completed successfully."
-
-    # --- STAGE 2: ENSURE SWARM CLUSTER IS ACTIVE ---
+    # --- STAGE 2: SWARM INITIALIZATION ---
     log_info "--- Stage 2: Ensuring Docker Swarm Cluster is Active ---"
     ensure_swarm_cluster_active
-
     log_info "--- Ensuring Traefik overlay network exists ---"
     local manager_vmid=$(jq -r '.vms[] | select(.swarm_role == "manager") | .vmid' "$VM_CONFIG_FILE")
     if ! run_docker_command_in_vm "$manager_vmid" "docker network inspect traefik-public > /dev/null 2>&1"; then
         log_info "Traefik overlay network not found. Creating it now..."
         run_docker_command_in_vm "$manager_vmid" "docker network create --driver overlay --attachable traefik-public" || log_fatal "Failed to create Traefik overlay network."
-        log_success "Traefik overlay network created successfully."
-    else
-        log_info "Traefik overlay network already exists."
     fi
-
-    # --- STAGE 2.5: ENSURE PORTAINER SECRET EXISTS ---
     ensure_portainer_admin_secret
+    log_success "Docker Swarm is active and configured."
 
-    # --- STAGE 3: DEPLOY & VERIFY UPSTREAM SERVICES ---
-    log_info "--- Stage 3: Deploying and Verifying Portainer ---"
+
+    # --- STAGE 3: CERTIFICATE GENERATION & DISTRIBUTION ---
+    log_info "--- Stage 3: Generating and Distributing All Certificates ---"
+    if ! "${PHOENIX_BASE_DIR}/bin/managers/certificate-renewal-manager.sh" --force; then
+        log_fatal "Centralized certificate generation and distribution failed. Aborting sync."
+    fi
+    log_success "All certificates generated and distributed successfully."
+
+
+    # --- STAGE 4: DEPLOY & VERIFY UPSTREAM SERVICES ---
+    log_info "--- Stage 4: Deploying and Verifying Portainer ---"
     local portainer_vmid="1001"
     if qm status "$portainer_vmid" > /dev/null 2>&1; then
         log_info "Portainer VM (1001) is running. Proceeding with deployment."
@@ -630,8 +582,6 @@ sync_all() {
         fi
         if ! pct push "$traefik_ctid" "${PHOENIX_BASE_DIR}/etc/traefik/dynamic_conf.yml" /etc/traefik/dynamic/dynamic_conf.yml; then
             log_fatal "Failed to push Traefik dynamic config to container 102."
-        else
-            log_success "Successfully pushed Traefik dynamic config to container 102."
         fi
         pct exec "$traefik_ctid" -- chmod 644 /etc/traefik/dynamic/dynamic_conf.yml
         
@@ -657,10 +607,8 @@ sync_all() {
     if pct status "$nginx_ctid" > /dev/null 2>&1; then
         log_info "Nginx container (101) is running. Generating and applying configuration."
 
-        # 1. Generate the configuration on the host
-        if ! "${PHOENIX_BASE_DIR}/bin/generate_nginx_config.sh"; then
-            log_fatal "Failed to generate Nginx configuration on the host."
-        fi
+        # The Nginx configuration is now static and no longer needs to be generated.
+        # This block has been removed to reflect the new "Design A" architecture.
 
         # 2. Push the generated configuration to the container
         local nginx_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway"
@@ -716,10 +664,10 @@ sync_all() {
 
     # --- STAGE 7: SYNCHRONIZE APPLICATION STACKS ---
     sync_application_stacks
-
-    # --- FINAL HEALTH CHECK ---
-    # wait_for_system_ready
-
+ 
+     # --- FINAL HEALTH CHECK ---
+     # wait_for_system_ready
+ 
     log_info "--- Full System State Synchronization Finished ---"
 }
 
@@ -756,7 +704,7 @@ sync_application_stacks() {
             log_info "Deploying stack '${stack_name}' as defined in VM '${vm_name}'..."
             # We assume 'prod' environment for now, as per the current design.
             # This can be parameterized in the future if needed.
-            if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy "$stack_name" --env prod; then
+            if ! "${PHOENIX_BASE_DIR}/bin/managers/swarm-manager.sh" deploy "$stack_name" --env production; then
                 log_warn "Failed to deploy stack '${stack_name}'. Please check the logs for details."
             else
                 log_success "Successfully initiated deployment for stack '${stack_name}'."
