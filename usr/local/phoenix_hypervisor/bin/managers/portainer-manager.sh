@@ -611,14 +611,25 @@ sync_all() {
         # This block has been removed to reflect the new "Design A" architecture.
 
         # 2. Push the generated configuration to the container
-        local nginx_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway"
-        local nginx_config_dest="/etc/nginx/sites-available/gateway"
-        if ! pct push "$nginx_ctid" "$nginx_config_source" "$nginx_config_dest"; then
-            log_fatal "Failed to push generated Nginx config to container 101."
+        # 1. Write the HTTP gateway config directly to conf.d
+        local http_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway" # Note: we keep the source file name for now
+        local http_config_dest="/etc/nginx/conf.d/gateway.conf"
+        log_info "Writing HTTP gateway config to ${http_config_dest}..."
+        if ! cat "${http_config_source}" | pct exec "${nginx_ctid}" -- tee "${http_config_dest}" > /dev/null; then
+            log_fatal "Failed to write Nginx HTTP config to container 101."
         fi
 
-        # 3. Create the symlink
-        pct exec "$nginx_ctid" -- ln -sf "$nginx_config_dest" /etc/nginx/sites-enabled/gateway || log_fatal "Failed to create symlink in container 101."
+        # 2. Write the TCP stream config directly to stream.d
+        local stream_config_source="${PHOENIX_BASE_DIR}/etc/nginx/stream.d/stream-gateway.conf"
+        local stream_config_dest="/etc/nginx/stream.d/stream-gateway.conf"
+        log_info "Writing TCP stream config to ${stream_config_dest}..."
+        if ! cat "${stream_config_source}" | pct exec "${nginx_ctid}" -- tee "${stream_config_dest}" > /dev/null; then
+            log_fatal "Failed to write Nginx stream config to container 101."
+        fi
+
+        # 3. Remove the placeholder default config
+        log_info "Removing placeholder default configuration..."
+        pct exec "$nginx_ctid" -- rm -f /etc/nginx/conf.d/default.conf
 
         # 4. Test and reload Nginx inside the container
         if ! pct exec "$nginx_ctid" -- nginx -t; then

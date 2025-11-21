@@ -31,15 +31,16 @@ log_success "Nginx installed successfully."
 temp_dir="/tmp/phoenix_run"
 
 # --- Define Directories ---
-SITES_AVAILABLE_DIR="/etc/nginx/sites-available"
-SITES_ENABLED_DIR="/etc/nginx/sites-enabled"
+CONF_D_DIR="/etc/nginx/conf.d"
+STREAM_D_DIR="/etc/nginx/stream.d"
 SSL_DIR="/etc/nginx/ssl"
 ACME_WEBROOT="/var/www/html"
 
 # --- Clean and Create Directories ---
-log_info "Cleaning up and creating Nginx directory structure..."
-rm -rf $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR /etc/nginx/stream.d /etc/nginx/conf.d/*
-mkdir -p $SITES_AVAILABLE_DIR $SITES_ENABLED_DIR $SSL_DIR $ACME_WEBROOT /var/cache/nginx
+log_info "Cleaning up and creating simplified Nginx directory structure..."
+rm -rf /etc/nginx/sites-available /etc/nginx/sites-enabled
+rm -f ${CONF_D_DIR}/* ${STREAM_D_DIR}/*
+mkdir -p $CONF_D_DIR $STREAM_D_DIR $SSL_DIR $ACME_WEBROOT /var/cache/nginx
 chown -R www-data:www-data /var/cache/nginx $ACME_WEBROOT
 
 # --- Copy Core Nginx Configuration ---
@@ -50,7 +51,7 @@ cp "${temp_dir}/nginx.conf" "/etc/nginx/nginx.conf" || log_fatal "Master nginx.c
 # This ensures that Nginx can start successfully before certificates are available.
 # The 'phoenix sync all' command will overwrite this with the real gateway config.
 log_info "Creating a placeholder default site to ensure Nginx starts..."
-cat > "$SITES_AVAILABLE_DIR/default" <<EOF
+cat > "$CONF_D_DIR/default.conf" <<EOF
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -63,7 +64,6 @@ server {
     }
 }
 EOF
-ln -sf "$SITES_AVAILABLE_DIR/default" "$SITES_ENABLED_DIR/default"
 
 # --- Service Management and Validation ---
 log_info "Testing Nginx configuration with placeholder site..."
