@@ -80,6 +80,39 @@ if ! systemctl is-active --quiet nginx; then
     log_fatal "Nginx service health check failed. The service is not running."
 fi
 
+# --- Macvlan Support: Add Helper Script for Listen Directives ---
+log_info "Installing helper script for Macvlan support (Listen All Interfaces)..."
+cat > "/usr/local/bin/nginx-config-set-listen-all-interfaces" <<'EOF'
+#!/bin/bash
+set -e
+CONF_FILE="/etc/nginx/conf.d/gateway.conf"
+
+if [ ! -f "$CONF_FILE" ]; then
+    echo "Gateway config not found at $CONF_FILE. Skipping."
+    exit 0
+fi
+
+echo "Updating Nginx listen directives to bind to all interfaces (0.0.0.0)..."
+cp "$CONF_FILE" "${CONF_FILE}.bak"
+
+# Use Perl for robust regex replacement to remove specific IP bindings
+# Replaces "listen <IP>:443" with "listen 443"
+perl -i -pe 's/(listen\s+)(?!0\.0\.0\.0)([\d\.]+:)?443/$1443/g' "$CONF_FILE"
+# Replaces "listen <IP>:80" with "listen 80"
+perl -i -pe 's/(listen\s+)(?!0\.0\.0\.0)([\d\.]+:)?80/$180/g' "$CONF_FILE"
+
+if nginx -t; then
+    echo "Configuration test passed. Reloading Nginx..."
+    systemctl reload nginx
+    echo "Nginx reloaded successfully."
+else
+    echo "Configuration test failed. Restoring backup..."
+    mv "${CONF_FILE}.bak" "$CONF_FILE"
+    exit 1
+fi
+EOF
+chmod +x "/usr/local/bin/nginx-config-set-listen-all-interfaces"
+
 log_success "Nginx has been installed and started successfully in LXC 101. Final configuration will be applied by 'phoenix sync all'."
 
 exit 0

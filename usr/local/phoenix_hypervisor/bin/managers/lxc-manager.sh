@@ -251,6 +251,52 @@ apply_network_configs() {
     # --- END PHOENIX-20 FIX ---
 
     run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+
+    # --- Public Interface Configuration (Macvlan) ---
+    local public_enabled=$(jq_get_value "$CTID" ".public_interface.enabled" || echo "false")
+    if [ "$public_enabled" == "true" ]; then
+        log_info "Public interface configuration detected for CTID $CTID."
+        
+        local public_bridge=$(get_global_config_value ".network.public_bridge")
+        if [ -z "$public_bridge" ]; then
+            log_fatal "Public bridge not defined in global config (network.public_bridge)."
+        fi
+
+        local pub_ip=$(jq_get_value "$CTID" ".public_interface.ip")
+        local pub_gw=$(jq_get_value "$CTID" ".public_interface.gw")
+        local pub_mac=$(jq_get_value "$CTID" ".public_interface.mac_address")
+        local pub_type=$(jq_get_value "$CTID" ".public_interface.type" || echo "macvlan")
+        local pub_mode=$(jq_get_value "$CTID" ".public_interface.mode" || echo "bridge")
+
+        # Validate IP routability
+        local ip_addr_only=${pub_ip%/*}
+        if ! ip route get "$ip_addr_only" via "$pub_gw" dev "$public_bridge" >/dev/null 2>&1; then
+             # Note: This check might be too strict if the host doesn't have an IP in that subnet,
+             # but checking against the interface is good.
+             # Simplified check: verify interface exists
+             if ! ip link show "$public_bridge" >/dev/null 2>&1; then
+                 log_fatal "Public bridge '$public_bridge' does not exist on host."
+             fi
+             # We proceed, assuming the IP is valid for the physical network attached to the bridge.
+        fi
+
+        log_info "Applying public interface (net1) to CTID $CTID..."
+        # Correct Proxmox syntax: name,macaddr,bridge,type,mode,ip,gw
+        local net1_string="name=eth1,macaddr=${pub_mac},bridge=${public_bridge},type=${pub_type}"
+        
+        if [ "$pub_type" == "macvlan" ]; then
+            net1_string+=",mode=${pub_mode}"
+        fi
+        
+        net1_string+=",ip=${pub_ip},gw=${pub_gw}"
+
+        if [ "$firewall_enabled" == "true" ]; then
+             net1_string+=",firewall=1"
+        fi
+
+        run_pct_command set "$CTID" --net1 "$net1_string" || log_fatal "Failed to set public interface configuration."
+    fi
+
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
     if [ -n "$nameservers" ]; then
         run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."

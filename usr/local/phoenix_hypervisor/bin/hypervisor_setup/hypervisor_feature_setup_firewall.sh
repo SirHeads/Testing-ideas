@@ -161,6 +161,17 @@ enable: 1
 [RULES]
 EOF
 
+    # --- Macvlan Public Interface Rules ---
+    # Automatically allow web traffic on the public interface if it exists.
+    if [ "$guest_type" == "lxc" ]; then
+        local public_enabled=$(jq -r --arg ctid "$guest_id" '.lxc_configs[$ctid].public_interface.enabled // "false"' "$config_file")
+        if [ "$public_enabled" == "true" ]; then
+            log_info "Public interface detected for LXC $guest_id. Adding auto-allow rules for web traffic on eth1."
+            echo "IN ACCEPT -i eth1 -p tcp -dport 80 -log nolog # Auto-allow HTTP on Public Interface" >> "$guest_fw_file"
+            echo "IN ACCEPT -i eth1 -p tcp -dport 443 -log nolog # Auto-allow HTTPS on Public Interface" >> "$guest_fw_file"
+        fi
+    fi
+
     echo "$firewall_config" | jq -c '.rules[]?' | while read -r rule; do
         generate_rule_string "$rule" >> "$guest_fw_file"
     done

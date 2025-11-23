@@ -41,8 +41,8 @@ echo -e "${YELLOW}--- Traefik Dynamic Config ---${NC}"
 pct exec 102 -- cat /etc/traefik/dynamic/dynamic_conf.yml
 echo
 
-echo -e "${YELLOW}--- Traefik Logs Last 100 lines) ---${NC}"
-pct exec 102 -- journalctl -u traefik -n 100 --no-pager
+echo -e "${YELLOW}--- Traefik Logs Last 50 lines) ---${NC}"
+pct exec 102 -- journalctl -u traefik -n 50 --no-pager
 echo
 
 echo -e "${GREEN}--- Docker Swarm Service Status (VM 1001) ---${NC}"
