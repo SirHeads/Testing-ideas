@@ -9,40 +9,28 @@ echo -e "${GREEN}--- Try and curl it ---${NC}"
 curl -k https://portainer.internal.thinkheads.ai/api/system/status
 echo
 
-echo -e "${GREEN}--- Traefik Status (LXC 102) ---${NC}"
-pct exec 102 -- systemctl status traefik --no-pager
-echo
-
 echo -e "${GREEN}--- Nginx Status (LXC 101) ---${NC}"
 pct exec 101 -- systemctl status nginx --no-pager
+echo
+
+echo -e "\n${YELLOW}--- Nginx Main Config (/etc/nginx/nginx.conf) ---${NC}"
+pct exec 101 -- cat /etc/nginx/nginx.conf
+echo
+
+echo -e "${YELLOW}--- Nginx Gateway Config ---${NC}"
+pct exec 101 -- cat /etc/nginx/sites-enabled/gateway
 echo
 
 echo -e "${GREEN}--- Nginx Error log (LXC 101) ---${NC}"
 pct exec 101 -- tail -n 50 /var/log/nginx/error.log
 echo
 
-echo -e "${GREEN}--- Docker Swarm Service Status (VM 1001) ---${NC}"
-qm guest exec 1001 -- docker service ls
+echo -e "\n${GREEN}--- Nginx Access Log (last 50 lines) ---${NC}"
+pct exec 101 -- tail -n 50 /var/log/nginx/access.log
 echo
 
-echo -e "${YELLOW}--- Traefik Logs Last 100 lines) ---${NC}"
-pct exec 102 -- journalctl -u traefik -n 100 --no-pager
-echo
-
-echo -e "${YELLOW}--- Docker Swarm nodes ---${NC}"
-qm guest exec 1001 -- docker node ls
-echo
-
-echo -e "${YELLOW}--- Swarm Overlay Network ---${NC}"
-qm guest exec 1001 -- docker network ls --filter driver=overlay
-echo
-
-echo -e "${YELLOW}--- docker - traefik network ---${NC}"
-qm guest exec 1001 -- docker network inspect traefik-public
-echo
-
-echo -e "${YELLOW}--- Nginx Gateway Config ---${NC}"
-pct exec 101 -- cat /etc/nginx/sites-enabled/gateway
+echo -e "${GREEN}--- Traefik Status (LXC 102) ---${NC}"
+pct exec 102 -- systemctl status traefik --no-pager
 echo
 
 echo -e "${YELLOW}--- Traefik yml Config ---${NC}"
@@ -53,15 +41,35 @@ echo -e "${YELLOW}--- Traefik Dynamic Config ---${NC}"
 pct exec 102 -- cat /etc/traefik/dynamic/dynamic_conf.yml
 echo
 
-echo -e "${YELLOW}--- docker swarm service status ---${NC}"
+echo -e "${YELLOW}--- Traefik Logs Last 100 lines) ---${NC}"
+pct exec 102 -- journalctl -u traefik -n 100 --no-pager
+echo
+
+echo -e "${GREEN}--- Docker Swarm Service Status (VM 1001) ---${NC}"
+qm guest exec 1001 -- docker service ls
+echo
+
+echo -e "${YELLOW}--- Docker Swarm nodes ---${NC}"
 qm guest exec 1001 -- docker node ls
 echo
 
-echo -e "${YELLOW}--- portainer service logs ---${NC}"
+echo -e "${YELLOW}--- Swarm Overlay Network ---${NC}"
+qm guest exec 1001 -- docker network ls --filter driver=overlay
+echo
+
+echo -e "${YELLOW}--- Docker - traefik network ---${NC}"
+qm guest exec 1001 -- docker network inspect traefik-public
+echo
+
+echo -e "${YELLOW}--- Docker swarm service status ---${NC}"
+qm guest exec 1001 -- docker node ls
+echo
+
+echo -e "${YELLOW}--- Docker portainer service logs ---${NC}"
 qm guest exec 1001 -- docker service logs production_portainer_service_portainer --tail 100;
 echo
 
-echo -e "${YELLOW}--- qdrant service logs ---${NC}"
+echo -e "${YELLOW}--- Docker qdrant service logs ---${NC}"
 qm guest exec 1001 -- docker service logs production_qdrant_service_qdrant --tail 100;
 echo
 
@@ -108,3 +116,4 @@ echo
 echo -e "${YELLOW}--- Docker Daemon Logs on Swarm Worker (Last 50 lines from VM 1002) ---${NC}"
 qm guest exec 1002 -- journalctl -u docker -n 50 --no-pager
 echo
+

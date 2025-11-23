@@ -37,11 +37,14 @@
                         "portainer": {
                             "traefik_labels": [
                                 "traefik.enable=true",
-                                "traefik.tcp.routers.portainer.rule=HostSNI(`portainer.internal.thinkheads.ai`)",
-                                "traefik.tcp.routers.portainer.entrypoints=mesh",
-                                "traefik.tcp.routers.portainer.tls=true",
-                                "traefik.tcp.routers.portainer.tls.passthrough=true",
-                                "traefik.tcp.services.portainer.loadbalancer.server.port=9443"
+                                "traefik.http.routers.portainer.rule=Host(`portainer.internal.thinkheads.ai`)",
+                                "traefik.http.routers.portainer.entrypoints=websecure",
+                                "traefik.http.routers.portainer.tls=true",
+                                "traefik.http.routers.portainer.service=portainer-svc",
+                                "traefik.http.services.portainer-svc.loadbalancer.server.port=9443",
+                                "traefik.http.services.portainer-svc.loadbalancer.server.scheme=https",
+                                "traefik.http.services.portainer-svc.loadbalancer.serverstransport=portainer-transport@docker",
+                                "traefik.http.serverstransports.portainer-transport.insecureskipverify=true"
                             ]
                         }
                     }
