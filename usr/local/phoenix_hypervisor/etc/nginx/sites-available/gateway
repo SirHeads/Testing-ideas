@@ -1,48 +1,24 @@
-# HTTP → HTTPS redirect
 server {
     listen 80 default_server;
-    server_name ~^.*\.internal\.thinkheads\.ai$;
+    listen [::]:80 default_server;
+    server_name _;
     return 301 https://$host$request_uri;
 }
 
-# Public facing dashboards go to Traefiks normal websecure entrypoint (:443)
 server {
-    listen 443 ssl http2;
-    server_name portainer.internal.thinkheads.ai
-                traefik.internal.thinkheads.ai
-                qdrant.internal.thinkheads.ai
-                ca.internal.thinkheads.ai;   
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name _;
 
     ssl_certificate     /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt;
     ssl_certificate_key /etc/nginx/ssl/nginx.internal.thinkheads.ai.key;
 
     location / {
         proxy_pass https://10.0.0.12:443;
-        proxy_ssl_server_name on;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_ssl_verify off;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-# Everything else → real mTLS-protected mesh (:8443)
-server {
-    listen 443 ssl http2;
-    server_name ~^(?!(portainer\.internal\.thinkheads\.ai$|traefik\.internal\.thinkheads\.ai$|qdrant\.internal\.thinkheads\.ai$|ca\.internal\.thinkheads\.ai$)).*\.internal\.thinkheads\.ai$;
-
-    ssl_certificate     /etc/nginx/ssl/nginx.internal.thinkheads.ai.crt;
-    ssl_certificate_key /etc/nginx/ssl/nginx.internal.thinkheads.ai.key;
-
-    location / {
-        proxy_pass https://10.0.0.12:8443;
-        proxy_ssl_server_name on;
-        proxy_ssl_certificate     /etc/nginx/ssl/nginx-client.crt;
-        proxy_ssl_certificate_key /etc/nginx/ssl/nginx-client.key;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }

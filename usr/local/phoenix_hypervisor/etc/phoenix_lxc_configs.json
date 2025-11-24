@@ -488,20 +488,13 @@
             "storage_size_gb": 32,
             "network_config": {
                 "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.153/24",
+                "bridge": "vmbr0.10",
+                "ip": "dhcp",
                 "gw": "10.0.0.1",
-                "nameservers": "10.0.0.13"
+                "hwaddr": "02:00:00:00:01:01",
+                "nameserver": "10.0.0.1"
             },
-            "public_interface": {
-                "enabled": true,
-                "type": "macvlan",
-                "mode": "bridge",
-                "ip": "10.0.0.154/24",
-                "gw": "10.0.0.1",
-                "mac_address": "02:00:00:00:01:01"
-            },
-            "mac_address": "52:54:00:67:89:B3",
+            "mac_address": "02:00:00:00:01:01",
             "gpu_assignment": "none",
             "unprivileged": true,
             "portainer_role": "infrastructure",
@@ -519,11 +512,14 @@
                 "trusted_ca",
                 "step_cli"
             ],
-            "pct_options": [
-                "nesting=1"
-            ],
+            "pct_options": [],
             "lxc_options": [
-                "lxc.mount.auto:sys:rw"
+                "lxc.mount.auto:sys:rw",
+                "lxc.apparmor.profile: unconfined",
+                "lxc.apparmor.allow_nesting: 1",
+                "lxc.net.0.type: macvlan",
+                "lxc.net.0.macvlan.mode: bridge",
+                "lxc.net.0.link: vmbr0.10"
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
             "traefik_service": {

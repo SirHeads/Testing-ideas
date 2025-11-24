@@ -137,13 +137,13 @@ update_and_upgrade_system() {
     log_info "Temporarily setting nameserver to 8.8.8.8 for initial setup..."
     echo "nameserver 8.8.8.8" > /etc/resolv.conf
 
+    log_info "Forcing APT and ping to use IPv4 for reliable package updates and connectivity checks..."
+    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+
     log_info "Verifying external connectivity..."
-    if ! ping -c 3 google.com; then
+    if ! ping -4 -c 3 google.com; then
         log_fatal "Failed to verify external connectivity. Please check the hypervisor's network settings and firewall."
     fi
-
-    log_info "Forcing APT to use IPv4 for reliable package updates..."
-    echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
     
     log_info "Updating and upgrading system (this may take a while)..."
     retry_command "apt-get update" || log_fatal "Failed to update package lists"

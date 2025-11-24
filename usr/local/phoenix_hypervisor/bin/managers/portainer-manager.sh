@@ -605,19 +605,18 @@ sync_all() {
     log_info "--- Stage 5: Synchronizing NGINX Gateway ---"
     local nginx_ctid="101"
     if pct status "$nginx_ctid" > /dev/null 2>&1; then
-        log_info "Nginx container (101) is running. Generating and applying configuration."
+        log_info "Nginx container (101) is running. Applying gateway configuration."
 
-        # The Nginx configuration is now static and no longer needs to be generated.
-        # This block has been removed to reflect the new "Design A" architecture.
-
-        # 2. Push the generated configuration to the container
-        # 1. Write the HTTP gateway config directly to conf.d
-        local http_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway" # Note: we keep the source file name for now
-        local http_config_dest="/etc/nginx/conf.d/gateway.conf"
+        # 1. Write the HTTP gateway config to sites-available and enable it
+        local http_config_source="${PHOENIX_BASE_DIR}/etc/nginx/sites-available/gateway"
+        local http_config_dest="/etc/nginx/sites-available/gateway"
         log_info "Writing HTTP gateway config to ${http_config_dest}..."
         if ! cat "${http_config_source}" | pct exec "${nginx_ctid}" -- tee "${http_config_dest}" > /dev/null; then
             log_fatal "Failed to write Nginx HTTP config to container 101."
         fi
+        
+        log_info "Enabling gateway site..."
+        pct exec "${nginx_ctid}" -- ln -sf /etc/nginx/sites-available/gateway /etc/nginx/sites-enabled/
 
         # 2. Write the TCP stream config directly to stream.d
         local stream_config_source="${PHOENIX_BASE_DIR}/etc/nginx/stream.d/stream-gateway.conf"
@@ -627,9 +626,9 @@ sync_all() {
             log_fatal "Failed to write Nginx stream config to container 101."
         fi
 
-        # 3. Remove the placeholder default config
+        # 3. Remove the placeholder default config (from sites-enabled and conf.d just in case)
         log_info "Removing placeholder default configuration..."
-        pct exec "$nginx_ctid" -- rm -f /etc/nginx/conf.d/default.conf
+        pct exec "$nginx_ctid" -- rm -f /etc/nginx/sites-enabled/default /etc/nginx/conf.d/default.conf
 
         # 4. Test and reload Nginx inside the container
         if ! pct exec "$nginx_ctid" -- nginx -t; then

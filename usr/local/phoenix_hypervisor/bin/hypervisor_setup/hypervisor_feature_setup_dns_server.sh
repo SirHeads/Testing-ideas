@@ -26,6 +26,42 @@ setup_dns_server() {
         log_info "DNS server setup is disabled in the configuration. Skipping."
         return
     fi
+
+    # --- Pre-flight Check for Port 53 ---
+    log_info "Checking if port 53 is in use..."
+    if lsof -i :53 &> /dev/null; then
+        log_warn "Port 53 is currently in use. Identifying the process..."
+        local blocking_service=""
+        
+        if systemctl is-active systemd-resolved &> /dev/null; then
+            blocking_service="systemd-resolved"
+        elif systemctl is-active dnsmasq &> /dev/null; then
+            blocking_service="dnsmasq"
+        fi
+
+        if [ "$blocking_service" == "systemd-resolved" ]; then
+            log_warn "Process 'systemd-resolved' detected on port 53. Stopping and disabling..."
+            systemctl stop systemd-resolved
+            systemctl disable systemd-resolved
+            # Ensure the stub file is unlinked
+            rm -f /etc/resolv.conf
+            # Recreate a basic resolv.conf to allow package installation to work
+            echo "nameserver 1.1.1.1" > /etc/resolv.conf
+            log_success "systemd-resolved stopped and disabled."
+        elif [ "$blocking_service" == "dnsmasq" ]; then
+            log_warn "Process 'dnsmasq' is already running on port 53. Stopping it to reconfigure..."
+            systemctl stop dnsmasq
+            log_success "Existing dnsmasq service stopped."
+        else
+            # Fallback: Identify process name via lsof if systemctl check fails
+            local blocking_process=$(lsof -i :53 -t | head -n 1 | xargs ps -p -o comm=)
+            log_error "Port 53 is occupied by unknown process '$blocking_process'. Please stop it manually."
+            exit 1
+        fi
+    else
+        log_info "Port 53 is free."
+    fi
+
     log_info "Installing dnsmasq..."
     apt-get update > /dev/null
     apt-get install -y dnsmasq > /dev/null
@@ -92,20 +128,20 @@ EOF
         [
             # --- Public Gateway Services (All point to Nginx) ---
             # These are the hostnames that are exposed to the outside world (even if "outside" is just the Proxmox host)
-            ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | { "hostname": .hostname, "ip": $gateway_ip }),
-            ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $gateway_ip }),
-            ($vm_config.vms[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $gateway_ip }),
-            { "hostname": "portainer.internal.thinkheads.ai", "ip": $gateway_ip },
-            { "hostname": "traefik.internal.thinkheads.ai", "ip": $gateway_ip },
+            ($stacks[] | .environments.production.services | values[] | .traefik_labels[]? | select(startswith("traefik.http.routers.")) | select(contains(".rule=Host(`")) | capture("Host\\(`(?<hostname>[^`]+)`\\)") | { "hostname": .hostname, "ip": $traefik_ip }),
+            ($lxc_config.lxc_configs | values[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $traefik_ip }),
+            ($vm_config.vms[] | select(.traefik_service.name?) | { "hostname": "\(.traefik_service.name).internal.thinkheads.ai", "ip": $traefik_ip }),
+            { "hostname": "portainer.internal.thinkheads.ai", "ip": $traefik_ip },
+            { "hostname": "traefik.internal.thinkheads.ai", "ip": $traefik_ip },
 
             # --- Internal Services ---
             # These are for service-to-service communication. Most go through Traefik.
             # Some critical infrastructure needs to be resolved directly.
-            ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip) | {
+            ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip and .network_config.ip != "dhcp") | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
-                "ip": (if .name == "Step-CA" or .name == "Nginx-Phoenix" or .name == "Traefik-Internal" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
+                "ip": (if .name == "Step-CA" or .name == "Traefik-Internal" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
             }),
-            ($vm_config.vms[] | select(.name and .network_config.ip and .network_config.ip != "dhcp") | {
+            ($vm_config.vms[] | select(.name and .network_config.ip) | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
                 "ip": $traefik_ip
             }),

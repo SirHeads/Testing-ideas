@@ -186,7 +186,7 @@ main() {
     log_info "Starting declarative firewall configuration..."
 
     # 1. Ensure the network interfaces and bridge firewall are correctly configured.
-    ensure_bridge_firewall_enabled
+    # ensure_bridge_firewall_enabled # Disabled: Handled by hypervisor_feature_setup_macvlan.sh
 
     # 2. Wipe all existing .fw files to ensure a clean, idempotent run.
     clear_existing_firewall_configs

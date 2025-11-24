@@ -205,6 +205,7 @@ clone_container() {
 # =====================================================================================
 # Function: apply_resource_configs
 # Description: Applies resource-related configurations to a container.
+# =====================================================================================
 apply_resource_configs() {
     local CTID="$1"
     log_info "Applying resource configurations for CTID: $CTID"
@@ -232,74 +233,112 @@ apply_startup_configs() {
 apply_network_configs() {
     local CTID="$1"
     log_info "Applying network configurations for CTID: $CTID"
+    
+    # Common network settings
     local net0_name=$(jq_get_value "$CTID" ".network_config.name")
-    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
+    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
-    local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
-
-    # --- BEGIN PHOENIX-20 FIX ---
-    # Check if the firewall is enabled for this container in the JSON config.
-    # If so, append the firewall=1 flag directly to the network configuration string.
-    # This closes the race condition where a container could exist without the flag.
     local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
-    if [ "$firewall_enabled" == "true" ]; then
-        log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0."
-        net0_string+=",firewall=1"
+    
+    # Check for Macvlan configuration in lxc_options
+    local is_macvlan=false
+    local lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
+    if echo "$lxc_options" | grep -q "lxc.net.0.type: macvlan"; then
+        is_macvlan=true
+        log_info "Macvlan configuration detected for CTID $CTID."
     fi
-    # --- END PHOENIX-20 FIX ---
 
-    run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
 
-    # --- Public Interface Configuration (Macvlan) ---
-    local public_enabled=$(jq_get_value "$CTID" ".public_interface.enabled" || echo "false")
-    if [ "$public_enabled" == "true" ]; then
-        log_info "Public interface configuration detected for CTID $CTID."
+    if [ "$is_macvlan" = true ]; then
+        # --- Macvlan Special Handling ---
+        # For Macvlan, we MUST bypass 'pct set' because it forces 'type=veth' and IP settings that
+        # conflict with the low-level LXC macvlan driver.
         
-        local public_bridge=$(get_global_config_value ".network.public_bridge")
-        if [ -z "$public_bridge" ]; then
-            log_fatal "Public bridge not defined in global config (network.public_bridge)."
+        log_info "Applying specialized Macvlan network configuration..."
+
+        # 1. Stop container if running (safety check, though usually stopped by now)
+        if pct status "$CTID" | grep -q "status: running"; then
+             run_pct_command stop "$CTID"
         fi
 
-        local pub_ip=$(jq_get_value "$CTID" ".public_interface.ip")
-        local pub_gw=$(jq_get_value "$CTID" ".public_interface.gw")
-        local pub_mac=$(jq_get_value "$CTID" ".public_interface.mac_address")
-        local pub_type=$(jq_get_value "$CTID" ".public_interface.type" || echo "macvlan")
-        local pub_mode=$(jq_get_value "$CTID" ".public_interface.mode" || echo "bridge")
-
-        # Validate IP routability
-        local ip_addr_only=${pub_ip%/*}
-        if ! ip route get "$ip_addr_only" via "$pub_gw" dev "$public_bridge" >/dev/null 2>&1; then
-             # Note: This check might be too strict if the host doesn't have an IP in that subnet,
-             # but checking against the interface is good.
-             # Simplified check: verify interface exists
-             if ! ip link show "$public_bridge" >/dev/null 2>&1; then
-                 log_fatal "Public bridge '$public_bridge' does not exist on host."
-             fi
-             # We proceed, assuming the IP is valid for the physical network attached to the bridge.
+        # 2. Strict cleanup of ANY existing network lines
+        # We remove net0, ipconfig0, and all lxc.net.0 lines to ensure a clean slate
+        log_info "Performing strict cleanup of existing network lines..."
+        run_pct_command set "$CTID" --delete net0 2>/dev/null || true
+        if [ -f "$conf_file" ]; then
+            sed -i '/^net0:/d' "$conf_file"
+            sed -i '/^ipconfig[0-9]*:/d' "$conf_file"
+            sed -i '/^lxc\.net\.0\./d' "$conf_file"
         fi
 
-        log_info "Applying public interface (net1) to CTID $CTID..."
-        # Correct Proxmox syntax: name,macaddr,bridge,type,mode,ip,gw
-        local net1_string="name=eth1,macaddr=${pub_mac},bridge=${public_bridge},type=${pub_type}"
+        # 3. Manually construct and append the clean net0 line
+        # CRITICAL: We intentionally omit 'ip=', 'gw=', and 'type=veth'.
+        # We also force 'firewall=0' because PVE firewall doesn't work with macvlan.
+        local net0_clean="net0: name=${net0_name},bridge=${net0_bridge},hwaddr=${mac_address},firewall=0"
         
-        if [ "$pub_type" == "macvlan" ]; then
-            net1_string+=",mode=${pub_mode}"
+        log_info "Appending clean net0 line manually: $net0_clean"
+        echo "$net0_clean" >> "$conf_file"
+        
+        # 4. Atomic Application of Raw Macvlan Options
+        # We MUST apply the raw lxc.net.0.* options NOW to ensure the config file is valid
+        # if parsed by pct tools immediately after this.
+        log_info "Appending raw Macvlan LXC options atomically..."
+        
+        # Use jq directly to get raw strings line-by-line, avoiding issues with spaces
+        jq -r ".lxc_configs[\"$CTID\"].lxc_options[]" "$LXC_CONFIG_FILE" | while IFS= read -r option; do
+            if [[ "$option" == "lxc.net.0."* ]]; then
+                if [ -n "$option" ]; then
+                   echo "$option" >> "$conf_file"
+                   log_info "Appended raw option: $option"
+                fi
+            fi
+        done
+
+    else
+        # --- Standard Network Configuration (VETH) ---
+        local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
+        
+        log_info "Cleaning up previous network configuration for CTID $CTID..."
+        run_pct_command set "$CTID" --delete net0 2>/dev/null || true
+        if [ -f "$conf_file" ]; then
+            sed -i '/^lxc\.net\.0\./d' "$conf_file"
         fi
-        
-        net1_string+=",ip=${pub_ip},gw=${pub_gw}"
 
         if [ "$firewall_enabled" == "true" ]; then
-             net1_string+=",firewall=1"
+            log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0."
+            net0_string+=",firewall=1"
+        else
+            net0_string+=",firewall=0"
         fi
 
-        run_pct_command set "$CTID" --net1 "$net1_string" || log_fatal "Failed to set public interface configuration."
+        log_info "Applying standard network configuration: $net0_string"
+        run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
     fi
 
-    local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
-    if [ -n "$nameservers" ]; then
-        run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+    # --- Explicit DNS Override ---
+    local explicit_nameserver=$(jq_get_value "$CTID" ".network_config.nameserver" || echo "")
+    if [ -n "$explicit_nameserver" ]; then
+        log_info "Applying explicit nameserver override: $explicit_nameserver"
+        run_pct_command set "$CTID" --nameserver "$explicit_nameserver" || log_fatal "Failed to set explicit nameserver."
+    else
+        # Fallback to standard nameservers list
+        local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
+        if [ -n "$nameservers" ]; then
+            run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
+        fi
+    fi
+    
+    # Clean up potential legacy public interface if it exists
+    local public_enabled=$(jq_get_value "$CTID" ".public_interface.enabled" || echo "false")
+    if [ "$public_enabled" != "true" ]; then
+         # Check if net1 is defined
+         if pct config "$CTID" | grep -q "net1:"; then
+             log_info "Removing legacy net1 interface from CTID $CTID..."
+             run_pct_command set "$CTID" --delete net1 || log_warn "Failed to remove net1."
+         fi
     fi
 }
 
@@ -308,17 +347,24 @@ apply_network_configs() {
 apply_proxmox_features() {
     local CTID="$1"
     log_info "Applying Proxmox features for CTID: $CTID"
+    
+    local features_to_set=()
+    
+    # Get explicitly configured pct_options
     local pct_options=$(jq_get_array "$CTID" ".pct_options // [] | .[]" || echo "")
-    if [ -n "$pct_options" ]; then
-        local features_to_set=()
-        for option in $pct_options; do
-            features_to_set+=("$option")
-        done
-        if [ ${#features_to_set[@]} -gt 0 ]; then
-            local features_string=$(IFS=,; echo "${features_to_set[*]}")
-            log_info "Applying features: $features_string"
-            run_pct_command set "$CTID" --features "$features_string" || log_fatal "Failed to set Proxmox features."
-        fi
+    for option in $pct_options; do
+        features_to_set+=("$option")
+    done
+
+    # Check for Macvlan + AppArmor Conflict (PHOENIX-MACVLAN-FIX)
+    # We handle the unconfined logic specifically in apply_apparmor_profile using the hybrid method.
+    # Here, we just ensure that if unconfined is requested, we don't add invalid features.
+    local apparmor_profile=$(jq_get_value "$CTID" ".apparmor_profile" || echo "unconfined")
+
+    if [ ${#features_to_set[@]} -gt 0 ]; then
+        local features_string=$(IFS=,; echo "${features_to_set[*]}")
+        log_info "Applying features: $features_string"
+        run_pct_command set "$CTID" --features "$features_string" || log_fatal "Failed to set Proxmox features."
     fi
 }
 
@@ -331,6 +377,14 @@ apply_lxc_directives() {
     if [ -n "$lxc_options" ]; then
         local conf_file="/etc/pve/lxc/${CTID}.conf"
         for option in $lxc_options; do
+            # SKIP lxc.net.0.* options if we are in Macvlan mode, as they are handled in apply_network_configs
+            if [[ "$option" == "lxc.net.0."* ]]; then
+                 if grep -qF "$option" "$conf_file"; then
+                     log_debug "Skipping already applied network option: $option"
+                     continue
+                 fi
+            fi
+
             if [[ "$option" == "lxc.cap.keep="* ]]; then
                 local caps_to_keep=$(echo "$option" | cut -d'=' -f2)
                 sed -i '/^lxc.cap.keep/d' "$conf_file"
@@ -722,6 +776,17 @@ start_container() {
     fi
 
     log_info "Container $CTID is not running. Proceeding with start..."
+
+    # --- Macvlan Persistence Safeguard ---
+    # Check if Macvlan is configured. If so, we MUST re-apply the network configuration
+    # immediately before starting. This is because intermediate pct commands (resize, set mp, etc.)
+    # strip out the raw lxc.net.0 options because Proxmox considers them invalid/unknown.
+    local lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
+    if echo "$lxc_options" | grep -q "lxc.net.0.type: macvlan"; then
+        log_info "Macvlan detected. Re-applying network configuration immediately before start to prevent PVE overwrites..."
+        apply_network_configs "$CTID"
+    fi
+
     local attempts=0 # Counter for startup attempts
     local max_attempts=3 # Maximum number of startup attempts
     local interval=5 # Delay between retries in seconds
@@ -1341,11 +1406,21 @@ apply_apparmor_profile() {
         log_fatal "Container configuration file not found at $conf_file."
     fi
 
-    log_info "Setting AppArmor profile to: ${apparmor_profile}"
+    log_info "Setting AppArmor profile logic for: ${apparmor_profile}"
+    
     if [ "$apparmor_profile" == "unconfined" ]; then
-        if grep -q "^lxc.apparmor.profile:" "$conf_file"; then
-            log_info "Removing existing AppArmor profile setting."
-            sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
+        log_info "Applying unconfined profile via hybrid approach (nesting feature + raw config)..."
+        
+        # Step 1: Set the features (nesting must be boolean, no =1)
+        # We use run_pct_command here to ensure it's applied via API
+        run_pct_command set "$CTID" --features nesting=1 || log_warn "Failed to set nesting=1 feature."
+        
+        # Step 2: Clean slate - remove any conflicting old lines
+        sed -i '/^lxc.apparmor.profile:/d' "$conf_file"
+        
+        # Step 3: Add the raw LXC line for unconfined (via config file edit)
+        if ! grep -q "lxc.apparmor.profile: unconfined" "$conf_file"; then
+             echo "lxc.apparmor.profile: unconfined" >> "$conf_file"
         fi
     else
         # Load the AppArmor profile
@@ -1533,10 +1608,13 @@ create_container_from_os_template() {
     local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
     local mac_address=$(jq_get_value "$CTID" ".mac_address")
     local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}" # Assemble network string
+
     local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
     if [ "$firewall_enabled" == "true" ]; then
         log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0 during creation."
         net0_string+=",firewall=1"
+    else
+        net0_string+=",firewall=0"
     fi
     local nameservers=$(jq_get_value "$CTID" ".network_config.nameservers" || echo "")
  

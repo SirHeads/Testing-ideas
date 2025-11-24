@@ -38,7 +38,8 @@ ACME_WEBROOT="/var/www/html"
 
 # --- Clean and Create Directories ---
 log_info "Cleaning up and creating simplified Nginx directory structure..."
-rm -rf /etc/nginx/sites-available /etc/nginx/sites-enabled
+# Ensure standard directories exist and clean up conf.d
+mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 rm -f ${CONF_D_DIR}/* ${STREAM_D_DIR}/*
 mkdir -p $CONF_D_DIR $STREAM_D_DIR $SSL_DIR $ACME_WEBROOT /var/cache/nginx
 chown -R www-data:www-data /var/cache/nginx $ACME_WEBROOT
@@ -51,7 +52,7 @@ cp "${temp_dir}/nginx.conf" "/etc/nginx/nginx.conf" || log_fatal "Master nginx.c
 # This ensures that Nginx can start successfully before certificates are available.
 # The 'phoenix sync all' command will overwrite this with the real gateway config.
 log_info "Creating a placeholder default site to ensure Nginx starts..."
-cat > "$CONF_D_DIR/default.conf" <<EOF
+cat > "/etc/nginx/sites-available/default" <<EOF
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
@@ -64,6 +65,7 @@ server {
     }
 }
 EOF
+ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
 # --- Service Management and Validation ---
 log_info "Testing Nginx configuration with placeholder site..."

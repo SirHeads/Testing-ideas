@@ -94,6 +94,23 @@
                                     "minLength": 1,
                                     "description": "Proxmox bridge the container connects to"
                                 },
+                                "type": {
+                                    "type": "string",
+                                    "enum": [
+                                        "bridge",
+                                        "macvlan"
+                                    ],
+                                    "description": "Type of network interface"
+                                },
+                                "parent": {
+                                    "type": "string",
+                                    "description": "Parent interface for macvlan"
+                                },
+                                "hwaddr": {
+                                    "type": "string",
+                                    "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$",
+                                    "description": "MAC address for the interface (override)"
+                                },
                                 "ip": {
                                     "type": "string",
                                     "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/([0-9]|[1-2][0-9]|3[0-2])$",
@@ -104,13 +121,16 @@
                                     "pattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$",
                                     "description": "Gateway IP address for the container's network"
                                 },
+                                "nameserver": {
+                                    "type": "string",
+                                    "description": "Explicit nameserver IP override"
+                                },
                                 "nameservers": {
                                     "type": "string"
                                 }
                             },
                             "required": [
                                 "name",
-                                "bridge",
                                 "ip",
                                 "gw"
                             ]

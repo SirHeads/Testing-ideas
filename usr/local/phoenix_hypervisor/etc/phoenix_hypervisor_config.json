@@ -36,7 +36,12 @@
         "default_subnet": "10.0.0.0/24",
         "nfs_server": "10.0.0.13",
         "fallback_dns": "8.8.8.8",
-        "public_bridge": "vmbr0"
+        "public_bridge": "vmbr0",
+        "macvlan_vlan_tag": 10,
+        "internal_bridge": {
+            "name": "vmbr100",
+            "subnet": "172.16.100.0/24"
+        }
     },
     "docker": {
         "portainer_server_image": "portainer/portainer-ce:latest",

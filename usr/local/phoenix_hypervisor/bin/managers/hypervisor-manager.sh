@@ -176,6 +176,7 @@ setup_hypervisor() {
     # Define the sequence of setup scripts to be executed. The order is critical for proper setup.
     local setup_scripts=(
         "hypervisor_initial_setup.sh"
+        "hypervisor_feature_setup_macvlan.sh"
         "hypervisor_feature_setup_zfs.sh"
         "hypervisor_feature_setup_firewall.sh"
         "hypervisor_feature_setup_nfs.sh"
@@ -204,6 +205,12 @@ setup_hypervisor() {
         # The ZFS setup script requires special arguments for safety.
         if [[ "$script" == "hypervisor_feature_setup_zfs.sh" ]]; then
             if ! "$script_path" --config "$config_file" --mode "$zfs_setup_mode"; then
+                log_fatal "Hypervisor setup script '$script' failed."
+            fi
+        elif [[ "$script" == "hypervisor_feature_setup_macvlan.sh" ]]; then
+            # This script is sourced and its function is called
+            source "$script_path"
+            if ! setup_macvlan_interfaces "$config_file"; then
                 log_fatal "Hypervisor setup script '$script' failed."
             fi
         else
