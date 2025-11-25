@@ -228,68 +228,74 @@ apply_startup_configs() {
     run_pct_command set "$CTID" --startup "order=${boot_order},up=${boot_delay},down=${boot_delay}" || log_fatal "Failed to set startup."
 }
 
-# Function: apply_network_configs
-# Description: Applies network configurations to a container.
-apply_network_configs() {
+# Function: configure_single_interface
+# Description: Helper function to configure a single network interface (net0, net1, etc.).
+#              Handles both standard VETH and specialized Macvlan configurations.
+configure_single_interface() {
     local CTID="$1"
-    log_info "Applying network configurations for CTID: $CTID"
+    local IFACE_ID="$2"
+    local CONFIG_KEY="$3" # e.g., "network_config" or "secondary_network_config"
+
+    local iface_name="net${IFACE_ID}"
+    local conf_file="/etc/pve/lxc/${CTID}.conf"
     
-    # Common network settings
-    local net0_name=$(jq_get_value "$CTID" ".network_config.name")
-    local net0_ip=$(jq_get_value "$CTID" ".network_config.ip")
-    local net0_gw=$(jq_get_value "$CTID" ".network_config.gw")
-    local net0_bridge=$(jq_get_value "$CTID" ".network_config.bridge")
-    local mac_address=$(jq_get_value "$CTID" ".mac_address")
-    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
-    
-    # Check for Macvlan configuration in lxc_options
-    local is_macvlan=false
-    local lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
-    if echo "$lxc_options" | grep -q "lxc.net.0.type: macvlan"; then
-        is_macvlan=true
-        log_info "Macvlan configuration detected for CTID $CTID."
+    # Check if config exists for this key
+    if ! jq -e ".lxc_configs[\"$CTID\"].${CONFIG_KEY}" "$LXC_CONFIG_FILE" >/dev/null; then
+        return 0
     fi
 
-    local conf_file="/etc/pve/lxc/${CTID}.conf"
+    log_info "Configuring interface $iface_name for CTID $CTID..."
+
+    local name=$(jq_get_value "$CTID" ".${CONFIG_KEY}.name")
+    local bridge=$(jq_get_value "$CTID" ".${CONFIG_KEY}.bridge")
+    local ip=$(jq_get_value "$CTID" ".${CONFIG_KEY}.ip")
+    local gw=$(jq_get_value "$CTID" ".${CONFIG_KEY}.gw" || echo "")
+    local hwaddr=$(jq_get_value "$CTID" ".${CONFIG_KEY}.hwaddr" || echo "")
+
+    # Fallback for net0 MAC (legacy compatibility)
+    if [ "$IFACE_ID" == "0" ] && [ -z "$hwaddr" ]; then
+        hwaddr=$(jq_get_value "$CTID" ".mac_address")
+    fi
+
+    local firewall_enabled=$(jq_get_value "$CTID" ".firewall.enabled" || echo "false")
+
+    # Check for Macvlan in options for this specific interface
+    local is_macvlan=false
+    local lxc_options=$(jq_get_array "$CTID" ".lxc_options[]" || echo "")
+    if echo "$lxc_options" | grep -q "lxc.net.${IFACE_ID}.type: macvlan"; then
+        is_macvlan=true
+        log_info "Macvlan configuration detected for $iface_name on CTID $CTID."
+    fi
 
     if [ "$is_macvlan" = true ]; then
         # --- Macvlan Special Handling ---
-        # For Macvlan, we MUST bypass 'pct set' because it forces 'type=veth' and IP settings that
-        # conflict with the low-level LXC macvlan driver.
         
-        log_info "Applying specialized Macvlan network configuration..."
-
-        # 1. Stop container if running (safety check, though usually stopped by now)
+        # 1. Stop container if running (safety check)
         if pct status "$CTID" | grep -q "status: running"; then
              run_pct_command stop "$CTID"
         fi
 
-        # 2. Strict cleanup of ANY existing network lines
-        # We remove net0, ipconfig0, and all lxc.net.0 lines to ensure a clean slate
-        log_info "Performing strict cleanup of existing network lines..."
-        run_pct_command set "$CTID" --delete net0 2>/dev/null || true
+        # 2. Strict cleanup
+        log_info "Cleaning up $iface_name for Macvlan..."
+        run_pct_command set "$CTID" --delete "$iface_name" 2>/dev/null || true
         if [ -f "$conf_file" ]; then
-            sed -i '/^net0:/d' "$conf_file"
-            sed -i '/^ipconfig[0-9]*:/d' "$conf_file"
-            sed -i '/^lxc\.net\.0\./d' "$conf_file"
+            sed -i "/^${iface_name}:/d" "$conf_file"
+            # Note: We rely on 'pct set --delete' to remove the corresponding ipconfig line.
+            # We explicitly remove the raw LXC options we previously added.
+            sed -i "/^lxc\.net\.${IFACE_ID}\./d" "$conf_file"
         fi
 
-        # 3. Manually construct and append the clean net0 line
-        # CRITICAL: We intentionally omit 'ip=', 'gw=', and 'type=veth'.
-        # We also force 'firewall=0' because PVE firewall doesn't work with macvlan.
-        local net0_clean="net0: name=${net0_name},bridge=${net0_bridge},hwaddr=${mac_address},firewall=0"
+        # 3. Manual net line construction
+        # Force firewall=0 for macvlan
+        local net_line="${iface_name}: name=${name},bridge=${bridge},hwaddr=${hwaddr},firewall=0"
         
-        log_info "Appending clean net0 line manually: $net0_clean"
-        echo "$net0_clean" >> "$conf_file"
-        
+        log_info "Appending clean $iface_name line: $net_line"
+        echo "$net_line" >> "$conf_file"
+
         # 4. Atomic Application of Raw Macvlan Options
-        # We MUST apply the raw lxc.net.0.* options NOW to ensure the config file is valid
-        # if parsed by pct tools immediately after this.
-        log_info "Appending raw Macvlan LXC options atomically..."
-        
-        # Use jq directly to get raw strings line-by-line, avoiding issues with spaces
-        jq -r ".lxc_configs[\"$CTID\"].lxc_options[]" "$LXC_CONFIG_FILE" | while IFS= read -r option; do
-            if [[ "$option" == "lxc.net.0."* ]]; then
+        log_info "Appending raw Macvlan options for $iface_name..."
+        echo "$lxc_options" | while IFS= read -r option; do
+            if [[ "$option" == "lxc.net.${IFACE_ID}."* ]]; then
                 if [ -n "$option" ]; then
                    echo "$option" >> "$conf_file"
                    log_info "Appended raw option: $option"
@@ -299,23 +305,40 @@ apply_network_configs() {
 
     else
         # --- Standard Network Configuration (VETH) ---
-        local net0_string="name=${net0_name},bridge=${net0_bridge},ip=${net0_ip},gw=${net0_gw},hwaddr=${mac_address}"
-        
-        log_info "Cleaning up previous network configuration for CTID $CTID..."
-        run_pct_command set "$CTID" --delete net0 2>/dev/null || true
-        if [ -f "$conf_file" ]; then
-            sed -i '/^lxc\.net\.0\./d' "$conf_file"
+        local net_string="name=${name},bridge=${bridge},ip=${ip},hwaddr=${hwaddr}"
+        if [ -n "$gw" ]; then
+            net_string+=",gw=${gw}"
         fi
 
         if [ "$firewall_enabled" == "true" ]; then
-            log_info "Firewall is enabled for CTID $CTID. Applying firewall=1 to net0."
-            net0_string+=",firewall=1"
+             net_string+=",firewall=1"
         else
-            net0_string+=",firewall=0"
+             net_string+=",firewall=0"
         fi
 
-        log_info "Applying standard network configuration: $net0_string"
-        run_pct_command set "$CTID" --net0 "$net0_string" || log_fatal "Failed to set network configuration."
+        log_info "Applying standard configuration for $iface_name: $net_string"
+        run_pct_command set "$CTID" "--${iface_name}" "$net_string" || log_fatal "Failed to set $iface_name configuration."
+    fi
+}
+
+# Function: apply_network_configs
+# Description: Applies network configurations to a container.
+apply_network_configs() {
+    local CTID="$1"
+    log_info "Applying network configurations for CTID: $CTID"
+    
+    # 1. Configure Primary Interface (net0)
+    configure_single_interface "$CTID" "0" "network_config"
+
+    # 2. Configure Secondary Interface (net1) if present
+    if jq -e ".lxc_configs[\"$CTID\"].secondary_network_config" "$LXC_CONFIG_FILE" >/dev/null; then
+        configure_single_interface "$CTID" "1" "secondary_network_config"
+    else
+        # Cleanup net1 if not configured
+        if pct config "$CTID" | grep -q "net1:"; then
+             log_info "Removing unused net1 interface from CTID $CTID..."
+             run_pct_command set "$CTID" --delete net1 || log_warn "Failed to remove net1."
+        fi
     fi
 
     # --- Explicit DNS Override ---
@@ -329,16 +352,6 @@ apply_network_configs() {
         if [ -n "$nameservers" ]; then
             run_pct_command set "$CTID" --nameserver "$nameservers" || log_fatal "Failed to set nameservers."
         fi
-    fi
-    
-    # Clean up potential legacy public interface if it exists
-    local public_enabled=$(jq_get_value "$CTID" ".public_interface.enabled" || echo "false")
-    if [ "$public_enabled" != "true" ]; then
-         # Check if net1 is defined
-         if pct config "$CTID" | grep -q "net1:"; then
-             log_info "Removing legacy net1 interface from CTID $CTID..."
-             run_pct_command set "$CTID" --delete net1 || log_warn "Failed to remove net1."
-         fi
     fi
 }
 

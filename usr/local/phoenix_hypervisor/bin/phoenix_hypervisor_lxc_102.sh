@@ -22,7 +22,7 @@ source "/tmp/phoenix_run/phoenix_hypervisor_common_utils.sh"
 
 # --- Script Variables ---
 CTID="$1"
-CA_URL="https://10.0.0.10:9000"
+CA_URL="https://172.16.100.11:9000"
 
 CA_READY_FILE="/etc/step-ca/ssl/ca.ready"
 PROVISIONER_PASSWORD_FILE="/etc/step-ca/ssl/provisioner_password.txt"
@@ -51,7 +51,7 @@ wait_for_ca() {
 bootstrap_step_cli() {
    log_info "Bootstrapping Step CLI..."
    # Use the direct IP address for the initial bootstrap to bypass DNS resolution issues.
-   if ! step ca bootstrap --ca-url "https://10.0.0.10:9000" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
+   if ! step ca bootstrap --ca-url "$CA_URL" --fingerprint "$(step certificate fingerprint ${ROOT_CA_CERT})" --force; then
        log_fatal "Failed to bootstrap Step CLI."
    fi
    log_success "Step CLI bootstrapped successfully."

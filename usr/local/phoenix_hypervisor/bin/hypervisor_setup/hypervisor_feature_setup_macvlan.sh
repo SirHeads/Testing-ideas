@@ -14,6 +14,7 @@ setup_macvlan_interfaces() {
     local proxmox_ip=$(jq -r '.network.interfaces.address' "$config_file")
     local gateway=$(jq -r '.network.interfaces.gateway' "$config_file")
     local vlan_tag=$(jq -r '.network.macvlan_vlan_tag // "10"' "$config_file")
+    local public_vlan_tag=$(jq -r '.network.public_vlan_tag // "20"' "$config_file")
     local internal_bridge=$(jq -r '.network.internal_bridge.name // "vmbr100"' "$config_file")
     local internal_subnet=$(jq -r '.network.internal_bridge.subnet // "172.16.100.0/24"' "$config_file")
     
@@ -25,6 +26,7 @@ setup_macvlan_interfaces() {
     log_info "  Management IP: $proxmox_ip"
     log_info "  Gateway: $gateway"
     log_info "  Macvlan VLAN Tag: $vlan_tag"
+    log_info "  Public VLAN Tag: $public_vlan_tag"
     log_info "  Internal Bridge: $internal_bridge ($internal_ip)"
 
     # --- Backup ---
@@ -54,10 +56,16 @@ iface vmbr0 inet static
         bridge-vlan-aware yes
         bridge-vids 2-4094
 
-# Macvlan Portal - Public-facing containers attach here (e.g., Nginx)
+# Macvlan Portal (Legacy) - Public-facing containers attach here
 # This effectively puts them on VLAN $vlan_tag
 auto vmbr0.$vlan_tag
 iface vmbr0.$vlan_tag inet manual
+
+# Public VLAN Portal - For new public-facing architecture (e.g. Nginx)
+# Using a dedicated VLAN avoids DHCP suppression issues common with macvlan on untagged bridges
+auto vmbr0.$public_vlan_tag
+iface vmbr0.$public_vlan_tag inet manual
+        vlan-raw-device vmbr0
 
 # Private Internal Bridge - For isolated traffic (Traefik, Step-CA)
 auto $internal_bridge
@@ -66,6 +74,24 @@ iface $internal_bridge inet static
         bridge-ports none
         bridge-stp off
         bridge-fd 0
+
+        # Enable forwarding
+        post-up echo 1 > /proc/sys/net/ipv4/ip_forward
+        post-down echo 0 > /proc/sys/net/ipv4/ip_forward
+
+        # NAT masquerade so internal mesh can reach Internet
+        # Using -C to check existence avoids duplication
+        post-up iptables -t nat -C POSTROUTING -s $internal_subnet -o vmbr0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s $internal_subnet -o vmbr0 -j MASQUERADE
+        post-down iptables -t nat -D POSTROUTING -s $internal_subnet -o vmbr0 -j MASQUERADE 2>/dev/null || true
+
+        # Forwarding rules - Insert at TOP (-I 1) to bypass PVE Firewall drops
+        # 1. Allow outgoing traffic from internal bridge to wan
+        post-up iptables -C FORWARD -i $internal_bridge -o vmbr0 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i $internal_bridge -o vmbr0 -j ACCEPT
+        post-down iptables -D FORWARD -i $internal_bridge -o vmbr0 -j ACCEPT 2>/dev/null || true
+
+        # 2. Allow return traffic (Established/Related) from wan to internal bridge
+        post-up iptables -C FORWARD -i vmbr0 -o $internal_bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i vmbr0 -o $internal_bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+        post-down iptables -D FORWARD -i vmbr0 -o $internal_bridge -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
 
 # Unused interfaces (kept manual to prevent interference)
 iface enp13s0 inet manual
@@ -100,9 +126,15 @@ EOF
     sleep 5
     
     if ip link show "vmbr0.$vlan_tag" >/dev/null 2>&1; then
-        log_success "Macvlan portal vmbr0.$vlan_tag is UP."
+        log_success "Legacy Macvlan portal vmbr0.$vlan_tag is UP."
     else
-        log_error "Macvlan portal vmbr0.$vlan_tag failed to come up."
+        log_error "Legacy Macvlan portal vmbr0.$vlan_tag failed to come up."
+    fi
+
+    if ip link show "vmbr0.$public_vlan_tag" >/dev/null 2>&1; then
+        log_success "Public VLAN portal vmbr0.$public_vlan_tag is UP."
+    else
+        log_error "Public VLAN portal vmbr0.$public_vlan_tag failed to come up."
     fi
 
     if ip link show "$internal_bridge" >/dev/null 2>&1; then

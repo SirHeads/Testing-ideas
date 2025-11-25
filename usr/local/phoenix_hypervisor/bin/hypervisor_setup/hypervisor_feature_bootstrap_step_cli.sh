@@ -17,7 +17,7 @@ source "${PHOENIX_BASE_DIR}/bin/phoenix_hypervisor_common_utils.sh"
 # --- Main execution ---
 log_info "--- Bootstrapping Step CLI on Hypervisor ---"
 
-CA_URL="https://10.0.0.10:9000"
+CA_URL="https://172.16.100.11:9000"
 ROOT_CA_CERT_PATH="/mnt/pve/quickOS/lxc-persistent-data/103/ssl/phoenix_root_ca.crt"
 
 # Check if the root CA certificate exists

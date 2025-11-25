@@ -87,8 +87,8 @@ stop-dns-rebind
 no-resolv
 # Do not forward queries for the internal domain
 local=/internal.thinkheads.ai/
-# Listen on the host's primary IP address
-listen-address=127.0.0.1,$(get_global_config_value '.network.interfaces.address' | cut -d'/' -f1)
+# Listen on the host's primary IP address and the internal bridge IP
+listen-address=127.0.0.1,$(get_global_config_value '.network.interfaces.address' | cut -d'/' -f1),172.16.100.1
 # Include configuration files from /etc/dnsmasq.d
 conf-dir=${DNSMASQ_CONFIG_DIR},*.conf
 EOF
@@ -123,7 +123,7 @@ EOF
         --argjson vm_config "$(cat "$VM_CONFIG_FILE")" \
         '
         # Get gateway and traefik IPs
-        ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Nginx-Phoenix") | .value.network_config.ip | split("/")[0]) as $gateway_ip |
+        ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Nginx-Phoenix") | (if .value.secondary_network_config then .value.secondary_network_config.ip else .value.network_config.ip end) | split("/")[0]) as $gateway_ip |
         ($lxc_config.lxc_configs | to_entries[] | select(.value.name == "Traefik-Internal") | .value.network_config.ip | split("/")[0]) as $traefik_ip |
         [
             # --- Public Gateway Services (All point to Nginx) ---
@@ -137,9 +137,17 @@ EOF
             # --- Internal Services ---
             # These are for service-to-service communication. Most go through Traefik.
             # Some critical infrastructure needs to be resolved directly.
-            ($lxc_config.lxc_configs | values[] | select(.name and .network_config.ip and .network_config.ip != "dhcp") | {
+            ($lxc_config.lxc_configs | values[] | select(.name and (.network_config.ip != "dhcp" or .secondary_network_config.ip)) | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",
-                "ip": (if .name == "Step-CA" or .name == "Traefik-Internal" then (.network_config.ip | split("/")[0]) else $traefik_ip end)
+                "ip": (
+                    if .name == "Step-CA" or .name == "Traefik-Internal" then
+                        (.network_config.ip | split("/")[0])
+                    elif .name == "Nginx-Phoenix" then
+                        (.secondary_network_config.ip | split("/")[0])
+                    else
+                        $traefik_ip
+                    end
+                )
             }),
             ($vm_config.vms[] | select(.name and .network_config.ip) | {
                 "hostname": "\(.name | ascii_downcase).internal.thinkheads.ai",

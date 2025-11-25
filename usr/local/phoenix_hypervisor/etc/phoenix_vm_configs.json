@@ -78,7 +78,7 @@
                 "portainer_service"
             ],
             "firewall": {
-                "enabled": true,
+                "enabled": false,
                 "rules": [
                     {
                         "type": "out",
@@ -332,7 +332,7 @@
                 "qdrant_service"
             ],
             "firewall": {
-                "enabled": true,
+                "enabled": false,
                 "rules": [
                     {
                         "type": "in",

@@ -300,7 +300,7 @@
                 "step_cli"
             ],
             "application_script": "phoenix_hypervisor_lxc_vllm.sh",
-            "bootstrap_ca_url": "https://10.0.0.10:9000",
+            "bootstrap_ca_url": "https://172.16.100.11:9000",
             "ports": [
                 "8000:8000"
             ],
@@ -488,11 +488,16 @@
             "storage_size_gb": 32,
             "network_config": {
                 "name": "eth0",
-                "bridge": "vmbr0.10",
+                "bridge": "vmbr0.20",
                 "ip": "dhcp",
-                "gw": "10.0.0.1",
-                "hwaddr": "02:00:00:00:01:01",
-                "nameserver": "10.0.0.1"
+                "hwaddr": "02:00:00:00:01:01"
+            },
+            "secondary_network_config": {
+                "name": "eth1",
+                "bridge": "vmbr100",
+                "ip": "172.16.100.10/24",
+                "hwaddr": "02:00:00:00:01:02",
+                "gw": "172.16.100.1"
             },
             "mac_address": "02:00:00:00:01:01",
             "gpu_assignment": "none",
@@ -519,7 +524,7 @@
                 "lxc.apparmor.allow_nesting: 1",
                 "lxc.net.0.type: macvlan",
                 "lxc.net.0.macvlan.mode: bridge",
-                "lxc.net.0.link: vmbr0.10"
+                "lxc.net.0.link: vmbr0.20"
             ],
             "application_script": "phoenix_hypervisor_lxc_101.sh",
             "traefik_service": {
@@ -535,7 +540,7 @@
             "apparmor_profile": "unconfined",
             "apparmor_manages_nesting": true,
             "firewall": {
-                "enabled": true,
+                "enabled": false,
                 "rules": [
                     {
                         "type": "in",
@@ -564,7 +569,7 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.12",
+                        "dest": "172.16.100.12",
                         "proto": "tcp",
                         "port": "443",
                         "comment": "Allow Nginx to proxy to Traefik over HTTPS"
@@ -573,22 +578,22 @@
                         "type": "out",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "dest": "10.0.0.12",
+                        "dest": "172.16.100.12",
                         "port": "8443",
                         "comment": "Allow Nginx to proxy to Traefik mTLS mesh"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.10",
+                        "source": "172.16.100.11",
                         "proto": "tcp",
                         "port": "80,443",
-                        "comment": "Allow Step CA (10.0.0.10) to connect for ACME validation"
+                        "comment": "Allow Step CA (172.16.100.11) to connect for ACME validation"
                     },
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.10",
+                        "dest": "172.16.100.11",
                         "proto": "tcp",
                         "port": "9000",
                         "comment": "Allow Nginx to communicate with Step-CA for certificates"
@@ -747,10 +752,10 @@
             "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.10/24",
-                "gw": "10.0.0.1",
-                "nameservers": "10.0.0.13"
+                "bridge": "vmbr100",
+                "ip": "172.16.100.11/24",
+                "gw": "172.16.100.1",
+                "nameservers": "172.16.100.1"
             },
             "mac_address": "52:54:00:AA:BB:CA",
             "gpu_assignment": "none",
@@ -773,31 +778,31 @@
                 "lxc.apparmor.profile=unconfined"
             ],
             "firewall": {
-                "enabled": true,
+                "enabled": false,
                 "rules": [
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.153",
+                        "dest": "172.16.100.10",
                         "proto": "tcp",
                         "port": "443",
-                        "comment": "Allow Step-CA to perform ACME challenges with Nginx Gateway"
+                        "comment": "Allow Step-CA to perform ACME challenges with Nginx Gateway (Internal)"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.12",
+                        "source": "172.16.100.12",
                         "proto": "tcp",
                         "port": "9000",
-                        "comment": "Allow Traefik to connect for ACME challenges"
+                        "comment": "Allow Traefik (Internal) to connect for ACME challenges"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
+                        "source": "172.16.100.10",
                         "proto": "tcp",
                         "port": "9000",
-                        "comment": "Allow Nginx to connect to Step CA for certificates"
+                        "comment": "Allow Nginx (Internal) to connect to Step CA for certificates"
                     },
                     {
                         "type": "in",
@@ -834,10 +839,26 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.12",
+                        "source": "172.16.100.12",
                         "proto": "tcp",
                         "port": "9000",
-                        "comment": "Allow Traefik (10.0.0.12) to connect for certificate bootstrapping"
+                        "comment": "Allow Traefik (172.16.100.12) to connect for certificate bootstrapping"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "0.0.0.0/0",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow outbound HTTP for package updates"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "0.0.0.0/0",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow outbound HTTPS for package updates and Smallstep"
                     }
                 ]
             },
@@ -865,10 +886,10 @@
             "storage_size_gb": 16,
             "network_config": {
                 "name": "eth0",
-                "bridge": "vmbr0",
-                "ip": "10.0.0.12/24",
-                "gw": "10.0.0.1",
-                "nameservers": "10.0.0.13"
+                "bridge": "vmbr100",
+                "ip": "172.16.100.12/24",
+                "gw": "172.16.100.1",
+                "nameservers": "172.16.100.1"
             },
             "mac_address": "52:54:00:AA:BB:CB",
             "gpu_assignment": "none",
@@ -882,12 +903,12 @@
                 "traefik"
             ],
             "application_script": "phoenix_hypervisor_lxc_102.sh",
-            "bootstrap_ca_url": "https://10.0.0.10:9000",
+            "bootstrap_ca_url": "https://172.16.100.11:9000",
             "dependencies": [
                 "101"
             ],
             "firewall": {
-                "enabled": true,
+                "enabled": false,
                 "rules": [
                     {
                         "type": "in",
@@ -899,37 +920,37 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
+                        "source": "172.16.100.10",
                         "proto": "tcp",
                         "port": "443",
-                        "comment": "Allow Nginx (10.0.0.153) to proxy HTTPS web traffic"
+                        "comment": "Allow Nginx (172.16.100.10) to proxy HTTPS web traffic"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
                         "proto": "tcp",
-                        "source": "10.0.0.153",
+                        "source": "172.16.100.10",
                         "port": "8443",
                         "comment": "Allow Nginx to proxy to Traefik mTLS mesh"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.153",
+                        "source": "172.16.100.10",
                         "comment": "Allow all inbound traffic from Nginx to fix timeout"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.10",
+                        "source": "172.16.100.11",
                         "proto": "tcp",
                         "port": "80,443",
-                        "comment": "Allow Step CA (10.0.0.10) for ACME challenges"
+                        "comment": "Allow Step CA (172.16.100.11) for ACME challenges"
                     },
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.10",
+                        "source": "172.16.100.11",
                         "proto": "tcp",
                         "port": "80",
                         "comment": "Allow Step-CA to perform ACME http-01 challenges with Traefik"
@@ -937,7 +958,7 @@
                     {
                         "type": "in",
                         "action": "ACCEPT",
-                        "source": "10.0.0.10",
+                        "source": "172.16.100.11",
                         "comment": "Allow all inbound traffic from Step CA to fix bootstrap timeout"
                     },
                     {
@@ -959,10 +980,10 @@
                     {
                         "type": "out",
                         "action": "ACCEPT",
-                        "dest": "10.0.0.10",
+                        "dest": "172.16.100.11",
                         "proto": "tcp",
                         "port": "9000",
-                        "comment": "Allow outbound communication to Step CA (10.0.0.10) for certificate requests"
+                        "comment": "Allow outbound communication to Step CA (172.16.100.11) for certificate requests"
                     },
                     {
                         "type": "out",
@@ -1011,6 +1032,22 @@
                         "proto": "tcp",
                         "port": "2376",
                         "comment": "Allow Traefik to connect to the secure Docker API"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "0.0.0.0/0",
+                        "proto": "tcp",
+                        "port": "80",
+                        "comment": "Allow outbound HTTP for package updates and ACME"
+                    },
+                    {
+                        "type": "out",
+                        "action": "ACCEPT",
+                        "dest": "0.0.0.0/0",
+                        "proto": "tcp",
+                        "port": "443",
+                        "comment": "Allow outbound HTTPS for package updates and ACME"
                     }
                 ]
             },

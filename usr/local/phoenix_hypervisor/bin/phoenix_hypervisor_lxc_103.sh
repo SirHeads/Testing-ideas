@@ -87,7 +87,7 @@ initialize_step_ca() {
     # Initialize the CA with a password from the mounted file
     log_info "Initializing Smallstep CA using the generated password files..."
  
-     if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "internal.thinkheads.ai" --dns "*.internal.thinkheads.ai" --dns "127.0.0.1" --dns "10.0.0.10" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
+     if ! /usr/bin/step ca init --name "$CA_NAME" --dns "$CA_DNS" --dns "internal.thinkheads.ai" --dns "*.internal.thinkheads.ai" --dns "127.0.0.1" --dns "172.16.100.11" --dns "10.0.0.10" --address "$CA_ADDRESS" --provisioner "$CA_PROVISIONER_EMAIL" --deployment-type standalone --password-file "$CA_PASSWORD_FILE" --provisioner-password-file "$CA_PROVISIONER_PASSWORD_FILE"; then
          log_fatal "Failed to initialize Smallstep CA in container $CTID."
      fi
     log_success "Smallstep CA initialized successfully."

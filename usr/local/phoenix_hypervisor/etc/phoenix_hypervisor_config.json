@@ -38,6 +38,7 @@
         "fallback_dns": "8.8.8.8",
         "public_bridge": "vmbr0",
         "macvlan_vlan_tag": 10,
+        "public_vlan_tag": 20,
         "internal_bridge": {
             "name": "vmbr100",
             "subnet": "172.16.100.0/24"
@@ -357,11 +358,29 @@
             {
                 "type": "in",
                 "action": "ACCEPT",
+                "source": "172.16.100.0/24",
+                "dest": "172.16.100.1",
+                "proto": "udp",
+                "port": "53",
+                "comment": "Allow internal mesh guests to query DNS on Host Gateway"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
                 "source": "10.0.0.0/24",
                 "dest": "10.0.0.13",
                 "proto": "tcp",
                 "port": "53",
                 "comment": "Allow internal guests to query DNS on Host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "172.16.100.0/24",
+                "dest": "172.16.100.1",
+                "proto": "tcp",
+                "port": "53",
+                "comment": "Allow internal mesh guests to query DNS on Host Gateway"
             },
             {
                 "type": "in",
@@ -431,6 +450,15 @@
                 "port": "2049",
                 "source": "10.0.0.0/24",
                 "comment": "Allow internal NFS connections to the host"
+            },
+            {
+                "type": "in",
+                "action": "ACCEPT",
+                "source": "172.16.100.0/24",
+                "dest": "10.0.0.13",
+                "proto": "tcp",
+                "port": "2049",
+                "comment": "Allow internal mesh guests to access NFS on Host"
             },
             {
                 "type": "in",
